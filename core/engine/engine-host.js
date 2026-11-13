@@ -1159,11 +1159,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } finally {
       if (attached) await iceDetach(attached).catch(e => onWarn(`a write's Iceberg catalog was not detached — ${e.message}`));
       // What it wrote, read again: the listing, and a table's new snapshot into the lake, so the next read is of it.
-      // Behind the answer, once it was sent, whatever happened: a statement that failed may still have committed.
-      if (sent) written(w, lh);
+      // Waited for, so a SELECT right after reads what was written; once it was sent, whatever happened: a statement
+      // that failed may still have committed.
+      if (sent) await written(w, lh);
     }
   }
-  function written(w, lh) {
+  async function written(w, lh) {
     const item = { workspace: lh.workspace, item: lh.item };
     if (w.target === 'file') {
       const dir = w.ref.path.replace(/^\/Files\/?/, '').split('/').slice(0, -1).join('/');
@@ -1172,7 +1173,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
     try { onWritten({ kind: 'tables', ...item }); } catch (_) {}
     if (w.target === 'table') {
-      sourceOf({ kind: 'lakehouse', ...w.ref }, { fresh: true })
+      // The view a statement made of the table reads its old snapshot: made again on its next read.
+      made.delete(sqlName({ kind: 'lakehouse', ...w.ref }).toLowerCase());
+      await sourceOf({ kind: 'lakehouse', ...w.ref }, { fresh: true })
         .catch(e => onWarn(`${w.ref.workspace}.${w.ref.item}.${w.ref.schema}.${w.ref.table} was written, and its new snapshot isn't read yet — ${e.message}`));
     }
   }

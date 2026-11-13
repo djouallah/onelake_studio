@@ -68,7 +68,7 @@ jobs:
 
   onelake:
     runs-on: ubuntu-26.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
