@@ -24,11 +24,14 @@ const FOOTERS_AT_MOST = 2000;
 // The key Fabric writes in a file's footer when it wrote it with V-Order (probed on a Fabric Spark file, 2026-11-13).
 const VORDER_KEY = 'com.microsoft.parquet.vorder.enabled';
 
-// The rules' thresholds.
-const SMALL_FILE = 32 * MB;
-const MANY_FILES = 10;
+// The rules' thresholds. A finding is something worth doing: a small table read whole in a moment has none,
+// whatever its V-Order, row groups or deleted rows.
+const SMALL_FILE = 32 * MB;     // under it a file is small; deleted rows matter once they hold this much
+const BIG_FILE = 128 * MB;      // V-Order pays off on files this big; smaller ones are fine without it
+const MANY_FILES = 10;          // small files worth merging
 const DELETED_SHARE = 0.1;
-const ROW_GROUP_ROWS = 100_000;
+const ROW_GROUP_ROWS = 100_000; // a file with several row groups under this is cut too small...
+const SPLIT_ROWS = 1_000_000;   // ...and it matters once such files hold this many rows
 const CHECKPOINT_GAP = 100;
 
 const num = v => (v == null ? 0 : Number(v));
@@ -64,17 +67,28 @@ async function tableFacts(run, name) {
   const local = (await run(`SELECT path FROM (${filesOf(name)}) WHERE here ORDER BY path LIMIT ${FOOTERS_AT_MOST}`)).rows.map(r => r.path);
   if (!local.length) return facts;
   const list = `[${local.map(q).join(', ')}]`;
-  const [g] = (await run(`SELECT count(*)::BIGINT AS files, coalesce(sum(num_row_groups), 0)::BIGINT AS groups,
-      coalesce(sum(num_rows), 0)::BIGINT AS rows FROM parquet_file_metadata(${list})`)).rows;
-  const [v] = (await run(`SELECT count(DISTINCT file_name)::BIGINT AS files FROM parquet_kv_metadata(${list})
-      WHERE decode(key) = ${q(VORDER_KEY)} AND lower(decode(value)) = 'true'`)).rows;
-  facts.footers = { files: num(g.files), groups: num(g.groups), rows: num(g.rows), vorder: num(v.files) };
+  // One row per footer, with the file's size from the lake (null if its path doesn't match: then it is never big).
+  const split = `g > 1 AND r < g * ${ROW_GROUP_ROWS}`, unordered = `NOT vo AND size >= ${BIG_FILE}`;
+  const [g] = (await run(`SELECT count(*)::BIGINT AS files, coalesce(sum(g), 0)::BIGINT AS groups,
+      coalesce(sum(r), 0)::BIGINT AS rows, count(*) FILTER (WHERE vo)::BIGINT AS vorder,
+      count(*) FILTER (WHERE ${unordered})::BIGINT AS u_files, coalesce(sum(size) FILTER (WHERE ${unordered}), 0)::BIGINT AS u_bytes,
+      count(*) FILTER (WHERE ${split})::BIGINT AS s_files, coalesce(sum(g) FILTER (WHERE ${split}), 0)::BIGINT AS s_groups,
+      coalesce(sum(r) FILTER (WHERE ${split}), 0)::BIGINT AS s_rows
+    FROM (SELECT m.num_row_groups AS g, m.num_rows AS r, v.file_name IS NOT NULL AS vo, h.size
+          FROM parquet_file_metadata(${list}) m
+          LEFT JOIN (SELECT DISTINCT file_name FROM parquet_kv_metadata(${list})
+                     WHERE decode(key) = ${q(VORDER_KEY)} AND lower(decode(value)) = 'true') v ON v.file_name = m.file_name
+          LEFT JOIN (SELECT path, size FROM (${filesOf(name)}) WHERE here) h ON h.path = m.file_name)`)).rows;
+  facts.footers = { files: num(g.files), groups: num(g.groups), rows: num(g.rows), vorder: num(g.vorder),
+    unordered: { files: num(g.u_files), bytes: num(g.u_bytes) },
+    split: { files: num(g.s_files), groups: num(g.s_groups), rows: num(g.s_rows) } };
   return facts;
 }
 
 const mb = b => `${(b / MB).toLocaleString('en', { maximumFractionDigits: b < 10 * MB ? 1 : 0 })} MB`;
 const n0 = n => Number(n).toLocaleString('en');
 const pct = x => `${Math.round(x * 100)}%`;
+const files = n => `${n0(n)} file${n === 1 ? '' : 's'}`;
 
 /**
  * What the facts say, each as { kind, finding, detail, action }. Nothing is run: the action is what to consider.
@@ -85,33 +99,39 @@ function findings(facts) {
   const out = [];
   if (!facts || !facts.files) return out;
   const small = facts.sizes.slice(0, 2).reduce((n, b) => n + b.files, 0);
-  if (facts.files >= MANY_FILES && small * 2 > facts.files) {
+  if (small >= MANY_FILES && small * 2 > facts.files) {
     out.push({ kind: 'small-files', finding: 'Many small files',
       detail: `${n0(small)} of ${n0(facts.files)} files are under ${mb(SMALL_FILE)}; ${mb(facts.bytes / facts.files)} on average`,
       action: 'OPTIMIZE to merge them' });
   }
-  const physical = facts.records;
-  if (physical && facts.deleted / physical >= DELETED_SHARE) {
+  // Deleted rows cost what they hold: a tenth of a small table is read in no time.
+  const share = facts.records ? facts.deleted / facts.records : 0;
+  const dead = share * facts.bytes;
+  if (share >= DELETED_SHARE && dead >= SMALL_FILE) {
     out.push({ kind: 'deleted-rows', finding: 'Many deleted rows',
-      detail: `${pct(facts.deleted / physical)} of the rows in the files are deleted, still stored`,
+      detail: `${pct(share)} of the rows in the files are deleted: about ${mb(dead)} still stored`,
       action: 'OPTIMIZE to rewrite those files' });
   }
   const f = facts.footers;
-  // V-Order is how Fabric writes a Delta table's files: an Iceberg table has nothing to turn on.
-  if (f && f.files && f.vorder < f.files && facts.format !== 'iceberg') {
-    out.push({ kind: 'no-vorder', finding: 'Not V-Ordered',
-      detail: `${n0(f.files - f.vorder)} of the ${n0(f.files)} files here have no V-Order`,
+  // V-Order is said of big files only: small ones are fine without it, and many small ones are small-files'.
+  // It is how Fabric writes a Delta table's files: an Iceberg table has nothing to turn on.
+  const u = f && f.unordered;
+  if (u && u.files && facts.format !== 'iceberg') {
+    out.push({ kind: 'no-vorder', finding: 'Big files without V-Order',
+      detail: `${files(u.files)} here of ${mb(BIG_FILE)} or more, ${mb(u.bytes)} in all, ${u.files === 1 ? 'has' : 'have'} no V-Order`,
       action: 'Write the table with V-Order on, then OPTIMIZE' });
   }
-  if (f && f.groups && f.rows / f.groups < ROW_GROUP_ROWS && f.files >= MANY_FILES) {
+  // A small file has one row group because it is small; what's worth fixing is a big file cut into small ones.
+  const s = f && f.split;
+  if (s && s.groups && s.rows >= SPLIT_ROWS) {
     out.push({ kind: 'small-row-groups', finding: 'Small row groups',
-      detail: `${n0(Math.round(f.rows / f.groups))} rows per row group in the files here`,
+      detail: `${files(s.files)} here cut into ${n0(s.groups)} row groups of ${n0(Math.round(s.rows / s.groups))} rows on average`,
       action: 'OPTIMIZE to write bigger ones' });
   }
   if (facts.checkpointGap != null && facts.checkpointGap >= CHECKPOINT_GAP) {
     out.push({ kind: 'checkpoint', finding: 'Checkpoint far behind',
       detail: `${n0(facts.checkpointGap)} commits since the last checkpoint: every reader reads them one by one`,
-      action: 'A write or an OPTIMIZE makes a new one' });
+      action: 'Make a checkpoint: the writer of this table does not' });
   }
   return out;
 }

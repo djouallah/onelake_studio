@@ -47,8 +47,9 @@
   stopped at 5,000. An exported app keeps the number it was exported with; on a semantic model, 100,000 at most.
 - **A table's Stats say how healthy its files are.** A Health section heads the card: how many files, their sizes
   as bars, rows deleted but still stored, and for the files kept on this machine, V-Order and rows per row group.
-  Findings come with what to consider doing: many small files, many deleted rows, files without V-Order, small row
-  groups, and a Delta table far past its last checkpoint. It is read from what the lake holds and from the footers of
+  Findings come with what to consider doing: many small files, many deleted rows, big files without V-Order, big
+  files cut into small row groups, and a Delta table far past its last checkpoint. A small table has none: it reads
+  fast as it is. It is read from what the lake holds and from the footers of
   the files here, never from OneLake, so it works offline; a table no query has read yet says so.
 - **Table Health for a whole lakehouse.** *Table Health* on a lakehouse or warehouse in the tree opens a tab with
   one row per table: its findings first, then the tables with the most files, with files, average file size,

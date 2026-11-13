@@ -28,25 +28,46 @@ test("many files that are mostly small is a finding; a few small files are not",
   assert.match(findings(facts({ files: 10, bytes: 10 * MB, sizes: sized(10) }))[0].detail, /10 of 10 files are under 32 MB; 1 MB on average/);
 });
 
-test("deleted rows past a tenth of the rows stored are a finding", () => {
-  const one = facts({ files: 2, bytes: 2 * 200 * MB, records: 1000, sizes: sized(0, 0, 0, 2) });
-  assert.deepEqual(kinds({ ...one, deleted: 99 }), []);
-  assert.deepEqual(kinds({ ...one, deleted: 180 }), ["deleted-rows"]);
-  assert.match(findings({ ...one, deleted: 180 })[0].detail, /^18% of the rows/);
+test("deleted rows are a finding past a tenth of the rows, once they hold 32 MB", () => {
+  const big = facts({ files: 2, bytes: 2 * 1024 * MB, records: 1000, sizes: sized(0, 0, 0, 0, 2) });
+  assert.deepEqual(kinds({ ...big, deleted: 99 }), []);
+  assert.deepEqual(kinds({ ...big, deleted: 150 }), ["deleted-rows"]);
+  assert.match(findings({ ...big, deleted: 150 })[0].detail, /^15% of the rows in the files are deleted: about 307 MB still stored/);
+  // A fifth of a 50 MB table: 10 MB of deleted rows, nothing worth rewriting.
+  assert.deepEqual(kinds(facts({ files: 1, bytes: 50 * MB, records: 1000, deleted: 200, sizes: sized(0, 0, 1) })), []);
 });
 
-test("the footers of the files here: V-Order and row groups, said of those files only", () => {
-  const big = facts({ files: 1240, bytes: 1240 * 300 * MB, sizes: sized(0, 0, 0, 1240) });
-  assert.deepEqual(kinds({ ...big, footers: { files: 120, vorder: 120, groups: 120, rows: 120 * 2e6 } }), []);
-  const mixed = findings({ ...big, footers: { files: 120, vorder: 100, groups: 600, rows: 600 * 50_000 } });
-  assert.deepEqual(mixed.map(x => x.kind), ["no-vorder", "small-row-groups"]);
-  assert.match(mixed[0].detail, /20 of the 120 files here have no V-Order/);
-  assert.match(mixed[1].detail, /50,000 rows per row group/);
-  // An Iceberg table has no V-Order to turn on: only its row groups are said.
-  assert.deepEqual(findings({ ...big, format: "iceberg", footers: { files: 120, vorder: 0, groups: 600, rows: 600 * 50_000 } }).map(x => x.kind),
-    ["small-row-groups"]);
+// The footers of the files here, as tableFacts gives them.
+const footers = (o = {}) => ({ files: 1, groups: 1, rows: 1000, vorder: 0,
+  unordered: { files: 0, bytes: 0 }, split: { files: 0, groups: 0, rows: 0 }, ...o });
+
+test("a small table of one file has nothing to do, whatever its V-Order, row groups or deleted rows", () => {
+  const one = facts({ files: 1, bytes: 2 * MB, records: 1000, deleted: 200, here: 1, sizes: sized(1), footers: footers() });
+  assert.deepEqual(kinds(one), []);
+});
+
+test("V-Order is a finding for big files without it, never for small ones", () => {
+  const big = facts({ files: 12, bytes: 12 * 300 * MB, here: 12, sizes: sized(0, 0, 0, 12) });
+  assert.deepEqual(kinds({ ...big, footers: footers({ files: 12, vorder: 12, groups: 12, rows: 12e6 }) }), []);
+  const some = findings({ ...big, footers: footers({ files: 12, vorder: 9, groups: 12, rows: 12e6, unordered: { files: 3, bytes: 900 * MB } }) });
+  assert.deepEqual(some.map(x => x.kind), ["no-vorder"]);
+  assert.match(some[0].detail, /^3 files here of 128 MB or more, 900 MB in all, have no V-Order/);
+  // Many small files without V-Order: merging them is the finding, V-Order is not said again.
+  const tiny = facts({ files: 10, bytes: 10 * MB, here: 10, sizes: sized(10), footers: footers({ files: 10, groups: 10, rows: 10_000 }) });
+  assert.deepEqual(kinds(tiny), ["small-files"]);
+  // An Iceberg table has no V-Order to turn on.
+  assert.deepEqual(kinds({ ...big, format: "iceberg", footers: footers({ files: 12, vorder: 0, groups: 12, rows: 12e6, unordered: { files: 12, bytes: 3600 * MB } }) }), []);
   // No file here: nothing is said of V-Order or row groups.
   assert.deepEqual(kinds({ ...big, footers: null }), []);
+});
+
+test("small row groups are a finding for big files cut into them, not for small files", () => {
+  const big = facts({ files: 1, bytes: 600 * MB, here: 1, sizes: sized(0, 0, 0, 1) });
+  const cut = findings({ ...big, footers: footers({ files: 1, vorder: 1, groups: 40, rows: 40 * 30_000, split: { files: 1, groups: 40, rows: 40 * 30_000 } }) });
+  assert.deepEqual(cut.map(x => x.kind), ["small-row-groups"]);
+  assert.match(cut[0].detail, /^1 file here cut into 40 row groups of 30,000 rows on average/);
+  // 150,000 rows in two groups: nothing worth rewriting.
+  assert.deepEqual(kinds({ ...big, footers: footers({ files: 1, vorder: 1, groups: 2, rows: 150_000, split: { files: 1, groups: 2, rows: 150_000 } }) }), []);
 });
 
 test("a Delta checkpoint a hundred commits behind is a finding", () => {
@@ -68,19 +89,28 @@ test("the facts come from the lake's metadata, and from the footers of the files
     await c.run("CREATE TABLE lake.t1 AS SELECT range AS id FROM range(1000)");
     await c.run("INSERT INTO lake.t1 SELECT range FROM range(500)");
     await c.run("DELETE FROM lake.t1 WHERE id < 100");
-    // One file is named by a local copy, as the table service does once it has come down; it was written with V-Order.
-    const [{ path: rel }] = (await c.runAndReadAll("SELECT path FROM system_internal.ducklake_data_file ORDER BY data_file_id LIMIT 1")).getRowObjectsJson();
-    const local = p(join(dir, "here.parquet"));
-    await c.run(`COPY (SELECT range AS id FROM range(1000)) TO '${local}' (FORMAT parquet, KV_METADATA {'${VORDER_KEY}': 'true'})`);
-    await c.run(`UPDATE system_internal.ducklake_data_file SET path = '${local}', path_is_relative = false WHERE path = '${rel}'`);
+    // Both files are named by local copies, as the table service does once they have come down. The first was
+    // written with V-Order and cut into several row groups; the second has no V-Order, and the lake says it is
+    // 200 MB, so it counts as big: its size comes from the lake, matched to its footer by path.
+    const rels = (await c.runAndReadAll("SELECT path FROM system_internal.ducklake_data_file ORDER BY data_file_id")).getRowObjectsJson().map(r => r.path);
+    const cut = p(join(dir, "cut.parquet")), plain = p(join(dir, "plain.parquet"));
+    await c.run(`COPY (SELECT range AS id FROM range(10000)) TO '${cut}' (FORMAT parquet, ROW_GROUP_SIZE 2048, KV_METADATA {'${VORDER_KEY}': 'true'})`);
+    await c.run(`COPY (SELECT range AS id FROM range(500)) TO '${plain}' (FORMAT parquet)`);
+    await c.run(`UPDATE system_internal.ducklake_data_file SET path = '${cut}', path_is_relative = false WHERE path = '${rels[0]}'`);
+    await c.run(`UPDATE system_internal.ducklake_data_file SET path = '${plain}', path_is_relative = false, file_size_bytes = ${200 * MB} WHERE path = '${rels[1]}'`);
     const run = async sql => ({ rows: (await c.runAndReadAll(sql)).getRowObjectsJson() });
     const f = await tableFacts(run, "t1");
     assert.equal(f.files, 2);
     assert.equal(f.records, 1500);
     assert.equal(f.deleted, 200);
-    assert.equal(f.here, 1);
-    assert.equal(f.sizes[0].files, 2);
-    assert.deepEqual(f.footers, { files: 1, groups: 1, rows: 1000, vorder: 1 });
+    assert.equal(f.here, 2);
+    assert.deepEqual([f.sizes[0].files, f.sizes[3].files], [1, 1]);
+    const g = f.footers;
+    assert.deepEqual([g.files, g.rows, g.vorder], [2, 10500, 1]);
+    assert.deepEqual(g.unordered, { files: 1, bytes: 200 * MB });
+    assert.equal(g.split.files, 1);
+    assert.equal(g.split.rows, 10000);
+    assert.ok(g.split.groups > 1 && g.groups === g.split.groups + 1, `row groups: ${JSON.stringify(g)}`);
     assert.deepEqual((await tableFacts(run, "nope")).files, 0);
   } finally {
     c.closeSync();
