@@ -14,7 +14,7 @@ const sqlStr = s => `'${String(s).replace(/'/g, "''")}'`;
 // A double-quoted identifier, for names that came from data rather than from this code.
 const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 
-const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart, ENGINE_DB } = require('./names');
+const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart, itemPart, ENGINE_DB } = require('./names');
 // The engine's own catalogs, other than its database: a name starting with one is DuckDB's, never a workspace's.
 const OWN_CATALOGS = new Set(['temp', 'system', 'lake', 'system_internal']);
 const isOwnCatalog = s => OWN_CATALOGS.has(String(s).toLowerCase()) || /^ice_[0-9a-f]{16}$/i.test(String(s));
@@ -942,5 +942,228 @@ function readsCatalog(sql) {
   return /\bshow\b/i.test(s) || CATALOG_READS.test(s);
 }
 
+// -----------------------------------------------------------------------------
+// USE: the schema a tab's bare table names are in
+// -----------------------------------------------------------------------------
+// `USE aemo.data.dbo`, then `SELECT * FROM dim_duid`, as Fabric's Spark takes it. DuckDB 2.0 can't: a nested
+// schema can't be in its search path ("nested schemas cannot be used in the search path"), and each statement
+// here has a connection of its own anyway. So the engine keeps the schema for the tab, and gives each bare name
+// its whole name before the statement runs: DuckDB's own parser says where they are (json_serialize_sql).
+const USE_SHAPE = "USE takes a lakehouse's or a warehouse's schema: USE <workspace>.<lakehouse>.<schema>, or " +
+  'USE <workspace>.<lakehouse> for its dbo';
+// The schemas DuckDB keeps in every catalog: never a workspace's name a statement can reach (engine-host.js).
+const DUCKDB_SCHEMAS = new Set(['main', 'pg_catalog', 'information_schema']);
+
+/**
+ * What a USE asks: null for any other statement; { clear: true } for USE onelake or USE main, which go back to
+ * the engine's own; else the schema, { workspace, item, kind, schema }, as written. Throws for any other USE.
+ * @param {string} sql
+ */
+function useOf(sql) {
+  const tk = tokens(String(sql)).filter(t => t.t !== ';');
+  if (!tk.length || tk[0].t !== 'word' || tk[0].w !== 'use') return null;
+  oneStatement(sql);
+  const parts = [];
+  for (let j = 1; ; j += 2) {
+    const t = tk[j];
+    if (!t || (t.t !== 'word' && t.t !== 'name')) refuse(USE_SHAPE);
+    parts.push(t.v);
+    if (!tk[j + 1]) break;
+    if (tk[j + 1].t !== '.') refuse(USE_SHAPE);
+  }
+  const p = parts.length > 1 && parts[0].toLowerCase() === ENGINE_DB ? parts.slice(1) : parts;
+  if ((parts.length === 1 && parts[0].toLowerCase() === ENGINE_DB) || (p.length === 1 && p[0].toLowerCase() === 'main')) return { clear: true };
+  if (p.length < 2 || p.length > 3 || isOwnCatalog(p[0]) || DUCKDB_SCHEMAS.has(p[0].toLowerCase())) refuse(USE_SHAPE);
+  if (isGuid(p[0]) && isGuid(p[1])) refuse(`${USE_SHAPE}, by their names, not their GUIDs`);
+  const it = splitItem(p[1]);
+  return { workspace: p[0], item: it ? it.item : p[1], kind: it ? it.kind : 'lakehouse', schema: p.length === 3 ? p[2] : 'dbo' };
+}
+
+// A USE's schema as SQL writes it: aemo.data.dbo.
+const namespaceName = ns => [ns.workspace, itemPart(ns.item, ns.kind), ns.schema].map(sqlPart).join('.');
+
+// The character a UTF-8 byte offset is at, as DuckDB's parser gives a name's place; -1 past the end.
+function charAtByte(s, bytes) {
+  let b = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (b === bytes) return i;
+    const c = s.codePointAt(i);
+    b += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+    if (c > 0xffff) i++;
+  }
+  return b === bytes ? s.length : -1;
+}
+
+/**
+ * Every bare table name `sql` reads: one with no database in front, `t` or `s.t`, as [{ start, end, parts }],
+ * where it is written. By DuckDB's parse of it (`serialize`), so a column, an alias or a function is never one,
+ * and a CTE's name is left out. A statement it can't parse has none: it fails as written.
+ * @param {string} sql
+ * @param {(sql: string) => Promise<object>} serialize  DuckDB's json_serialize_sql on it, parsed
+ */
+async function bareNames(sql, serialize) {
+  const text = String(sql);
+  const out = [];
+  const tk = tokens(text);
+  const nameFrom = at => {
+    const parts = [];
+    let j = at, end = tk[at] ? tk[at].start : 0;
+    for (;;) {
+      const t = tk[j];
+      if (!t || (t.t !== 'word' && t.t !== 'name')) break;
+      parts.push(t.v);
+      end = t.end;
+      if (!tk[j + 1] || tk[j + 1].t !== '.') { j++; break; }
+      j += 2;
+    }
+    return { parts, end, next: j };
+  };
+  // DESCRIBE t and SUMMARIZE t: the parser says no place for the table, so it is found as written.
+  if (tk[0] && tk[0].t === 'word' && ['describe', 'desc', 'summarize', 'show'].includes(tk[0].w) && tk[1] && tk[1].t !== '(' &&
+      !(tk[1].t === 'word' && READS.has(tk[1].w)) && !(tk[1].t === 'word' && ['tables', 'all', 'databases', 'schemas', 'semantic'].includes(tk[1].w))) {
+    const n = nameFrom(1);
+    const rest = tk.slice(n.next).filter(t => t.t !== ';');
+    if (n.parts.length && n.parts.length <= 2 && !rest.length) out.push({ start: tk[1].start, end: n.end, parts: n.parts });
+    return out;
+  }
+  // EXPLAIN …: the query after it.
+  const lead = /^\s*/.exec(text)[0].length;
+  const explained = EXPLAIN.exec(text.slice(lead));
+  const from = explained ? text.length - explained[2].length : 0;
+  const body = text.slice(from);
+  let parsed = await serialize(body), shift = 0;
+  if (parsed.error && NOT_A_SELECT.test(parsed.error_message) && PIVOT.test(scan(body).text)) {
+    parsed = await serialize(`SELECT * FROM (${body}\n)`);
+    shift = Buffer.byteLength('SELECT * FROM (');
+  }
+  if (!parsed || parsed.error) return out;
+  const ctes = new Set(), found = [];
+  const walk = o => {
+    if (Array.isArray(o)) { for (const v of o) walk(v); return; }
+    if (!o || typeof o !== 'object') return;
+    if (o.type === 'BASE_TABLE' && !o.catalog_name && Number.isSafeInteger(o.query_location)) found.push(o);
+    if (o.cte_map && Array.isArray(o.cte_map.map)) for (const e of o.cte_map.map) ctes.add(String(e.key).toLowerCase());
+    for (const v of Object.values(o)) walk(v);
+  };
+  walk(parsed.statements);
+  for (const b of found) {
+    if (!b.schema_name && ctes.has(String(b.table_name).toLowerCase())) continue;
+    const at = charAtByte(body, b.query_location - shift);
+    if (at < 0) continue;
+    const k = tk.findIndex(t => t.start === from + at);
+    if (k < 0) continue;
+    const n = nameFrom(k);
+    const want = b.schema_name ? 2 : 1;
+    if (n.parts.length !== want || n.parts[want - 1].toLowerCase() !== String(b.table_name).toLowerCase()) continue;
+    out.push({ start: tk[k].start, end: n.end, parts: n.parts });
+  }
+  return out;
+}
+
+/**
+ * `sql` with each bare name a table of the USE's schema `ns`: `t` is <ns>.t, `s.t` is the same lakehouse's s.t.
+ * `duck` says what the engine has: { databases, schemas, objects }, lower-cased sets of its databases, its
+ * top-level schemas, and the tables and views a bare name finds in it (a Files/ view, DuckDB's own). A name
+ * that is the engine's stays as written; one the schema has too (`listed`, by its whole name) is refused, as a
+ * name meaning two tables. SHOW TABLES lists the schema.
+ */
+function withNamespace(sql, names, ns, duck, listed = () => false) {
+  const text = String(sql);
+  const nsName = namespaceName(ns);
+  if (/^\s*show\s+tables\s*;?\s*$/i.test(scan(text).text)) return `SHOW TABLES FROM ${nsName}`;
+  let out = text;
+  for (const n of [...names].sort((a, b) => b.start - a.start)) {
+    const [a, b] = n.parts;
+    let whole;
+    if (n.parts.length === 1) {
+      whole = `${nsName}.${sqlPart(a)}`;
+      if (duck.objects.has(a.toLowerCase())) {
+        if (listed(whole)) {
+          refuse(`${a} is both ${whole} and a table or view of this engine's own, such as a file's view: write the whole ` +
+            'name of the one you mean');
+        }
+        continue;
+      }
+    } else {
+      if (duck.databases.has(a.toLowerCase()) || duck.schemas.has(a.toLowerCase())) continue;
+      whole = [ns.workspace, itemPart(ns.item, ns.kind), a, b].map(sqlPart).join('.');
+    }
+    out = out.slice(0, n.start) + whole + out.slice(n.end);
+  }
+  return out;
+}
+
+// The engine's own names a bare name can reach, for withNamespace: run as a query, its rows are { k, n }.
+const DUCK_NAMES = `SELECT 'db' AS k, lower(database_name) AS n FROM duckdb_databases()
+UNION ALL SELECT 'schema', lower(schema_name) FROM duckdb_schemas() WHERE parent_schema_oid IS NULL AND database_name = current_database()
+UNION ALL SELECT 'object', lower(o.name) FROM (
+  SELECT database_oid, schema_oid, table_name AS name FROM duckdb_tables()
+  UNION ALL SELECT database_oid, schema_oid, view_name FROM duckdb_views()) o
+JOIN duckdb_schemas() s ON s.database_oid = o.database_oid AND s.oid = o.schema_oid
+WHERE s.parent_schema_oid IS NULL AND (s.database_name IN ('temp', 'system') OR (s.database_name = current_database() AND s.schema_name IN ('main', 'pg_catalog')))`;
+const duckNamesOf = rows => {
+  const duck = { databases: new Set(), schemas: new Set(), objects: new Set() };
+  for (const r of rows) (r.k === 'db' ? duck.databases : r.k === 'schema' ? duck.schemas : duck.objects).add(String(r.n));
+  return duck;
+};
+
+/**
+ * A write with a USE's schema `ns`: its target, when it is a bare name, as the schema's table (or, for CREATE
+ * SCHEMA, the lakehouse's schema), and the query of an INSERT, a CREATE TABLE … AS or a COPY (…) TO through
+ * withNamespace. Anything else as written.
+ */
+async function writeWithNamespace(sql, ns, serialize, duck, listed) {
+  const text = String(sql);
+  const tk = tokens(text).filter(t => t.t !== ';');
+  const w = k => (tk[k] && tk[k].t === 'word' ? tk[k].w : '');
+  if (w(0) === 'with') return text;   // a write with CTEs: as written
+  const verb = w(0);
+  const nameAt = at => {
+    const parts = [];
+    let j = at;
+    while (tk[j] && (tk[j].t === 'word' || tk[j].t === 'name')) {
+      parts.push(tk[j].v);
+      if (!tk[j + 1] || tk[j + 1].t !== '.') { j++; break; }
+      j += 2;
+    }
+    return parts.length ? { parts, start: tk[at].start, end: tk[j - 1].end, next: j } : null;
+  };
+  const skip = (at, words) => (words.every((x, i) => w(at + i) === x) ? at + words.length : at);
+  let at = -1, schema = false;
+  if (verb === 'insert' && w(1) === 'into') at = 2;
+  else if (verb === 'update') at = 1;
+  else if ((verb === 'delete' && w(1) === 'from') || (verb === 'merge' && w(1) === 'into')) at = 2;
+  else if (verb === 'alter' && w(1) === 'table') at = skip(2, ['if', 'exists']);
+  else if (verb === 'create' && w(1) === 'table') at = skip(2, ['if', 'not', 'exists']);
+  else if (verb === 'create' && w(1) === 'schema') { at = skip(2, ['if', 'not', 'exists']); schema = true; }
+  let out = text, target = null;
+  const n = at >= 0 ? nameAt(at) : null;
+  if (n && (schema ? n.parts.length === 1 : n.parts.length <= 2) && !isOwnCatalog(n.parts[0]) && !duck.databases.has(n.parts[0].toLowerCase())) {
+    const lh = [ns.workspace, itemPart(ns.item, ns.kind)];
+    const whole = schema ? [...lh, n.parts[0]] : n.parts.length === 1 ? [...lh, ns.schema, n.parts[0]] : [...lh, ...n.parts];
+    target = { start: n.start, end: n.end, text: whole.map(sqlPart).join('.') };
+  }
+  // The query in it: after INSERT INTO t's columns, after CREATE TABLE t AS, or COPY's (…).
+  let q = null;
+  if (verb === 'insert' && n) {
+    const j = tk.findIndex((t, x) => x >= n.next && t.depth === 0 && t.t === 'word' && READS.has(t.w));
+    if (j >= 0) q = { start: tk[j].start, end: text.length };
+  } else if (verb === 'create' && !schema && n) {
+    const j = tk.findIndex((t, x) => x >= n.next && t.depth === 0 && t.t === 'word' && t.w === 'as');
+    if (j >= 0 && tk[j + 1]) q = { start: tk[j + 1].start, end: text.length };
+  } else if (verb === 'copy' && tk[1] && tk[1].t === '(') {
+    const close = tk.findIndex((t, x) => x > 1 && t.t === ')' && t.depth === tk[1].depth);
+    if (close > 2) q = { start: tk[2].start, end: tk[close].start };
+  }
+  if (q) {
+    const inner = text.slice(q.start, q.end);
+    const names = await bareNames(inner, serialize);
+    out = out.slice(0, q.start) + withNamespace(inner, names, ns, duck, listed) + out.slice(q.end);
+  }
+  if (target) out = out.slice(0, target.start) + target.text + out.slice(target.end);
+  return out;
+}
+
 module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
-                   writeOf, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };
+                   writeOf, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
+                   useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf };

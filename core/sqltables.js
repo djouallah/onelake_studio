@@ -278,9 +278,9 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   }
 
   // A file's lakehouse, from its SQL name (sql.js fileRefs): the workspace and the item's directory,
-  // as OneLake spells them, found the way a table's are.
+  // as OneLake spells them, found the way a table's are. A USE's item too, of its `kind`.
   async function resolveFile(ref, { fresh = false } = {}) {
-    const { ws, dir } = await locate({ kind: 'lakehouse', workspace: ref.workspace, item: ref.item, name: ref.written }, fresh);
+    const { ws, dir } = await locate({ kind: ref.kind || 'lakehouse', workspace: ref.workspace, item: ref.item, name: ref.written }, fresh);
     return { workspace: ws, item: dir };
   }
 

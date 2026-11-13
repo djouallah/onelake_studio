@@ -553,3 +553,46 @@ test("an UPDATE, DELETE or MERGE whose bound plan DuckDB can't write is held to 
   assert.doesNotThrow(() => checkPhysical([op("ICEBERG_UPDATE", op("PROJECTION", op("COPY_TO_FILE")))], "update"), "an Iceberg write's own files");
   assert.throws(() => checkPhysical([op("PROJECTION", op("COPY_TO_FILE"))], "update"), /plans a COPY_TO_FILE in this/, "a COPY under no Iceberg write is a write elsewhere");
 });
+
+// USE: the schema a tab's bare names are in.
+test("USE names a lakehouse's or a warehouse's schema, its dbo by default; USE onelake ends it", () => {
+  const { useOf } = require("../../core/sql.js");
+  assert.deepEqual(useOf("USE aemo.data.dbo;"), { workspace: "aemo", item: "data", kind: "lakehouse", schema: "dbo" });
+  assert.deepEqual(useOf("use `ANZ ws`.gold_warehouse"), { workspace: "ANZ ws", item: "gold", kind: "warehouse", schema: "dbo" });
+  assert.deepEqual(useOf('USE onelake."ANZ ws".data.mart'), { workspace: "ANZ ws", item: "data", kind: "lakehouse", schema: "mart" });
+  assert.deepEqual(useOf("USE onelake"), { clear: true });
+  assert.deepEqual(useOf("USE main"), { clear: true });
+  assert.equal(useOf("SELECT 1"), null);
+  for (const bad of ["USE aemo", "USE main.a.b", "USE lake.a.b", "USE a.b.c.d", "USE a.b c", "USE a.b; SELECT 1"]) {
+    assert.throws(() => useOf(bad), /Not run/, bad);
+  }
+});
+
+test("under a USE, a bare name is the schema's table, and the engine's own stays its own", async () => {
+  const { withNamespace, writeWithNamespace } = require("../../core/sql.js");
+  const ns = { workspace: "ANZ ws", item: "gold", kind: "warehouse", schema: "sales" };
+  const duck = { databases: new Set(["onelake", "cat1"]), schemas: new Set(["main", "information_schema", "aemo"]), objects: new Set(["v"]) };
+  const at = (s, w, parts) => ({ start: s.indexOf(w), end: s.indexOf(w) + w.length, parts });
+  const sql = "SELECT * FROM t JOIN mart.u ON true JOIN main.x ON true JOIN v ON true JOIN cat1.y ON true";
+  const names = [at(sql, " t ", ["t"]), at(sql, "mart.u", ["mart", "u"]), at(sql, "main.x", ["main", "x"]), at(sql, " v ", ["v"]),
+                 at(sql, "cat1.y", ["cat1", "y"])].map(n => (n.parts.length === 1 ? { ...n, start: n.start + 1, end: n.end - 1 } : n));
+  assert.equal(withNamespace(sql, names, ns, duck),
+    'SELECT * FROM "ANZ ws".gold_warehouse.sales.t JOIN "ANZ ws".gold_warehouse.mart.u ON true JOIN main.x ON true JOIN v ON true JOIN cat1.y ON true');
+  // A name the engine has, which the schema has too, means two tables.
+  assert.throws(() => withNamespace(sql, names, ns, duck, n => n === '"ANZ ws".gold_warehouse.sales.v'),
+    /v is both "ANZ ws"\.gold_warehouse\.sales\.v and a table or view of this engine's own/);
+  assert.equal(withNamespace("show tables;", [], ns, duck), 'SHOW TABLES FROM "ANZ ws".gold_warehouse.sales');
+
+  // A write's bare target; its query's names are DuckDB's parser's to find, here none.
+  const none = async () => ({ error: false, statements: [] });
+  const lh = { workspace: "aemo", item: "data", kind: "lakehouse", schema: "dbo" };
+  for (const [w, want] of [["INSERT INTO t SELECT 1", "INSERT INTO aemo.data.dbo.t SELECT 1"],
+    ["INSERT INTO mart.t (a) SELECT 1", "INSERT INTO aemo.data.mart.t (a) SELECT 1"],
+    ["CREATE TABLE IF NOT EXISTS x AS SELECT 1", "CREATE TABLE IF NOT EXISTS aemo.data.dbo.x AS SELECT 1"],
+    ["CREATE SCHEMA raw", "CREATE SCHEMA aemo.data.raw"],
+    ["DELETE FROM t WHERE a = 1", "DELETE FROM aemo.data.dbo.t WHERE a = 1"],
+    ["INSERT INTO aemo.data.dbo.t SELECT 1", "INSERT INTO aemo.data.dbo.t SELECT 1"],
+    ["INSERT INTO cat1.t SELECT 1", "INSERT INTO cat1.t SELECT 1"]]) {
+    assert.equal(await writeWithNamespace(w, lh, none, duck), want, w);
+  }
+});

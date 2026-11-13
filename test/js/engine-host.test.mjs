@@ -430,7 +430,12 @@ test("native engine host", async t => {
       emptySql: "SELECT CAST(NULL AS INTEGER) AS id WHERE false" },
     { kind: "semanticmodel", workspace: "cat1", model: "Sales Model" },
   ];
-  const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w), resolveTable,
+  // A USE's item, as OneLake spells it.
+  const resolveFile = async ref => {
+    if (ref.item.toLowerCase() === "missing") throw Object.assign(new Error(`${ref.written}: there is no ${ref.kind} ${ref.item}`), { notListed: true });
+    return { workspace: ref.workspace, item: `${ref.item}.${ref.kind === "lakehouse" ? "Lakehouse" : "Warehouse"}` };
+  };
+  const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w), resolveTable, resolveFile,
                                     catalogTables: async () => cached,
                                     bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
   t.after(async () => {
@@ -549,6 +554,46 @@ test("native engine host", async t => {
     engine.catalogChanged();
     r = await engine.call("query", ["SHOW ALL TABLES"]);
     assert.equal(ours(r.rows).find(x => x.name === "unread").column_names, "['now']");
+  });
+
+  await t.test("after USE, a bare name is a table of that schema, in that tab only", async st => {
+    const tab = engine.forTab(), other = engine.forTab();
+    st.after(async () => { await tab.dispose(); await other.dispose(); });
+    let r = await tab.call("query", ["USE aemo.data.dbo"]);
+    assert.deepEqual(r.rows, [{ schema: "aemo.data.dbo" }]);
+    r = await tab.call("query", ["SELECT t FROM dim_duid"]);
+    assert.deepEqual(r.rows, [{ t: "dim_duid" }]);
+    assert.deepEqual([resolved.at(-1).workspace, resolved.at(-1).item, resolved.at(-1).schema], ["aemo", "data", "dbo"]);
+    // Another schema of the same lakehouse, a join, a subquery, a name after a string that isn't ASCII, DESCRIBE.
+    r = await tab.call("query", ["SELECT 'é' AS e, a.t AS x, b.t AS y FROM dim_a a JOIN mart.dim_b b ON true WHERE exists (SELECT 1 FROM dim_c)"]);
+    assert.deepEqual(r.rows, [{ e: "é", x: "dim_a", y: "dim_b" }]);
+    assert.ok(resolved.some(x => x.schema === "mart" && x.table === "dim_b"));
+    r = await tab.call("query", ["DESCRIBE dim_duid"]);
+    assert.deepEqual(r.rows.map(x => x.column_name), ["answer", "t"]);
+    // A CTE's name is the CTE, and the engine's own names stay its own.
+    r = await tab.call("query", ["WITH dim_duid AS (SELECT 1 AS t) SELECT t FROM dim_duid"]);
+    assert.deepEqual(r.rows, [{ t: 1 }]);
+    r = await tab.call("query", ["SELECT count(*) > 0 AS ok FROM information_schema.schemata"]);
+    assert.deepEqual(r.rows, [{ ok: true }]);
+    // The whole name still reads, and a stream takes the USE too.
+    const batches = [];
+    await tab.call("stream", ["SELECT t FROM dim_e"], b => batches.push(b));
+    assert.equal(batches[0].rows[0].t, "dim_e");
+    // Another tab has no USE.
+    await assert.rejects(other.call("query", ["SELECT * FROM dim_duid"]), /does not exist/);
+
+    // SHOW TABLES lists the schema; a file's view named as one of its tables is refused, as a name for two tables.
+    await tab.call("query", ["USE cat1.lh"]);
+    r = await tab.call("query", ["SHOW TABLES"]);
+    assert.deepEqual(r.rows.map(x => x.name).sort(), ["t", "unread"]);
+    await tab.call("fileView", ["t", "SELECT 1 AS a"]);
+    await assert.rejects(tab.call("query", ["SELECT * FROM t"]), /t is both cat1\.lh\.dbo\.t and a table or view of this engine's own/);
+    await tab.call("releaseFiles", [{ views: ["t"] }]);
+    // An item that isn't there says so, and the USE before it holds.
+    await assert.rejects(tab.call("query", ["USE ws.missing.dbo"]), /there is no lakehouse missing/);
+    r = await tab.call("query", ["USE onelake"]);
+    assert.deepEqual(r.rows, [{ schema: "onelake" }]);
+    await assert.rejects(tab.call("query", ["SELECT * FROM dim_duid"]), /does not exist/);
   });
 
   await t.test("a statement needs no Microsoft account", async () => {

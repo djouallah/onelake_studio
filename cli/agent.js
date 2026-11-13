@@ -679,10 +679,12 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       // says what it did as a note; the last one's answer is the answer.
       const parts = statementsOf(all);
       const text = parts.length ? parts[parts.length - 1] : all;
+      // A USE holds for the statements after it, as in a tab.
+      const namespace = { value: null };
       for (let i = 0; i < parts.length - 1; i++) {
         try {
           const st = await compiled(parts[i]);
-          const res = await (await engine()).agentQuery(st ? st.sql : parts[i], { signal: opts.signal, fresh: !!opts.fresh });
+          const res = await (await engine()).agentQuery(st ? st.sql : parts[i], { signal: opts.signal, fresh: !!opts.fresh, namespace });
           const n = res.numRows != null ? res.numRows : (res.rows || []).length;
           io.note(`${i + 1}/${parts.length}: ${n.toLocaleString('en')} row(s)`);
         } catch (e) {
@@ -704,7 +706,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       // SHOW ALL TABLES holds every column of every table, too much for an agent's context: Markdown
       // asks how many, and --csv and --json keep the columns.
       const counted = !opts.csv && !opts.json && isShowAllTables(run);
-      const res = await (await engine()).agentQuery(counted ? ALL_TABLES_COUNTED : run, { signal: opts.signal, fresh: !!opts.fresh });
+      const res = await (await engine()).agentQuery(counted ? ALL_TABLES_COUNTED : run, { signal: opts.signal, fresh: !!opts.fresh, namespace });
       // cachedAt: when the oldest table it read was last read from OneLake.
       if (Number.isFinite(res.asOf)) {
         io.seen(res.asOf);

@@ -35,8 +35,9 @@ const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
 const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, checkPlan, checkPhysical,
         isUnserialized, ICE_PREFIX,
-        tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
-const { sqlName, sqlPart, itemPart, abfssUrl, MODEL_KIND, modelSqlName, ENGINE_DB } = require('../names');
+        tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ,
+        useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf } = require('../sql');
+const { sqlName, sqlPart, itemPart, displayName, abfssUrl, MODEL_KIND, modelSqlName, ENGINE_DB } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
 const { mapPool } = require('../onelake/http');
 const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll } = require('../lake/onelaketable');
@@ -1118,6 +1119,37 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } finally { try { c.closeSync(); } catch (_) {} }
   }
 
+  // A USE (sql.js useOf): the schema it names, its item found in OneLake and spelled as OneLake spells it. null
+  // for USE onelake. The schema itself is not looked for: a lakehouse's empty one has nothing to list.
+  async function namespaceOf(asked) {
+    if (asked.clear) return null;
+    if (!resolveFile) throw new Error('this engine cannot name OneLake tables');
+    const find = (item, kind) => resolveFile({ workspace: asked.workspace, item, kind,
+      written: `USE ${[asked.workspace, itemPart(item, kind), asked.schema].map(sqlPart).join('.')}` });
+    let kind = asked.kind, item = asked.item, at;
+    try { at = await find(item, kind); }
+    catch (e) {
+      if (kind === 'lakehouse' || !e || !e.notListed) throw e;
+      // ws.gold_warehouse.dbo: the lakehouse named gold_warehouse, when that is what the workspace has.
+      item = itemPart(asked.item, kind);
+      kind = 'lakehouse';
+      at = await find(item, kind).catch(() => { throw e; });
+    }
+    return { workspace: at.workspace, item: displayName(at.item), kind, schema: asked.schema };
+  }
+  // What a USE answers: the schema bare names are in now.
+  const useAnswer = ns => `SELECT ${sqlStr(ns ? namespaceName(ns) : ENGINE_DB)} AS schema`;
+  // A statement under a USE's schema `ns`, its bare names given their whole names (sql.js withNamespace). The
+  // engine's own names are asked where the statement runs: a file's view is the shared engine's.
+  async function namespaced(sql, ns, owner, { write = false } = {}) {
+    if (!ns) return sql;
+    const r = await withConn(c => c.runAndReadAll(DUCK_NAMES), owner);
+    const duck = duckNamesOf(r.getRowObjectsJson());
+    const isListed = name => listed.has(name.toLowerCase()) || made.has(name.toLowerCase());
+    if (write) return writeWithNamespace(sql, ns, serialize, duck, isListed);
+    return withNamespace(sql, await bareNames(sql, serialize), ns, duck, isListed);
+  }
+
   // ---------------------------------------------------------------------------
   // Writes: a lakehouse's Tables, through its Iceberg catalog, and its Files/
   // ---------------------------------------------------------------------------
@@ -1341,6 +1373,25 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       }, canRetry, { seen: at => { asOf = at; }, signal }), canRetry);
       return { done: true, numRows, asOf };
     }
+    // This tab's USE: the schema its bare table names are in (namespaceOf), or null.
+    let ns = null;
+    const use = (asked, run) => stoppable(async begin => {
+      await init();
+      const next = await namespaceOf(asked);
+      begin();
+      ns = next;
+      return run(useAnswer(next));
+    });
+    // A write, its bare names under this tab's USE first.
+    const write = (sql, o) => {
+      if (!ns) writeOf(sql);
+      return stoppable(async (begin, signal) => {
+        await init();
+        const run = await namespaced(sql, ns, owner, { write: true });
+        writeOf(run);
+        return runWrite(run, { owner, begin, signal, ...o });
+      });
+    };
     // What this tab made, the only things it may take away.
     const views = new Set(), attached = new Set();
     async function release({ views: goingViews = [], attached: goingAttached = [] } = {}) {
@@ -1359,14 +1410,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // The page's SQL reads, or writes to a lakehouse (runWrite). A read is checked here at once, then asked of
       // DuckDB's parser; a write is held to DuckDB's own plan of it.
       async query(sql) {
-        if (!readsOnly(sql)) {
-          writeOf(sql);
-          return stoppable(async (begin, signal) => { await init(); return runWrite(sql, { owner, begin, signal }); });
-        }
+        const asked = useOf(sql);
+        if (asked) return use(asked, run => runAll(run, owner));
+        if (!readsOnly(sql)) return write(sql);
         assertReads(sql);
         return stoppable(async (begin, signal) => {
           await init();
-          const statement = await checkedRead(sql, serialize);
+          const statement = await namespaced(await checkedRead(sql, serialize), ns, owner);
           let asOf = null;
           const res = await withAuthRetry(() => withTables(statement, run => {
             begin();
@@ -1377,14 +1427,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       },
 
       async stream(sql, emit) {
-        if (!readsOnly(sql)) {
-          writeOf(sql);
-          return stoppable(async (begin, signal) => { await init(); return runWrite(sql, { owner, begin, signal, emit }); });
-        }
+        const asked = useOf(sql);
+        if (asked) return use(asked, run => withConn(c => runStreaming(c, run, emit), owner).then(numRows => ({ done: true, numRows })));
+        if (!readsOnly(sql)) return write(sql, { emit });
         assertReads(sql);
         return stoppable(async (begin, signal) => {
           await init();
-          return streamed(await checkedRead(sql, serialize), emit, begin, signal);
+          return streamed(await namespaced(await checkedRead(sql, serialize), ns, owner), emit, begin, signal);
         });
       },
 
@@ -1531,7 +1580,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // page's Stop does not reach. It reads, or writes to a lakehouse as a tab does (runWrite); the page's setup
   // statements are the page's. Not a page method. `signal`: the command line went away, so its query
   // stops (only its own: another agent's goes on). `mark` goes in front of what runs, for Logs to show.
-  async function agentQuery(sql, { signal, fresh = false, used = true, mark = '' } = {}) {
+  // `namespace` holds the USE of the statements it runs in turn, { value }, as a tab's does.
+  async function agentQuery(sql, { signal, fresh = false, used = true, mark = '', namespace = null } = {}) {
     const token = authToken;
     const mine = new Set();
     const owner = {
@@ -1541,15 +1591,25 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const stop = () => { for (const c of mine) { try { c.interrupt(); } catch (_) {} } };
     if (signal) signal.addEventListener('abort', stop, { once: true });
     try {
+      const asked = useOf(sql);
+      if (asked) {
+        await init();
+        const next = await namespaceOf(asked);
+        if (namespace) namespace.value = next;
+        return await runAll(useAnswer(next), owner);
+      }
+      const ns = namespace ? namespace.value : null;
       if (!readsOnly(sql)) {
-        writeOf(sql);
+        if (!ns) writeOf(sql);
         await init();
         if (signal && signal.aborted) throw new Error('nobody is waiting for this any more');
-        return await runWrite(sql, { owner });
+        const run = await namespaced(sql, ns, owner, { write: true });
+        writeOf(run);
+        return await runWrite(run, { owner });
       }
       assertReads(sql);
       await init();
-      const statement = mark + await checkedRead(sql, serialize);
+      const statement = mark + await namespaced(await checkedRead(sql, serialize), ns, owner);
       let asOf = null;
       const res = await withAuthRetry(() => withTables(statement, run => {
         if (signal && signal.aborted) throw new Error('nobody is waiting for this any more');

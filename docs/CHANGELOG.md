@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **USE a schema, then name its tables alone.** `USE aemo.data.dbo` lets the tab's statements name
+  `dim_duid` for `aemo.data.dbo.dim_duid`, and `mart.sales` for `aemo.data.mart.sales`, in reads and as a write's
+  target. `USE onelake` ends it. A name that is also a file's view, or another table of the engine's, is refused.
 - **New SQL names, as Fabric's Spark writes them.** A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`,
   such as `aemo.data.dbo.dim_duid`, where it was `lakehouse.aemo.data.dbo.dim_duid`, and `aemo.data_lakehouse.dbo.dim_duid`
   reads it too. Any other item has its kind after its

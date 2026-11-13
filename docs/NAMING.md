@@ -42,6 +42,7 @@ name reads too.
 | `lakehouse.aemo.data.dbo.dim_duid` | Refused: the old way. The error gives the name it has now. |
 | `dbo.dim_duid`, `dim_duid` | Not a OneLake table: no workspace or lakehouse. |
 | `aemo.nem_semanticmodel` | A semantic model. |
+| `USE aemo.data.dbo`, then `dim_duid` | `aemo.data.dbo.dim_duid`: after a USE, a table of that schema can be named alone. |
 
 ## The rule
 
@@ -107,6 +108,33 @@ so it is quoted. The GUIDs say the kind, so the item has no `_<kind>`.
   catalog before a schema, and one named like a schema DuckDB keeps (`main`, `pg_catalog`,
   `information_schema`) is not found at all. Their tables are refused by name, and the error says to name
   them by GUIDs.
+
+## USE: a schema for bare names
+
+**`USE <workspace>.<item>.<schema>` lets a tab name that schema's tables by their names alone**, as Fabric's
+Spark does:
+
+```sql
+USE aemo.data.dbo;
+SELECT * FROM dim_duid;     -- aemo.data.dbo.dim_duid
+SELECT * FROM mart.sales;   -- aemo.data.mart.sales
+```
+
+- `USE aemo.data` is its `dbo`, and a warehouse's is `USE aemo.gold_warehouse.sales`. `USE onelake` ends it. The
+  item is looked for in OneLake when the USE runs, and an item that isn't there is refused.
+- It holds for the tab, until the next USE, and for the statements of one `sql` command on the command line.
+  Another tab has its own.
+- A bare name is a table's name, as DuckDB's parser reads the statement: a column, an alias or a function is
+  never one, and a CTE's name is the CTE. The engine writes each one's whole name before DuckDB runs it.
+- A name the engine has itself stays its own: a file's view, `information_schema.tables`, a database file's
+  `shop.orders`. One that is a table of the schema too is refused, as a name that means two tables.
+- A write's target can be bare too: `INSERT INTO monthly …`, `CREATE TABLE monthly AS …`, `CREATE SCHEMA raw`.
+- `SHOW TABLES` lists the schema.
+- The tree, Copy name, listings and errors give the whole name.
+
+**Why the engine does it, not DuckDB.** DuckDB 2.0 can't put a nested schema in its search path (*nested schemas
+cannot be used in the search path*), and each statement here runs on a connection of its own, which a USE
+would not outlive.
 
 ## Semantic models: two parts
 
@@ -251,7 +279,8 @@ leave out DuckDB's own `system` and `temp`, the `lake` the engine reads tables f
 
 ## Why nothing shorter
 
-**A short name resolves to whatever carries it.** A model table used to be read by its short name when it
+**A short name resolves to whatever carries it**, so a bare name is a OneLake table only after a USE, and
+never when something else carries it too. A model table used to be read by its short name when it
 had no Direct Lake source. That name resolved in the engine's `main` schema, where `Files/` views live, so an
 open `Files/` view of the same name was read as the model's table, with no error: the answer looked right and
 came from the wrong data.
@@ -274,9 +303,9 @@ These do not meet the contract yet:
 | Test | What it holds |
 | --- | --- |
 | `test/js/names.test.mjs` | Building names, the `dbo` default, the kind mapping and suffix, quoting, and the host and page `sqlPart` staying equal |
-| `test/js/sql.test.mjs` | `tableRefs`: case, quotes, backticks, GUIDs, the fifth part as a column, the old way, the engine's own catalogs; `fileRefs`: where a file's name counts, and what is refused; `SHOW` rewriting; write targets |
+| `test/js/sql.test.mjs` | `useOf` and bare names under a USE, reads and writes; `tableRefs`: case, quotes, backticks, GUIDs, the fifth part as a column, the old way, the engine's own catalogs; `fileRefs`: where a file's name counts, and what is refused; `SHOW` rewriting; write targets |
 | `test/js/semantic.test.mjs` | `modelSqlName`, `unopenedModels`, and a model with no workspace refused |
 | `test/js/sqltables.test.mjs` | A GUID name resolved by the item it stands for; a bare name outside OneLake's workspaces; `_lakehouse` after a lakehouse's name; the clash with a suffixed name; what a missing item may have meant |
 | `test/js/cli-engine.test.mjs` | Listed names run as SQL; an Import model is refused |
-| `test/js/engine-host.test.mjs` | Tables opened by name across kinds, spaces, case, backticks and GUIDs; whole-path listings; a workspace named like a database refused; a database file renamed off a workspace's name |
+| `test/js/engine-host.test.mjs` | Tables opened by name across kinds, spaces, case, backticks and GUIDs; USE in one tab, with a CTE, DESCRIBE, SHOW TABLES and a file's view of the same name; whole-path listings; a workspace named like a database refused; a database file renamed off a workspace's name |
 | `test/sql/tables.test`, `catalog.test`, `semantic.test` | SQL statements and their answers, through the command line |
