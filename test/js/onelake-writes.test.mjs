@@ -130,6 +130,11 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   const both = async (name, cols, order, s = "test") => {
     const mine = norm(await sql(`SELECT ${cols} FROM ${five(name, s)} ORDER BY ${order}`));
     const theirs = norm(await back(`SELECT ${cols} FROM back.${q(s)}.${q(name)} ORDER BY ${order}`));
+    if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
+      // What the table's manifests list now, for the reason.
+      console.log(JSON.stringify(await back(`SELECT manifest_path, status, content, file_path, record_count
+        FROM iceberg_metadata(back.${q(s)}.${q(name)})`), null, 1));
+    }
     assert.deepEqual(mine, theirs, `${name}: the engine reads what the catalog holds`);
     return mine;
   };

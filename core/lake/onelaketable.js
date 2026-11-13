@@ -265,7 +265,11 @@ async function readIceberg(c, metadataLocation, { allow = async () => {} } = {})
   const sizes = listed.length
     ? new Map((await rows(c, `SELECT filename, size FROM read_blob([${listed.map(m => q(m.file_path)).join(', ')}])`)).map(r => [r.filename, Number(r.size)]))
     : new Map();
-  const data = listed.filter(m => m.content === 'DATA'), dels = listed.filter(m => m.content === 'POSITION_DELETES');
+  // One entry a file: a snapshot's manifests can each list a file they carry on (EXISTING), and a file's path is
+  // the file. Counted twice, its rows were read twice, once with its deletes and once without (a DELETE after an
+  // UPDATE, as DuckDB writes them).
+  const once = content => { const seen = new Set(); return listed.filter(m => m.content === content && !seen.has(m.file_path) && seen.add(m.file_path)); };
+  const data = once('DATA'), dels = once('POSITION_DELETES');
   const deletes = new Map();
   if (dels.length) {
     for (const r of await rows(c, `SELECT filename AS del, file_path AS data, count(*)::BIGINT AS n FROM read_parquet([${dels.map(d => q(d.file_path)).join(', ')}], filename = true) GROUP BY ALL`)) {
