@@ -19,6 +19,19 @@ const VENDOR = join(root, "vendor");
 
 // A SQLite file under Files/, whose bytes the host keeps as it does any file it has read.
 const DB_FILE = "data.Lakehouse/Files/shop.sqlite";
+// .sql files under Files/, one at its top and two in a folder: each opens in the SQL box.
+const SQL_FILES = {
+  "data.Lakehouse/Files/orders_count.sql": "select count(*) as orders from lakehouse.e2e.data.dbo.orders\n",
+  "data.Lakehouse/Files/queries/first_orders.sql": "select * from lakehouse.e2e.data.dbo.orders order by id limit 3\n",
+  "data.Lakehouse/Files/queries/orders_by_id.sql": "select id, count(*) as n from lakehouse.e2e.data.dbo.orders group by all order by id\n",
+};
+const sqlFileBytes = Object.fromEntries(Object.entries(SQL_FILES).map(([p, s]) => [p, Buffer.from(s)]));
+const fileEntry = path => ({ name: path.split("/").pop(), path, isDir: false, bytes: sqlFileBytes[path].length, version: "v1" });
+// More saved queries beside `kept`, as files in the account's queries folder.
+const LOCAL_QUERIES = {
+  "orders sample": "select * from lakehouse.e2e.data.dbo.orders limit 10\n",
+  "total by color": `SELECT Product.Color, AGG("Total") FROM semanticmodel.e2e.shop GROUP BY ALL\n`,
+};
 async function sqliteBytes() {
   const file = join(await mkdtemp(join(tmpdir(), "onelake-e2e-db-")), "shop.sqlite");
   const db = new DatabaseSync(file);
@@ -92,9 +105,15 @@ export async function seedAccount({ dataDir, home }) {
       listWorkspaces: async () => [WORKSPACE],
       listItems: async () => [{ name: LAKEHOUSE.item, kind: "Lakehouse" }],
       listTables: async () => ["orders", "neverread", "Sales", "Product"].map(table => ({ schema: "dbo", table })),
-      listFiles: async (_, dir) => (dir ? [] : [{ name: "shop.sqlite", path: DB_FILE, isDir: false, bytes: dbBytes.length, version: "v1" }]),
+      listFiles: async (_, dir) => (
+        dir === "queries"
+          ? ["data.Lakehouse/Files/queries/first_orders.sql", "data.Lakehouse/Files/queries/orders_by_id.sql"].map(fileEntry)
+          : dir ? []
+          : [{ name: "queries", path: "data.Lakehouse/Files/queries", isDir: true, bytes: 0, version: "v1" },
+             fileEntry("data.Lakehouse/Files/orders_count.sql"),
+             { name: "shop.sqlite", path: DB_FILE, isDir: false, bytes: dbBytes.length, version: "v1" }]),
       loadTable: async (_, t) => ({ metadata: metadata(), metadataLocation: location(t.table) }),
-      readBytes: async (_, path) => (path === DB_FILE ? dbBytes : new Uint8Array()),
+      readBytes: async (_, path) => (path === DB_FILE ? dbBytes : sqlFileBytes[path] || new Uint8Array()),
     },
     fabric: {
       listSemanticModels: async () => [{ id: "00000000-0000-0000-0000-000000000003", name: "shop", description: "" }],
@@ -105,7 +124,9 @@ export async function seedAccount({ dataDir, home }) {
   await onelake.items(WORKSPACE, { fresh: true });
   await onelake.tables(LAKEHOUSE, { fresh: true });
   await onelake.files(LAKEHOUSE, "", { fresh: true });
+  await onelake.files(LAKEHOUSE, "queries", { fresh: true });
   await onelake.readBytes(WORKSPACE, DB_FILE);
+  for (const path of Object.keys(SQL_FILES)) await onelake.readBytes(WORKSPACE, path);
   for (const table of ["orders", "Sales", "Product"]) await onelake.table(LAKEHOUSE, { schema: "dbo", table }, { fresh: true });
   await onelake.itemNamed(WORKSPACE_ID, ITEM_ID, { fresh: true });
   await onelake.models(WORKSPACE, { fresh: true });
@@ -114,6 +135,7 @@ export async function seedAccount({ dataDir, home }) {
   await mkdir(queries, { recursive: true });
   const saved = join(queries, `${SAVED_QUERY}.sql`);
   await writeFile(saved, "select 'from a saved query' as kept\n");
+  for (const [name, sql] of Object.entries(LOCAL_QUERIES)) await writeFile(join(queries, `${name}.sql`), sql);
 
   const { tmslToOssie } = await import(pathToFileURL(join(VENDOR, "npm", PINS.daxSql, "formats", "ossie.js")).href);
   const { stringify } = await import(pathToFileURL(join(VENDOR, "npm", PINS.yaml, "+esm.js")).href);
