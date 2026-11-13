@@ -249,4 +249,4 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   return { resolve, resolveFile, nameTables, place, forget: () => namedFrom.clear() };
 }
 
-module.exports = { createSqlTables, editDistance };
+module.exports = { createSqlTables, editDistance, deltaTableOf };

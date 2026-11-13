@@ -70,6 +70,8 @@ let tablePivot = null;       // the Pivot's view, { table, view }, of the table 
 // activeTableRef it belongs to; another selection makes it stale.
 let deltaState = null;
 let deltaHistory = null;
+// The table's file layout, from what the lake holds of it: { table, value | error | pending }.
+let healthState = null;
 // A selection buys the cheapest thing that answers the question: 'stats' = metadata
 // only, 'peek' = the first rows. Each only when asked for; a query reads the rest.
 let activeTableRef = null;   // the table object behind the selection, for escalating
@@ -1127,9 +1129,51 @@ const showHistory = () => showMeta('history');
 
 const mine = x => (x && x.table === activeTableRef ? x : null);
 function renderMeta() {
+  const onelakeTable = viewMode === 'stats' && activeInfo && !activeInfo.db && activeTableRef;
   $('statsView').innerHTML = viewMode === 'history'
     ? historyHtml(activeInfo, mine(deltaHistory))
-    : statsCardHtml(activeInfo, mine(deltaState));
+    : (onelakeTable ? healthHtml(mine(healthState)) : '') + statsCardHtml(activeInfo, mine(deltaState));
+  if (onelakeTable && !mine(healthState)) loadHealth();
+}
+
+// What the lake holds of the table, and what its layout says: read here, never from OneLake.
+async function loadHealth() {
+  const t = activeTableRef;
+  if (!t || mine(healthState)) return;
+  healthState = { table: t, pending: true };
+  let next;
+  try { next = { table: t, value: await engine.tableHealth(lakehouse, t) }; }
+  catch (e) { next = { table: t, error: (e && e.message) || String(e) }; }
+  if (activeTableRef !== t) return;
+  healthState = next;
+  if (viewMode === 'stats') renderMeta();
+}
+
+const fmtMB = b => `${(b / 1048576).toLocaleString('en', { maximumFractionDigits: b < 10485760 ? 1 : 0 })} MB`;
+function healthHtml(h) {
+  if (!h || h.pending) return '';
+  if (h.error) return `<h3>Health</h3><p class="statsNote">${escapeHtml(`Could not be worked out: ${h.error}`)}</p>`;
+  const v = h.value;
+  if (!v.inLake) {
+    return '<h3>Health</h3><p class="statsNote">Its files are known here once a query has read the table: open Data, or query it.</p>';
+  }
+  const f = v.facts, found = v.findings || [];
+  const head = `<h3>Health · ${found.length ? `${found.length} finding${found.length === 1 ? '' : 's'}` : 'no findings'}</h3>`;
+  const list = found.length ? '<table class="health">' + found.map(x =>
+    `<tr><td class="finding">${escapeHtml(x.finding)}</td><td>${escapeHtml(x.detail)}</td><td class="action">${escapeHtml(x.action)}</td></tr>`).join('') + '</table>' : '';
+  const most = Math.max(1, ...f.sizes.map(b => b.files));
+  const sizes = f.files ? '<table class="sizes">' + f.sizes.filter(b => b.files).map(b =>
+    `<tr><th>${escapeHtml(b.label)}</th><td class="bar"><span style="width:${(100 * b.files / most).toFixed(1)}%"></span></td><td class="num">${n0(b.files)}</td></tr>`).join('') + '</table>' : '';
+  const rows = [['Files', `${n0(f.files)}, ${fmtMB(f.files ? f.bytes / f.files : 0)} on average`]];
+  if (f.deleted) rows.push(['Deleted rows', `${n0(f.deleted)} of ${n0(f.records)}, still in the files`]);
+  const g = f.footers;
+  const seen = g ? ` (${n0(g.files)} of ${n0(f.files)} files: the ones kept here)` : '';
+  rows.push(['V-Order', g ? `${g.vorder === g.files ? 'yes' : g.vorder ? `${n0(g.vorder)} files` : 'no'}${seen}` : '— (no file of it is kept here)']);
+  if (g && g.groups) rows.push(['Row groups', `${(g.groups / g.files).toLocaleString('en', { maximumFractionDigits: 1 })} per file, ` +
+    `${n0(Math.round(g.rows / g.groups))} rows each${seen}`]);
+  if (f.checkpointGap != null) rows.push(['Since the last checkpoint', `${n0(f.checkpointGap)} commits`]);
+  return head + list + '<h3>File sizes</h3>' + sizes + kvTable(rows) +
+    '<p class="statsNote">From what this machine holds of the table: nothing was asked of OneLake.</p>';
 }
 
 // The table as of its converted Delta version: one request the first time, and kept by

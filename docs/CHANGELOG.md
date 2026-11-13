@@ -6,6 +6,11 @@
   internal table and a snapshot's query read *Select Top Rows* rows (1,000 by default), where they read 100. A
   Visual, a table's pivot and a Report tile ask for up to *Max Result Rows* (200,000 by default), where they
   stopped at 5,000. An exported app keeps the number it was exported with; on a semantic model, 100,000 at most.
+- **A table's Stats say how healthy its files are.** A Health section heads the card: how many files, their sizes
+  as bars, rows deleted but still stored, and for the files kept on this machine, V-Order and rows per row group.
+  Findings come with what to consider doing: many small files, many deleted rows, files without V-Order, small row
+  groups, and a Delta table far past its last checkpoint. It is read from what the lake holds and from the footers of
+  the files here, never from OneLake, so it works offline; a table no query has read yet says so.
 - **Display folders show in Visual.** A model's columns and measures sit in their display folders in the field list,
   nested as `Sales\Margins` says, and in each folder a field lists more than once with `;`. Folders come first,
   closed until opened; a search looks in folder names too and opens what it finds. The Model page shows a column's

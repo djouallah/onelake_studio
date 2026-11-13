@@ -23,6 +23,8 @@
 const { relative, resolve, isAbsolute } = require('node:path');
 // A target from the page, reduced to the strings it may carry.
 const { sqlNameOf, ONELAKE_FILE_URL } = require('./names');
+const { deltaTableOf } = require('./sqltables');
+const { tableFacts, findings } = require('./lake/health');
 
 const lhOf = x =>({ workspace: String(x.workspace), item: String(x.item) });
 const tableOf = x => ({ schema: String(x.schema || ''), table: String(x.table) });
@@ -171,6 +173,21 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'onelake.deltaState': x => onelake.deltaState(lhOf(x), tableOf(x), { run: sql => engine.call('query', [sql]) }),
     'onelake.deltaHistory': x => onelake.deltaHistory(lhOf(x), tableOf(x),
       { skip: Number.isSafeInteger(x.skip) && x.skip > 0 ? x.skip : 0 }),
+    // A table's file layout, from what the lake holds of it and the footers of the files here: no OneLake
+    // request (health.js). A Delta table adds how far its last checkpoint is, from its log's state.
+    'onelake.health': async x => {
+      const lh = lhOf(x), t = tableOf(x);
+      const meta = await onelake.table(lh, t);
+      const name = engine.lakeName
+        ? await engine.lakeName({ deltaTable: deltaTableOf(meta), metadataLocation: meta.metadataLocation }) : null;
+      if (!name) return { inLake: false };
+      const facts = await tableFacts(sql => engine.call('query', [sql]), name);
+      if (meta.format === 'delta' && meta.stats && meta.stats.deltaVersion != null) {
+        const d = await onelake.deltaState(lh, t, { run: sql => engine.call('query', [sql]) }).catch(() => null);
+        if (d && d.lastCheckpoint != null) facts.checkpointGap = Number(meta.stats.deltaVersion) - Number(d.lastCheckpoint);
+      }
+      return { inLake: true, facts, findings: findings(facts) };
+    },
     'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql]), x.limit),
     'onelake.rowsOutOfReach': x => onelake.rowsOutOfReach(lhOf(x), tableOf(x)),
     // A file's bytes, or a range of them, signed here. base64, because a webview message

@@ -56,6 +56,10 @@ jobs:
           key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
       - run: node scripts/fetch-extensions.mjs linux-x64
       - run: npm test
+      # A table's health from the lake's own metadata: needs DuckDB, which this job has.
+      - run: node --test test/js/health.test.mjs
+        env:
+          NO_SKIP: 1
       - run: python test/fixtures/lake/make_tables.py "$FIXTURES_DIR"
       - run: node --test test/js/onelaketable.test.mjs
         env:

@@ -127,10 +127,15 @@ async function readDeltaState({ readText, readFresh = readText, readCheckpoint }
   const logDir = logDirOf(dir);
   const crc = await readJson(readText, `${logDir}/${pad(version)}.crc`);
   if (crc && crc.metadata && crc.protocol) {
+    // Which version the last checkpoint is of: how many commits a reader reads one by one after it. One small
+    // file; when it can't be read, nothing is said of it.
+    const last = await readJson(readFresh, `${logDir}/_last_checkpoint`).catch(() => null);
+    const cp = last && num(last.version);
     return {
       version, asOf: version, source: 'crc', ...tableFacts(crc.metadata, crc.protocol),
       sizeBytes: num(crc.tableSizeBytes), numFiles: num(crc.numFiles),
       deletedRows: num(crc.numDeletedRecordsOpt),
+      lastCheckpoint: cp != null && cp <= version ? cp : null,
     };
   }
   // No crc: the checkpoint _last_checkpoint names. It can be a few versions older than
@@ -158,7 +163,7 @@ async function readDeltaState({ readText, readFresh = readText, readCheckpoint }
   // Not _last_checkpoint's sizeInBytes (the checkpoint file's own size) nor its file count
   // (of an older version than the rest of the card): the Iceberg side has both for `version`.
   return { version, asOf: cp, source: 'checkpoint', ...tableFacts(s.metaData, s.protocol),
-           sizeBytes: null, numFiles: null, deletedRows: null };
+           sizeBytes: null, numFiles: null, deletedRows: null, lastCheckpoint: cp };
 }
 
 /**

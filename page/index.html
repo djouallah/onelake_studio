@@ -182,6 +182,11 @@
     #statsView th, #dbOverview th { text-align: left; font-weight: 500; color: var(--muted); }
     #statsView td, #dbOverview td { font-variant-numeric: tabular-nums; }
     .statsNote { color: var(--muted); font-size: 0.85rem; }
+    /* Health — findings from the table's files, and their sizes as bars. */
+    #statsView table.health td.finding { color: var(--warn); font-weight: 600; white-space: nowrap; }
+    #statsView table.health td.action { color: var(--muted); }
+    #statsView table.sizes td.bar { width: 14rem; }
+    #statsView table.sizes .bar span { display: block; height: 0.7rem; min-width: 1px; background: var(--accent); border-radius: 2px; }
     /* History — one row per commit or snapshot, newest first. */
     #statsView table.history th { color: var(--text); white-space: nowrap; }
     #statsView table.history td { white-space: nowrap; }

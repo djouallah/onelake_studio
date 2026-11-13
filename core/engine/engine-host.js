@@ -652,6 +652,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // Every lake table and what it was last synced from: what the sync service watches.
   const lakeTablesHere = () => withConn(c => syncedAll(c), agentLive);
   const lakeOf = which => (remote ? instance.lakeTable(which) : lakeTable(which));
+  // The lake's name for a table it holds, or null: asks nothing of OneLake (health.js reads its files by it).
+  const lakeName = async w => {
+    await init();
+    if (!capabilities.lake) return null;
+    return (await lakeOf({ deltaTable: w.deltaTable || null, metadataLocation: w.metadataLocation, check: true })).name || null;
+  };
   // The service's own connection is the admin one: inside admin() already, so asked of it directly. None
   // before the service's first look has made its table.
   const heldNow = () => heldOn(conn).catch(() => new Map());
@@ -1430,7 +1436,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeSync: syncLakeTable, lakeTables, lakeStats, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, logs, clearLogs };
   return api;
 }
 

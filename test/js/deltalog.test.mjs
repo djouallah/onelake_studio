@@ -44,13 +44,14 @@ function fakeLog(files) {
   };
 }
 
-test("a Spark-written table's state is one request: the crc of the converted version", async () => {
+test("a Spark-written table's state is the crc of the converted version, and how far its last checkpoint is", async () => {
   const { io, reads } = fakeLog({
     [`${pad(7)}.crc`]: JSON.stringify({ tableSizeBytes: 300, numFiles: 2, numDeletedRecordsOpt: 4,
       metadata: META, protocol: PROTOCOL }),
   });
   const d = await readDeltaState(io, DIR, 7);
-  assert.deepEqual(reads, [`${pad(7)}.crc`]);
+  assert.deepEqual(reads, [`${pad(7)}.crc`, "_last_checkpoint"]);
+  assert.equal(d.lastCheckpoint, null, "no checkpoint yet");
   assert.equal(d.source, "crc");
   assert.equal(d.asOf, 7);
   assert.equal(d.sizeBytes, 300);
@@ -182,4 +183,18 @@ test("the table directory comes out of its Iceberg metadata location", () => {
   assert.deepEqual(tableDirOf("https://onelake.dfs.fabric.microsoft.com/My%20WS/lh.Lakehouse/Tables/my%20t/metadata/1.metadata.json"),
     { workspace: "My WS", dir: "lh.Lakehouse/Tables/my t" });
   assert.equal(tableDirOf("abfss://ws@onelake.dfs.fabric.microsoft.com/x.parquet"), null);
+});
+
+test("the crc's state says which version the last checkpoint is of, and a later one is not this version's", async () => {
+  const crc = JSON.stringify({ tableSizeBytes: 1, numFiles: 1, metadata: META, protocol: PROTOCOL });
+  const at = async (cp, version) => (await readDeltaState(fakeLog({ [`${pad(version)}.crc`]: crc,
+    _last_checkpoint: JSON.stringify({ version: cp, size: 3 }) }).io, DIR, version)).lastCheckpoint;
+  assert.equal(await at(100, 250), 100);
+  assert.equal(await at(300, 250), null);
+  // A _last_checkpoint that can't be read says nothing, and the state is still the crc's.
+  const { io } = fakeLog({ [`${pad(9)}.crc`]: crc });
+  io.readFresh = async () => { throw new Error("socket hang up"); };
+  const d = await readDeltaState(io, DIR, 9);
+  assert.equal(d.source, "crc");
+  assert.equal(d.lastCheckpoint, null);
 });

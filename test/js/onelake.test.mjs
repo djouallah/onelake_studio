@@ -119,7 +119,7 @@ async function deltaFixture(files, deltaVersion) {
 }
 const pad20 = v => String(v).padStart(20, "0");
 
-test("a Delta table's state is one request the first time, and none after", async () => {
+test("a Delta table's state is its crc and _last_checkpoint the first time, and nothing after", async () => {
   const crc = JSON.stringify({ tableSizeBytes: 10, numFiles: 1,
     metadata: { id: "x", partitionColumns: [] }, protocol: { minReaderVersion: 1, minWriterVersion: 2 } });
   const { ol, catalog, done } = await deltaFixture({ [`${pad20(1)}.crc`]: crc }, 1);
@@ -128,7 +128,7 @@ test("a Delta table's state is one request the first time, and none after", asyn
     const s = await ol.deltaState(lh, t);
     assert.equal(s.source, "crc");
     assert.equal(s.sizeBytes, 10);
-    assert.deepEqual(catalog.calls.filter(c => c.startsWith("read") || c.startsWith("list")), [`read ${pad20(1)}.crc`]);
+    assert.deepEqual(catalog.calls.filter(c => c.startsWith("read") || c.startsWith("list")), [`read ${pad20(1)}.crc`, "read _last_checkpoint"]);
     catalog.calls.length = 0;
     assert.equal((await ol.deltaState(lh, t)).cached, true);
     assert.ok(!catalog.calls.some(c => c.startsWith("read") || c.startsWith("list")), catalog.calls.join(", "));
