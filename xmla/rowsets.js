@@ -187,6 +187,10 @@ async function memberPaths(cube, h, depth, prefix, { query, literal, signal }) {
   const where = prefix.map((k, i) => (k === '' ? `${columnRef(cols[i])} IS NULL` : `${columnRef(cols[i])} = ${literal(cols[i], k)}`));
   const sql = `SELECT ${select.join(', ')} FROM ${cube.sqlName}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} GROUP BY ALL`;
   const res = await query(sql, { signal });
+  // Past the engine's row limit the list would be cut and Excel shown part of it as all of it.
+  if (res.numRows != null && res.numRows > res.rows.length) {
+    throw new Error(`${h.name} has ${Number(res.numRows).toLocaleString('en')} members here, and a query keeps ${res.rows.length.toLocaleString('en')}. Filter it, or use a field with fewer values.`);
+  }
   const rows = res.rows.map(row => ({
     path: cols.map((_, i) => keyOf(row[`c${i}`])),
     order: cols.map((c, i) => sortKey(c.sortBy ? row[`s${i}`] : row[`c${i}`], c)),

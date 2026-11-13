@@ -16,6 +16,7 @@ const { answer } = require('../core/host');
 const { webviewRoot } = require('./webview');
 const { PINS } = require('../core/vendored');
 const { NAME } = require('../core/title');
+const { createSettings } = require('../core/settings');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network — and the page needs none. Its scripts are its own and
@@ -102,7 +103,9 @@ function postLive(msg) {
 function panelSettings() {
   const config = vscode.workspace.getConfiguration('onelakeStudio');
   return { tableOpensOn: config.get('tableOpensOn', 'stats'),
-           gridThousandsSeparator: config.get('gridThousandsSeparator', false) };
+           gridThousandsSeparator: config.get('gridThousandsSeparator', false),
+           // A table's first look: the Data tab, a preview in the box.
+           selectTopRows: createSettings((k, d) => config.get(k, d)).selectTopRows() };
 }
 
 // The page's one channel to the host (host.js): DuckDB statements and OneLake reads,

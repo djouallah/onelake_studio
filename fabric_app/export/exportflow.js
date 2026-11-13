@@ -52,7 +52,7 @@ const reportName = (workspace, model) =>
  * @param {(line: string) => void} o.log
  */
 function createExport({ connectivity, modules, appToken, powerBiToken = appToken, sqlToken = async () => null, fabric,
-                        memento, extensionDir, reportDir = null, pageDir, ui, onRefresh, log,
+                        memento, extensionDir, reportDir = null, pageDir, ui, onRefresh, log, maxRows = () => null,
                         fabricModel = createFabricModel({ getToken: appToken, powerBiToken, sqlToken, log: m => log(m) }),
                         fabricAppOf = createFabricApp }) {
 
@@ -240,7 +240,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
             const studioReport = local && local.files.get(REPORT) ? null : reportDir && join(reportDir, reportName(pbi.workspace, name));
             const kept = (local && local.files.get(REPORT)) || (studioReport && await fsp.readFile(studioReport).catch(() => null)) || null;
             files = await appFiles({ plan, state, model: definition, modelText: text, modelFile: file, kept,
-                                     redirects: marker.redirects || [], fabricAppDir, appDir,
+                                     redirects: marker.redirects || [], fabricAppDir, appDir, maxRows: maxRows(),
                                      daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql) });
             fromStudio = kept && studioReport ? studioReport : null;
             // `report`: the names Studio's Report tab knows the model by (reportKey), for opening the file;

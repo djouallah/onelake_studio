@@ -727,7 +727,7 @@
             "default": 1000,
             "minimum": 1,
             "order": 2,
-            "markdownDescription": "How many rows **Select Top Rows** asks for."
+            "markdownDescription": "How many rows a table's first look reads: **Select Top Rows**, the **Data** tab, and the query a table puts in the box. Never more than **Max Result Rows**."
           },
           "onelakeStudio.maxResultRows": {
             "type": "integer",
@@ -736,7 +736,7 @@
             "maximum": 1000000,
             "scope": "machine",
             "order": 3,
-            "markdownDescription": "The most rows of one result a tab and the command line keep. Past it, rows are only counted. **Export…** always writes every row. More rows use more memory in the extension host and the tab. Applies the next time the engine starts."
+            "markdownDescription": "The most rows of one result a tab and the command line keep, and the most a Visual, a pivot or a Report tile asks for. Past it, rows are only counted. **Export…** always writes every row. More rows use more memory in the extension host and the tab. Applies the next time the engine starts."
           },
           "onelakeStudio.tableOpensOn": {
             "type": "string",

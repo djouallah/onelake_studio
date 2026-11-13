@@ -470,7 +470,7 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     await drive("exec", { command: "onelakeStudio.openTable", args: [{ workspace: WORKSPACE, item: "data.Lakehouse", schema: "dbo", table: "orders" }] });
     const s = await until("the table's SQL in the box", async () => {
       const x = await panelState();
-      return /^SELECT \* FROM \S*orders LIMIT 100$/.test(x.box) && /orders/.test(x.title) && x;
+      return /^SELECT \* FROM \S*orders LIMIT 1000$/.test(x.box) && /orders/.test(x.title) && x;
     }, 30000);
     check("it wasn't run", !/select \* from/i.test(s.status), s.status);
     const tabs = (await drive("state")).tabs;
@@ -500,7 +500,7 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
       /SQLite/.test(overview) && /big_orders/.test(overview) && /orders\s+Table\s+3\b/.test(overview), overview);
     const s = await panelState();
     check("nothing was run, and the box has the first table's SQL to start from",
-      !s.table && /^SELECT \* FROM shop\w*\.main\.customers LIMIT 100$/.test(s.box), s.box);
+      !s.table && /^SELECT \* FROM shop\w*\.main\.customers LIMIT 1000$/.test(s.box), s.box);
 
     await f.locator(".dbRow-table", { hasText: "orders" }).first().click();
     await until("the table's card", async () => /main\.orders/.test((await panelState()).title), 15000);

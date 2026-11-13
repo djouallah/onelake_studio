@@ -281,6 +281,11 @@ test("a result past the row limit is said, not cut short", async () => {
   await assert.rejects(execute(`SELECT ${ROWS_OF_COLOR.replace("ON ROWS", "ON 0")} FROM [Model]`, { cube: cube(), query }), /200,001 lines/);
 });
 
+test("a member list past the row limit is said, not cut short", async () => {
+  const query = async () => ({ rows: [{ c0: "Blue", s0: 1 }], numRows: 200001, fields: [] });
+  await assert.rejects(discover(cube(), "MDSCHEMA_MEMBERS", { LEVEL_UNIQUE_NAME: ["[Product].[color].[color]"] }, { query, literal }), /color has 200,001 members/);
+});
+
 test("a key reaches SQL as a literal of its column's type, or not at all", () => {
   const text = { table: "T", name: "c", dataType: "string" }, num = { table: "T", name: "n", dataType: "int64" };
   const date = { table: "T", name: "d", dataType: "datetime" }, bool = { table: "T", name: "b", dataType: "boolean" };

@@ -20,6 +20,7 @@ import { mountDbBrowser, dbOverviewHtml, dbObjectHtml } from './dbview.js';
 import * as semantic from './semantic.js';
 // A .bim's model view. Explore's chart library is loaded when the Pivot first opens.
 import { mountExplore } from './explore/view.js';
+import { setRowCap } from './explore/explore.js';
 import { PINS, npmFile } from './cdn.js';
 import { tmslOf } from './explore/model.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './explore/profile.js';
@@ -37,10 +38,9 @@ const viewState = {
 const cfg = window.ONELAKE_STUDIO_CONFIG || {};
 const vs = vscodeApi();
 // The settings the page reads as it goes: as of the panel's opening, then as the host posts them.
-const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.gridThousandsSeparator };
+const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.gridThousandsSeparator,
+                   selectTopRows: cfg.selectTopRows || 1000 };
 
-// Cap on rendered rows only. The CSV saves everything the engine materialised, which is
-// itself capped — runQuery says so when the two differ.
 let engine = null;
 let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
 let lakehouse = null;        // { workspace, item }
@@ -785,9 +785,9 @@ function reportLoad(info, queryOk) {
 // ---------------------------------------------------------------------------
 // Run SQL -> results
 // ---------------------------------------------------------------------------
-// A table gets the first hundred rows; a text file gets ALL of it — a LIMIT would cut the
+// A table gets its first rows (selectTopRows); a text file gets ALL of it — a LIMIT would cut the
 // document silently. The engine's own row cap still applies and still says so.
-const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' LIMIT 100');
+const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ` LIMIT ${settings.selectTopRows}`);
 
 // Plan: where the editor's query spends its time, in place of the results — Explore's own
 // view of it (explore/profile.js): the profile (EXPLAIN ANALYZE, so the query runs once to be
@@ -1334,7 +1334,7 @@ function querySnapshot(id) {
   if (!activeInfo || !activeInfo.metadataLocation || !/^\d+$/.test(String(id))) return;
   const loc = String(activeInfo.metadataLocation).replace(/'/g, "''");
   putInBox(`-- ${activeSqlName || $('activeTable').textContent} as of snapshot ${id}\n` +
-           `SELECT *\nFROM iceberg_scan('${loc}', snapshot_from_id = ${id})\nLIMIT 1000;\n`);
+           `SELECT *\nFROM iceberg_scan('${loc}', snapshot_from_id = ${id})\nLIMIT ${settings.selectTopRows};\n`);
   setStatus(`Snapshot ${id} is in the box: run it (Ctrl+Enter).`, 'ok');
 }
 
@@ -1690,7 +1690,9 @@ function setBusy(b, { stoppable = false } = {}) {
 // ---------------------------------------------------------------------------
 showVersion();
 wireUi();
-engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, viewTag: cfg.viewTag, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
+engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, viewTag: cfg.viewTag, topRows: () => settings.selectTopRows, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
+// A visual, a pivot and a Report tile ask for as many rows as a result may keep (maxResultRows).
+if (cfg.maxRows) setRowCap(cfg.maxRows);
 engineReady = engine.init();
 if (cfg.draft) {
   $('sqlEditor').value = String(cfg.draft.sql || '');
@@ -1778,6 +1780,7 @@ window.addEventListener('message', async e => {
     else if (m.type === 'settings') {
       settings.tableOpensOn = m.tableOpensOn;
       settings.gridThousandsSeparator = m.gridThousandsSeparator;
+      if (m.selectTopRows) settings.selectTopRows = m.selectTopRows;
       if (grid) grid.redraw();
     }
   } catch (err) {

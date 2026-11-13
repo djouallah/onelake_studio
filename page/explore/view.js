@@ -27,7 +27,7 @@
 import { toCsv } from '../paths.js';
 import { renderModel } from './model.js';
 import { el } from './dom.js';
-import { createExplorer, pivotTitle, modelFields, valuesSql } from './explore.js';
+import { createExplorer, pivotTitle, modelFields, valuesSql, setRowCap } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, PALETTES, STYLES, registerChartTheme } from './theme.js';
@@ -147,6 +147,8 @@ function offlineSwitch({ state, set }) {
 }
 
 export function mountExplore(root, ctx) {
+  // The most rows a visual asks for: what a result may keep where this runs.
+  if (ctx.maxRows) setRowCap(ctx.maxRows);
   const setStatus = ctx.setStatus || (() => {});
   const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-explore${primary ? ' primary' : ''}`, onclick }, text);
 

@@ -32,8 +32,9 @@ import {
 // as `maxRows`.
 const DEFAULT_MAX_ROWS = 200_000;
 
-// The first rows of a table, the Data tab's answer before any query of the user's.
-const QUICK_PEEK_ROWS = 100;
+// The first rows of a table, the Data tab's answer before any query of the user's: as many as
+// the selectTopRows setting says (`topRows`), this when nobody says.
+const QUICK_PEEK_ROWS = 1000;
 
 export function createEngine({
   onStatus = () => {},
@@ -41,6 +42,8 @@ export function createEngine({
   // engine host's own in the read log.
   onBoot = () => {},
   maxRows = DEFAULT_MAX_ROWS,
+  // How many rows a table's first look reads, asked each time: the setting can change.
+  topRows = () => QUICK_PEEK_ROWS,
   // On an engine other tabs share: what makes this tab's views its own (uniqueView).
   viewTag = null,
 } = {}) {
@@ -537,9 +540,9 @@ export function createEngine({
   }
 
   // ---------------------------------------------------------------------------
-  // Tier 2: the first hundred rows, and no view.
+  // Tier 2: the first rows (selectTopRows), and no view.
   // ---------------------------------------------------------------------------
-  // A LIMIT 100 that DuckDB pushes down into the Iceberg scan, deletes applied, run by the
+  // A LIMIT that DuckDB pushes down into the Iceberg scan, deletes applied, run by the
   // host and kept there per snapshot — a table opened before shows its rows without a
   // request to OneLake. Kept here too, so coming back to a table renders instantly.
   //
@@ -551,15 +554,16 @@ export function createEngine({
   }]);
 
   function peekTable(lh, t) {
-    const key = tableKey(lh, t);
+    const n = Math.min(maxRows, Math.max(1, Math.floor(Number(topRows())) || QUICK_PEEK_ROWS));
+    const key = `${tableKey(lh, t)}|${n}`;
     if (peekC.has(key)) return peekC.get(key);
-    const p = doPeek(lh, t, key);
+    const p = doPeek(lh, t, n);
     peekC.set(key, p);
     p.catch(() => { if (peekC.get(key) === p) peekC.delete(key); });
     return p;
   }
 
-  async function doPeek(lh, t, key) {
+  async function doPeek(lh, t, n) {
     await cancelLoad();
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
@@ -579,11 +583,11 @@ export function createEngine({
                numRows: 0, truncated: false, limit: maxRows, fileCount: 0 };
     }
 
-    status(`Reading the first ${QUICK_PEEK_ROWS} rows of ${label}…`);
+    status(`Reading the first ${n.toLocaleString()} rows of ${label}…`);
     // Kept by the host per snapshot: a snapshot never changes, so rows read from it once
     // are the rows, and a table opened before shows them without touching OneLake.
     const res = await callHost("onelake.peek", [{
-      workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
+      workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table, limit: n,
     }]);
     check();
     const fields = (res.fields || []).map(f => f.name);

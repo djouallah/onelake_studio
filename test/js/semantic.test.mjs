@@ -41,6 +41,20 @@ test("Explore's upper bound on a date takes in that whole day, on a timestamp to
   assert.ok(buildQuery({ rows: ["t.constructor"], cols: [], values: [], filters: [] }));
 });
 
+test("a visual asks for as many rows as the host's row limit, and Top N stays under it", async () => {
+  const { buildQuery, setRowCap } = await import("../../page/explore/explore.js");
+  const shelves = (extra = {}) => ({ rows: ["t.a"], cols: [], values: [], filters: [], ...extra });
+  setRowCap(200000);
+  assert.equal(buildQuery(shelves()).top, 200000);
+  assert.equal(buildQuery(shelves({ top: 10 })).top, 10);
+  setRowCap(3);
+  assert.equal(buildQuery(shelves({ top: 10 })).top, 3);
+  assert.equal(buildQuery(shelves(), { cap: 0 }).top, undefined, "the CSV asks for all of them");
+  setRowCap(0);
+  assert.equal(buildQuery(shelves()).top, 3, "no number keeps the last one");
+  setRowCap(5000);
+});
+
 // A semantic model's one SQL name, and the ones a statement names that are not open yet.
 test("a model is semanticmodel.ws.model, and a statement's unopened models are found", async () => {
   const { modelSqlName, unopenedModels, defineView } = await import("../../page/semantic.js");

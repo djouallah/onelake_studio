@@ -15,7 +15,7 @@
 //                    tab's tiles (none at first), written once, then the zip's (Studio's Add to
 //                    report writes it too), and kept by every export
 //   site/explore.json  the shelves the first view shows
-//   site/engine.json   what the page runs on, { engine: 'duckdb' } or { engine: 'semanticModel', name }:
+//   site/engine.json   what the page runs on, { engine: 'duckdb' } or { engine: 'semanticModel', name }, and maxRows:
 //                    on a semantic model the page runs no DuckDB (storage/modeldata.js: it queries the
 //                    semantic model), and site/ holds neither DuckDB, its extensions, Arrow nor the data
 //                    source that reads the tables in the browser. Always written: the hosting answers a
@@ -459,7 +459,7 @@ async function filesOf(root, to, skip = () => false) {
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (page/, or
  * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>.
  */
-async function appFiles({ plan, state, model, modelText = null, modelFile = 'model.yaml', kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir }) {
+async function appFiles({ plan, state, model, modelText = null, modelFile = 'model.yaml', kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir, maxRows = null }) {
   if (!model) throw new Error('an app needs the model it runs on');
   const sql = onModel(plan);
   const text = s => Buffer.from(s, 'utf8');
@@ -479,8 +479,10 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
   setModel(files, model);
   if (!sql && modelText != null) setModelCopy(files, modelFile, modelText);
   // On a semantic model, its name: what the page says when it refuses the person signed in.
+  // And the most rows a visual asks for: maxResultRows as it was at the export.
+  const limit = Number.isInteger(maxRows) && maxRows > 0 ? { maxRows } : {};
   files.set('site/engine.json', text(JSON.stringify(sql
-    ? { engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) } : { engine: 'duckdb' })));
+    ? { engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}), ...limit } : { engine: 'duckdb', ...limit })));
   files.set('AGENTS.md', text(agentsMd(plan)));
   return files;
 }

@@ -24,7 +24,7 @@ const names = require('../names');
 const deltalog = require('../lake/deltalog');
 const { revalidate } = require('./store');
 
-const PEEK_ROWS = 100;
+const PEEK_ROWS = 1000;   // when the caller names no number: selectTopRows' default
 const PREFETCH_WORKERS = 2;
 // A table is in use when statements read it this often in this long (syncworker.js).
 const IN_USE_READS = 3;
@@ -429,7 +429,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
    * The table's first rows, read once per snapshot. `run(sql)` is the engine's query —
    * passed in, because the engine belongs to the window and this module does not.
    */
-  async function peek(lh, t, run) {
+  async function peek(lh, t, run, limit = PEEK_ROWS) {
+    const want = Math.max(1, Math.floor(Number(limit)) || PEEK_ROWS);
     const meta = await table(lh, t);
     if (meta.empty) {
       const cols = meta.schemaFields || [];
@@ -438,9 +439,15 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (!meta.metadataLocation) throw new Error('the catalog gave this table no metadata location');
     const k = keys.peek(meta.metadataLocation);
     const hit = await store.peek(k);
-    if (hit) return { ...hit, cached: true };
-    const res = await run(`SELECT * FROM ${names.sqlNameOf(lh, t)} LIMIT ${PEEK_ROWS}`);
-    const out = { fields: res.fields, rows: res.rows, numRows: res.numRows };
+    // Kept with the number it was read with (100 before it was kept): it serves any number up to that, or
+    // every number when the table had fewer rows. Offline, what is kept is what there is.
+    const had = hit && (hit.limit ?? 100);
+    if (hit && (want <= had || (hit.rows || []).length < had || isOffline())) {
+      const rows = (hit.rows || []).slice(0, want);
+      return { ...hit, rows, numRows: rows.length, cached: true };
+    }
+    const res = await run(`SELECT * FROM ${names.sqlNameOf(lh, t)} LIMIT ${want}`);
+    const out = { fields: res.fields, rows: res.rows, numRows: res.numRows, limit: want };
     await store.put(k, out);
     return { ...out, cached: false };
   }

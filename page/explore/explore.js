@@ -20,7 +20,13 @@ import { escapeHtml, quoteIdent as qid, sqlStr, sqlPart as bare } from '../paths
 // A tooltip formatter's string is rendered as HTML: anything from the data goes in escaped.
 const esc = v => escapeHtml(v == null ? '' : String(v));
 
-const CAP = 5000;             // rows asked for at most
+// Rows a query is asked for at most: the engine's maxResultRows, which the host sets (setRowCap), and
+// this where none does.
+let CAP = 5000;
+export function setRowCap(n) {
+  const v = Math.floor(Number(n));
+  if (Number.isFinite(v) && v > 0) CAP = v;
+}
 const MAX_CELLS = 200_000;    // cells a pivot's table draws at most
 const SERIES_CAP = 24;        // series a chart draws at most
 const MULTIPLES = 4;          // measures a chart draws, one plot each

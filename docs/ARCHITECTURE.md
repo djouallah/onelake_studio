@@ -415,7 +415,7 @@ Delta log nor Iceberg metadata has a warning and says *not a valid table*. That 
 shows offline, and it is asked again when the table is opened or its Tables node is, so a folder that becomes a table stops saying so.
 
 **Clicking a table** opens it in a new tab, or brings forward the tab that shows it: Data, Stats, History and Visual. The SQL box gets
-`SELECT * FROM <its name> LIMIT 100` to start from, not run. A file does the same with what its preview runs.
+`SELECT * FROM <its name> LIMIT <selectTopRows>` to start from, not run. A file does the same with what its preview runs.
 - **Data** is hidden offline on a table with none of its rows read here, since all it could show is an error. The status
   line says why. It comes back with the connection.
 - **Stats and History** come from the table's metadata, with no data read. A table written as Delta
@@ -579,7 +579,7 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
     which says what Automatic picked. An empty view shows where Columns and Rows go, and takes a drop there.
   - A column dropped on Values is summarised, as in Power BI: a number is summed and anything else
     counted, and its chip switches to average, min, max, count or distinct count.
-  - Totals are off until turned on, and a view cut at 5,000 rows leaves them out.
+  - Totals are off until turned on, and a view cut at the row limit (maxResultRows) leaves them out.
   - Every view is one `SELECT … FROM <model>` in dax-sql's SQL (`modelSql`): columns, `AGG("measure")`,
     summarised columns and `ROLLUP` totals. Its query is always generated from the shelves: nothing else writes a
     Visual's or a Report tile's SQL.

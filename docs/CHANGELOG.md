@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Row limits follow the settings everywhere.** A table's Data tab, the query a table puts in the box, an
+  internal table and a snapshot's query read *Select Top Rows* rows (1,000 by default), where they read 100. A
+  Visual, a table's pivot and a Report tile ask for up to *Max Result Rows* (200,000 by default), where they
+  stopped at 5,000. An exported app keeps the number it was exported with; on a semantic model, 100,000 at most.
+- **Open in Excel: a field with too many values says so.** Its list of members was cut at the row limit with no
+  word; it now fails with the count, as a PivotTable that is too big already did.
+
 ## 0.2.22
 
 - **The desktop app: a question waits for its answer.** A click beside a dialog such as *Update the semantic

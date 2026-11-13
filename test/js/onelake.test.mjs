@@ -371,7 +371,26 @@ test("the first rows are read once per snapshot, and the engine is not asked aga
   assert.deepEqual(p1.rows, [{ id: 1 }]);
   assert.equal(p2.cached, true);
   assert.equal(sql.length, 1);
-  assert.equal(sql[0], "SELECT * FROM lakehouse.ws.lh.dbo.a LIMIT 100");
+  assert.equal(sql[0], "SELECT * FROM lakehouse.ws.lh.dbo.a LIMIT 1000");
+});
+
+test("the first rows follow the number asked for: fewer are served from what is kept, more are read", async () => {
+  const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
+  const sql = [];
+  const many = Array.from({ length: 50 }, (_, i) => ({ id: i }));
+  const run = async q => { sql.push(q); const n = Number(/LIMIT (\d+)/.exec(q)[1]); const rows = many.slice(0, n); return { fields: [{ name: "id", type: "BIGINT" }], rows, numRows: rows.length }; };
+  const t = { schema: "dbo", table: "a" };
+  assert.equal((await ol.peek(lh, t, run, 10)).rows.length, 10);
+  const fewer = await ol.peek(lh, t, run, 5);
+  assert.equal(fewer.cached, true);
+  assert.equal(fewer.rows.length, 5);
+  const more = await ol.peek(lh, t, run, 20);
+  assert.equal(more.cached, false);
+  assert.equal(more.rows.length, 20);
+  assert.deepEqual(sql, ["SELECT * FROM lakehouse.ws.lh.dbo.a LIMIT 10", "SELECT * FROM lakehouse.ws.lh.dbo.a LIMIT 20"]);
+  // A table with fewer rows than were asked for has given them all: any number is served.
+  assert.equal((await ol.peek(lh, t, run, 1000)).rows.length, 50);
+  assert.equal((await ol.peek(lh, t, run, 5000)).cached, true);
 });
 
 test("prefetch reads every table's metadata in the background, each once", async () => {

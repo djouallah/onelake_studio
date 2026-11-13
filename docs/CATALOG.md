@@ -223,7 +223,7 @@ someone asks for them:
 | --- | --- | --- | --- |
 | Opening a lakehouse's Tables node | Each table's Iceberg metadata, two at a time (`prefetchMetadata`), and no rows | The catalog | None |
 | The Data tab, or a statement | Each file that statement opens, whole, after it | The cache folder, `lake\files` | `diskCacheMaxGB`, least recently read first |
-| The Data tab's first 100 rows | The same reads, and the rows | `first_rows` | 256 MB, oldest first |
+| The Data tab's first rows (selectTopRows) | The same reads, and the rows | `first_rows` | 256 MB, oldest first |
 | Opening a `Files/` object in a tab | The whole file, or a range if only a range is asked for | The cache folder, `host\` | 1 GB in all, and a file over 512 MB isn't kept |
 | Opening a model | Its `.yaml` | The cache folder, `models\` | None |
 | The History tab on a Delta table | Its log files | The cache folder, `host\` | The same 1 GB |

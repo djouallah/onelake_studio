@@ -967,7 +967,7 @@ async function activateInner(context) {
     }))),
 
     vscode.commands.registerCommand('onelakeStudio.openInternalTable', onClick(n => openInPanel({
-      type: 'query', sql: `SELECT * FROM system_internal.${quoteIdent(n.table)} LIMIT 100`,
+      type: 'query', sql: `SELECT * FROM system_internal.${quoteIdent(n.table)} LIMIT ${settings.selectTopRows()}`,
     }))),
 
     vscode.commands.registerCommand('onelakeStudio.openFile', onClick(n => openInPanel({
@@ -977,9 +977,7 @@ async function activateInner(context) {
     // A table's first rows, as a query in the SQL box, run at once.
     vscode.commands.registerCommand('onelakeStudio.selectTop', async n => {
       if (!n || !n.table) return;
-      const top = vscode.workspace.getConfiguration('onelakeStudio').get('selectTopRows', 1000);
-      const rows = Number.isInteger(top) && top > 0 ? top : 1000;
-      const sql = `SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${rows};\n`;
+      const sql = `SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${settings.selectTopRows()};\n`;
       await openInPanel({ type: 'run-sql', sql }, n.table);
     }),
     // A table's columns, comma-separated and quoted where SQL needs it, from its metadata (read
@@ -1352,7 +1350,9 @@ async function activateInner(context) {
         }
       }
       if (e.affectsConfiguration('onelakeStudio.tableOpensOn') ||
-          e.affectsConfiguration('onelakeStudio.gridThousandsSeparator')) {
+          e.affectsConfiguration('onelakeStudio.gridThousandsSeparator') ||
+          e.affectsConfiguration('onelakeStudio.selectTopRows') ||
+          e.affectsConfiguration('onelakeStudio.maxResultRows')) {
         postLive({ type: 'settings', ...panelSettings() });
       }
     }),

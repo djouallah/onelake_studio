@@ -95,8 +95,8 @@ export async function start() {
   try {
     // The shelves a first Visual would show (explore.json): the app shows the Report alone, so they aren't fetched.
     const first = null;
-    const { engine, name: modelName } = (await engineRead) || {};
-    if (engine === "semanticModel") return await startModel(first, modelName);
+    const { engine, name: modelName, maxRows } = (await engineRead) || {};
+    if (engine === "semanticModel") return await startModel(first, modelName, maxRows);
     const { createDataSource } = await import("./storage/data.js");
     const data = createDataSource({
       onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
@@ -116,7 +116,7 @@ export async function start() {
     const compiler = createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS });
     mountExplore(document.getElementById("explore"), {
       name, tmsl: tmslOf(bim),
-      compiler,
+      compiler, maxRows,
       run: async sql => resultOf(await data.query(sql)),
       // Every tile asks at once: the engines take a query each (storage/queue.js), and the columns the tiles
       // read between them come down as one batch (storage/data.js), not a tile's at a time.
@@ -153,8 +153,9 @@ function showRefused(model) {
 
 // On a semantic model: Explore's queries over the model go to the data source as they are written;
 // it turns them into DAX and runs them there, so the page's compiler passes them through.
-async function startModel(first, modelName) {
+async function startModel(first, modelName, maxRows) {
   const { createModelSource } = await import("./storage/modeldata.js");
+  const { MAX_ROWS: MODEL_MAX_ROWS } = await import("./storage/modelrows.js");
   const data = createModelSource({ onStatus: s => boot.step(s) });
   await data.init();
   boot.step("Building Explore…");
@@ -173,6 +174,8 @@ async function startModel(first, modelName) {
     name, tmsl: tmslOf(bim),
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
     run,
+    // A semantic model answers 100,000 rows at most (storage/modelrows.js).
+    maxRows: Math.min(maxRows || MODEL_MAX_ROWS, MODEL_MAX_ROWS),
     // Each tile is a request to the model: four at a time, not one after another.
     report, pages: ["report"], reportParallel: 4,
     echarts: () => echartsReady,

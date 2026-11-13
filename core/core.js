@@ -547,6 +547,7 @@ function createCore({
   const exporter = createExport({
     connectivity, modules: () => agent.modules(), appToken, powerBiToken: fabricToken, sqlToken, fabric,
     memento, extensionDir, pageDir, reportDir: join(storageDir, 'reports'),
+    maxRows: () => settings.maxResultRows(),
     ui: exportUi,
     onRefresh: node => view.refresh(node),
     log,

@@ -36,7 +36,11 @@ function createSettings(read) {
 
   const maxResultRows = () => Math.min(1_000_000, Math.max(1000, Math.floor(Number(read('maxResultRows', 200_000)) || 200_000)));
 
-  return { read, catalogTtlMs, tableTtlMs, keepLimitBytes, diskCacheBytes, keepsDiskCache, maxResultRows };
+  // How many rows a table's first look reads — Select Top Rows, the Data tab, a preview in the box: never
+  // more than a result may keep.
+  const selectTopRows = () => Math.min(maxResultRows(), Math.max(1, Math.floor(Number(read('selectTopRows', 1000)) || 1000)));
+
+  return { read, catalogTtlMs, tableTtlMs, keepLimitBytes, diskCacheBytes, keepsDiskCache, maxResultRows, selectTopRows };
 }
 
 module.exports = { createSettings };
