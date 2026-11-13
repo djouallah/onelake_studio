@@ -21,7 +21,7 @@
 // =============================================================================
 
 const { createHash } = require('node:crypto');
-const { mkdirSync, writeFileSync } = require('node:fs');
+const { mkdirSync, writeFileSync, statSync } = require('node:fs');
 const { sqlStr: q, quoteIdent: qi, assertOneLakeUrl } = require('../sql');
 const { DFS_ORIGIN } = require('../names');
 const { crc32 } = require('../crc32');
@@ -265,11 +265,7 @@ async function readIceberg(c, metadataLocation, { allow = async () => {} } = {})
   const sizes = listed.length
     ? new Map((await rows(c, `SELECT filename, size FROM read_blob([${listed.map(m => q(m.file_path)).join(', ')}])`)).map(r => [r.filename, Number(r.size)]))
     : new Map();
-  // One entry a file: a snapshot's manifests can each list a file they carry on (EXISTING), and a file's path is
-  // the file. Counted twice, its rows were read twice, once with its deletes and once without (a DELETE after an
-  // UPDATE, as DuckDB writes them).
-  const once = content => { const seen = new Set(); return listed.filter(m => m.content === content && !seen.has(m.file_path) && seen.add(m.file_path)); };
-  const data = once('DATA'), dels = once('POSITION_DELETES');
+  const data = listed.filter(m => m.content === 'DATA'), dels = listed.filter(m => m.content === 'POSITION_DELETES');
   const deletes = new Map();
   if (dels.length) {
     for (const r of await rows(c, `SELECT filename AS del, file_path AS data, count(*)::BIGINT AS n FROM read_parquet([${dels.map(d => q(d.file_path)).join(', ')}], filename = true) GROUP BY ALL`)) {
@@ -277,8 +273,14 @@ async function readIceberg(c, metadataLocation, { allow = async () => {} } = {})
       deletes.get(r.data).push({ path: r.del, count: Number(r.n), size: sizes.get(r.del) });
     }
   }
+  // What the snapshot says it holds: its data files' rows less the positions its delete files name. Null when its
+  // summary doesn't say, or it has equality deletes, which this reader doesn't apply.
+  const current = (meta.snapshots || []).find(s => String(s['snapshot-id']) === String(meta['current-snapshot-id']));
+  const summary = (current && current.summary) || {};
+  const total = Number(summary['total-records']), posDeletes = Number(summary['total-position-deletes'] || 0);
+  const liveRows = Number.isFinite(total) && !Number(summary['total-equality-deletes'] || 0) ? total - posDeletes : null;
   return {
-    format: 'iceberg', version: metadataLocation, root: null, partitionColumns: [], columnMapping: 'none',
+    format: 'iceberg', version: metadataLocation, root: null, partitionColumns: [], columnMapping: 'none', liveRows,
     fields: schema.map(s => ({ name: s.column_name, physical: s.column_name, type: s.column_type, children: [] })),
     files: data.map(d => ({ key: d.file_path, path: d.file_path, size: sizes.get(d.file_path), records: Number(d.record_count),
       partitionValues: [], deletes: deletes.has(d.file_path) ? { parquet: deletes.get(d.file_path) } : null })),
@@ -331,7 +333,13 @@ async function syncTable(c, name, state, { dvDir, held = new Map(), synced = nul
   // A file stays when it is still live with the same deletes. A deletion vector's file is named by its
   // descriptor, so what it would be is known without reading it.
   const dvFile = f => `${dvDir}/${createHash('sha256').update(JSON.stringify(f.deletes.dv)).digest('hex').slice(0, 32)}.puffin`;
-  const wantDeletes = f => (f.deletes && f.deletes.dv ? dvFile(f) : f.deletes && f.deletes.parquet ? f.deletes.parquet.map(d => d.path).sort().join('|') : '');
+  // An Iceberg data file with several position-delete files (an UPDATE, then a DELETE: each writes one): DuckLake
+  // takes one delete file a data file, and given two it read the file once for each. So they are one file here,
+  // named by the data file and theirs: every position any of them deletes, as Iceberg means them.
+  const manyDeletes = f => !!(f.deletes && f.deletes.parquet && f.deletes.parquet.length > 1);
+  const mergedFile = f => `${dvDir}/${createHash('sha256').update(JSON.stringify([f.path, f.deletes.parquet.map(d => d.path).sort()])).digest('hex').slice(0, 32)}.parquet`;
+  const wantDeletes = f => (f.deletes && f.deletes.dv ? dvFile(f) : manyDeletes(f) ? mergedFile(f)
+    : f.deletes && f.deletes.parquet ? f.deletes.parquet.map(d => d.path).sort().join('|') : '');
   const pathOfLocal = new Map([...held].map(([path, local]) => [local, path]));
   const live = await rows(c, `SELECT data_file_id, path, path_is_relative FROM ${META}.ducklake_data_file WHERE table_id = ${tid} AND end_snapshot IS NULL`);
   const deletesOf = new Map((await rows(c, `SELECT data_file_id, string_agg(path, '|' ORDER BY path) AS p FROM ${META}.ducklake_delete_file WHERE table_id = ${tid} AND end_snapshot IS NULL GROUP BY 1`)).map(r => [r.data_file_id, r.p]));
@@ -349,6 +357,15 @@ async function syncTable(c, name, state, { dvDir, held = new Map(), synced = nul
   }
   const blobs = new Map();
   for (const f of added) if (f.deletes && f.deletes.dv) blobs.set(f.key, await state.readDeletes(f));
+  for (const f of added) {
+    if (!manyDeletes(f)) continue;
+    const file = mergedFile(f);
+    mkdirSync(dvDir, { recursive: true });
+    await c.run(`COPY (SELECT DISTINCT file_path, pos FROM read_parquet([${f.deletes.parquet.map(d => q(d.path)).join(', ')}])
+      WHERE file_path = ${q(f.path)} ORDER BY pos) TO ${q(file)} (FORMAT parquet)`);
+    const [count] = await one(c, `SELECT count(*)::BIGINT FROM read_parquet(${q(file)})`);
+    f.deletes = { parquet: [{ path: file, count: Number(count), size: statSync(file).size }] };
+  }
 
   await c.run('BEGIN');
   try {

@@ -160,6 +160,18 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     assert.deepEqual(await both(a, "id, name", "id"), [{ id: "1", name: "A" }, { id: "2", name: "B" }, { id: "4", name: "d" }]);
   });
 
+  await t.test("an UPDATE then a DELETE of the same rows' file: two delete files on one data file, read as one", async () => {
+    const m = `${run}_m`;
+    made.push(["test", m]);
+    await sql(`CREATE TABLE ${five(m)} AS SELECT i AS id, 'v' || i AS v FROM range(10) r(i)`);
+    await sql(`UPDATE ${five(m)} SET v = 'changed' WHERE id = 3`);
+    await sql(`DELETE FROM ${five(m)} WHERE id IN (5, 7)`);
+    await sql(`DELETE FROM ${five(m)} WHERE id = 9`);
+    const rows = await both(m, "id, v", "id");
+    assert.deepEqual(rows.map(r => r.id), ["0", "1", "2", "3", "4", "6", "8"]);
+    assert.equal(rows.find(r => r.id === "3").v, "changed");
+  });
+
   await t.test("ALTER TABLE adds a column, and the next INSERT fills it", async () => {
     await sql(`ALTER TABLE ${five(a)} ADD COLUMN n INTEGER`);
     await sql(`INSERT INTO ${five(a)} VALUES (5, 'e', 50)`);

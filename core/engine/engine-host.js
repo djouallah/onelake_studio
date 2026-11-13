@@ -623,6 +623,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const name = lakeNameOf(folderOf(which));
     // Asked before every statement that names the table: without its log.
     const was = await withConn(c => syncedBrief(c, name), agentLive);
+    if (lakeWrong.has(name) && !which.check && !which.fresh) throw new Error(`${which.metadataLocation || which.deltaTable}: ${lakeWrong.get(name)}`);
     if (which.check) return was ? { name, location: was.location, at: was.syncedAt } : { name: null };
     if (which.offline) return { name: was || await inLake(name) ? name : null };
     if (was && !which.fresh) return { name };
@@ -631,6 +632,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   // One sync of a table at a time: another asked for meanwhile waits for it, and goes on from where it got to.
   const lakeSyncs = new Map();
+  // Lake tables whose rows didn't come to what their snapshot holds, and why: refused until synced right.
+  const lakeWrong = new Map();
   function lakeSync(which) {
     if (!capabilities.lake) return Promise.reject(new Error('this engine has no lake'));
     const name = lakeNameOf(folderOf(which));
@@ -657,6 +660,18 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       await allow(state.files.filter(f => f.deletes && f.deletes.dv && f.deletes.dv.storageType === 'p').map(f => f.deletes.dv.pathOrInlineDv));
       const synced = { folder, location: which.metadataLocation || null, listed: which.listed || null, uuid: which.uuid || null };
       const r = await admin(async () => syncTable(conn, name, state, { dvDir: duckdbPath(lakeDirs.deletes), held: await heldNow(), synced }));
+      // Held to what the snapshot says it holds: a lake table that reads other rows is never read (lakeTable), and
+      // says why, until a sync reads it right. Wrong rows are worse than none.
+      if (state.liveRows != null) {
+        const got = await withConn(k => k.runAndReadAll(`SELECT count(*)::BIGINT AS n FROM lake.main.${quoteIdent(name)}`), agentLive);
+        const n = Number(got.getRowObjectsJson()[0].n);
+        if (n !== state.liveRows) {
+          const why = `its copy in the lake reads ${n.toLocaleString('en')} rows, where its snapshot holds ${state.liveRows.toLocaleString('en')}, so it isn't read`;
+          lakeWrong.set(name, why);
+          throw new Error(`${which.metadataLocation}: ${why}`);
+        }
+      }
+      lakeWrong.delete(name);
       return { name, version: String(state.version), added: r.added, ended: r.ended, commitsRead: state.commitsRead == null ? null : state.commitsRead };
     }, agentLive);
   }

@@ -326,7 +326,12 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   commit, which is one request.
 - **Deletes:** a Delta deletion vector is the same bytes as an Iceberg Puffin delete file, which DuckLake reads, so
   each is cut out of the `.bin` it is packed in, or built from an inline one, and kept under `lake\deletes`. An Iceberg
-  table's position-delete files are used as they are. Column mapping and partitions are kept.
+  table's position-delete file is used as it is. A data file with several (an `UPDATE` and then a `DELETE` each write
+  one) has them merged into one under `lake\deletes`, since DuckLake takes one delete file a data file and read the
+  file once for each. Column mapping and partitions are kept.
+- **Held to its snapshot:** after an Iceberg table is synced, its lake table's rows are counted and must come to what
+  its snapshot says it holds (`total-records` less `total-position-deletes`). One that doesn't is never read, and the
+  statement says why, until a sync reads it right: wrong rows are worse than none.
 - **What a statement reads comes here.** The server keeps DuckDB's log of the files statements open. A file
   opened on OneLake is queued, downloaded whole over HTTPS, opened once here (on Windows the first open of a new file
   can wait many seconds, and a statement mustn't be the one that waits), and then its name in the lake becomes the copy,
