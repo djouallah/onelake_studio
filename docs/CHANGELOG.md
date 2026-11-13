@@ -3,7 +3,8 @@
 ## Unreleased
 
 - **New SQL names, as Fabric's Spark writes them.** A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`,
-  such as `aemo.data.dbo.dim_duid`, where it was `lakehouse.aemo.data.dbo.dim_duid`. Any other item has its kind after its
+  such as `aemo.data.dbo.dim_duid`, where it was `lakehouse.aemo.data.dbo.dim_duid`, and `aemo.data_lakehouse.dbo.dim_duid`
+  reads it too. Any other item has its kind after its
   name: `aemo.gold_warehouse.sales.orders`, `_sqldatabase`, `_mirroreddatabase`. A semantic model is
   `<workspace>.<model>_semanticmodel`, and a file is `'<workspace>.<lakehouse>/Files/<path>'`. A part can be quoted in
   backticks as well as double quotes. A table can also be named by its workspace's and its item's GUIDs,

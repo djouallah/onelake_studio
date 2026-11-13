@@ -417,7 +417,7 @@ test("native engine host", async t => {
     resolved.push(ref);
     if (ref.item.toLowerCase() === "missing") throw new Error(`there is no ${ref.kind} ${ref.item}`);
     return { kind: ref.kind, workspace: ref.workspace === "anz ws" ? "ANZ ws" : ref.workspace,
-             item: ref.item, schema: ref.schema, table: ref.table,
+             item: ref.kind === "lakehouse" ? ref.item.replace(/_lakehouse$/i, "") : ref.item, schema: ref.schema, table: ref.table,
              emptySql: `SELECT 7 AS answer, ${JSON.stringify(ref.table).replace(/"/g, "'")} AS t` };
   };
   // What the host's cache holds: listed in DuckDB's catalog without resolveTable ever asked.
@@ -487,6 +487,9 @@ test("native engine host", async t => {
     // Backticks quote a name, as Spark writes it.
     r = await engine.call("query", ["SELECT t FROM `anz ws`.`wh_warehouse`.sales.f"]);
     assert.deepEqual(r.rows, [{ t: "f" }]);
+    // A lakehouse written with _lakehouse after its name is the same table.
+    r = await engine.call("query", ["SELECT t FROM aemo.data_lakehouse.dbo.dim_duid"]);
+    assert.deepEqual(r.rows, [{ t: "dim_duid" }]);
     // The engine's database in front is the same table.
     r = await engine.call("query", ["SELECT t FROM onelake.aemo.data.dbo.dim_duid"]);
     assert.deepEqual(r.rows, [{ t: "dim_duid" }]);

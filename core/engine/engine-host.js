@@ -844,8 +844,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    // A table named by its GUIDs has its view there: the names they stand for are another view's.
-    const at = ref.byGuid ? ref : r;
+    // A table named by its GUIDs has its view there: the names they stand for are another view's. So has a lakehouse
+    // written with _lakehouse after its name, as ws.data_lakehouse.dbo.t, which DuckDB looks for at that path.
+    const at = ref.byGuid ? ref : ref.kind === 'lakehouse' && r.kind === 'lakehouse' &&
+      String(ref.item).toLowerCase() !== String(r.item).toLowerCase() ? { ...r, item: ref.item } : r;
     return { name: nameOf(at), path: pathOf(at), source, location: r.emptySql == null ? r.metadataLocation : null, at: r.at, listed: r.listed, secured: !!r.secured };
   }
   async function makeView({ name, path: parts, source }) {

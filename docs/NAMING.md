@@ -26,12 +26,14 @@ catalog.
 | A semantic model | `<workspace>.<model>_semanticmodel` | `aemo.nem_semanticmodel` |
 | A file | `'<workspace>.<lakehouse>/Files/<path>'` | `'aemo.data/Files/x.parquet'` |
 
-`<kind>` is `warehouse`, `sqldatabase` or `mirroreddatabase`. A lakehouse has none.
+`<kind>` is `warehouse`, `sqldatabase` or `mirroreddatabase`. A lakehouse needs none, and `_lakehouse` after its
+name reads too.
 
 | Written | Means |
 | --- | --- |
 | `aemo.data.dbo.dim_duid` | A lakehouse table, named as Fabric's Spark names it. |
 | `AEMO.DATA.DBO.DIM_DUID` | The same table: case does not matter. |
+| `aemo.data_lakehouse.dbo.dim_duid` | The same table: a lakehouse can have its kind after its name, as any other item has. |
 | `aemo.data_warehouse.dbo.dim_duid` | A different table: the item is a warehouse named `data`. |
 | `"ANZ Retail"."gold-1".sales."order"` | A table: a part with a space, a hyphen or a reserved word is quoted. |
 | `` `ANZ Retail`.`gold-1`.sales.`order` `` | The same table: backticks quote a part too, as Spark writes it. |
@@ -81,9 +83,10 @@ holds no tables SQL can name, and is refused.
 **The schema is always written.** A lakehouse without schemas is `dbo`, the one schema OneLake's catalog
 reports for it, and the one Microsoft tells Spark to write too. Every table therefore has the same shape.
 
-**One clash is possible.** A lakehouse named `gold_warehouse` and a warehouse named `gold` in the same
-workspace would both be `ws.gold_warehouse`. The name then means two tables, so it is refused, and the
-error says to name the table by its GUIDs. With only one of the two, the name is that one.
+**Two clashes are possible.** A lakehouse named `gold_warehouse` and a warehouse named `gold` in the same
+workspace would both be `ws.gold_warehouse`, and lakehouses named `data` and `data_lakehouse` would both be
+`ws.data_lakehouse`. The name then means two items, so it is refused, and the error says to name the table by
+its GUIDs. With only one of the two, the name is that one.
 
 **Four parts are nested schemas, not a parser trick.** The workspace, the item and the schema are schemas
 nested in the engine's catalog, made as a statement names them. The table is a view there, over its lake
@@ -143,6 +146,7 @@ before DuckDB sees the statement.
 | --- | --- |
 | `'aemo.data/Files/x.parquet'` | A file. |
 | `'AEMO.DATA/Files/x.parquet'` | The same file: case does not matter before the `/`. |
+| `'aemo.data_lakehouse/Files/x.parquet'` | The same file, as a table's name can have `_lakehouse`. |
 | `'aemo.data/Files/X.parquet'` | A different file: the path is exact. |
 | `'"ANZ Retail".data/Files/a b.csv'` | A file: a part is quoted as it is in a table's name, and the path never is. |
 | `'aemo.data/Files/raw/*.csv'` | Every `.csv` directly in `raw/`. `**` goes through its subfolders. |
@@ -224,7 +228,8 @@ the old name stops resolving. A query that must survive a rename names its table
 **A table is a dotted name of four or more parts.** `tableRefs` finds them in any statement, including
 `DESCRIBE`, `EXPLAIN` and a view's body, and the engine opens each one before the statement runs.
 - A second part ending in `_<kind>` is that kind of item. Two GUIDs first are a name by GUIDs. Anything else
-  is a lakehouse.
+  is a lakehouse, and one ending in `_lakehouse` is the lakehouse named without it, unless the workspace has only
+  a lakehouse of the whole name.
 - A lakehouse name is a OneLake table only in a workspace OneLake has. Anything else, a struct's field
   (`s.col.a.b`) or a table of an attached database file, is DuckDB's, and goes to it as written. A workspace
   the kept listing doesn't have is looked for again, at most once a minute.
@@ -233,7 +238,7 @@ the old name stops resolving. A query that must survive a rename names its table
 - Comments and string literals are skipped, and whitespace around the dots is allowed.
 - A name written the old way, `lakehouse.<workspace>.<item>.<schema>.<table>`, is refused with its name now
   (`oldTableName`). An item that isn't there says what the name may have meant: an item of that name of
-  another kind, or a lakehouse written with the `_lakehouse` it had for a while.
+  another kind.
 
 **A model is a two-part name whose second part ends in `_semanticmodel`.** `unopenedModels` finds the ones
 not open yet and the host opens them first. dax-sql then compiles the statement.
@@ -271,7 +276,7 @@ These do not meet the contract yet:
 | `test/js/names.test.mjs` | Building names, the `dbo` default, the kind mapping and suffix, quoting, and the host and page `sqlPart` staying equal |
 | `test/js/sql.test.mjs` | `tableRefs`: case, quotes, backticks, GUIDs, the fifth part as a column, the old way, the engine's own catalogs; `fileRefs`: where a file's name counts, and what is refused; `SHOW` rewriting; write targets |
 | `test/js/semantic.test.mjs` | `modelSqlName`, `unopenedModels`, and a model with no workspace refused |
-| `test/js/sqltables.test.mjs` | A GUID name resolved by the item it stands for; a bare name outside OneLake's workspaces; the clash with a suffixed name; what a missing item may have meant |
+| `test/js/sqltables.test.mjs` | A GUID name resolved by the item it stands for; a bare name outside OneLake's workspaces; `_lakehouse` after a lakehouse's name; the clash with a suffixed name; what a missing item may have meant |
 | `test/js/cli-engine.test.mjs` | Listed names run as SQL; an Import model is refused |
 | `test/js/engine-host.test.mjs` | Tables opened by name across kinds, spaces, case, backticks and GUIDs; whole-path listings; a workspace named like a database refused; a database file renamed off a workspace's name |
 | `test/sql/tables.test`, `catalog.test`, `semantic.test` | SQL statements and their answers, through the command line |

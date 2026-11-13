@@ -92,10 +92,24 @@ test("a bare name is a table only in a workspace OneLake has; elsewhere it is Du
   assert.equal(count(w, "workspaces"), 1);
 });
 
+test("ws.old_lakehouse is lakehouse old, or the lakehouse named old_lakehouse; with both, it is refused", async () => {
+  const w = world();
+  const lh = await w.sql.resolve({ ...ref("old_lakehouse"), bare: true });
+  assert.deepEqual([lh.item, lh.metadataLocation], ["old", LOC]);
+  assert.deepEqual(await w.sql.resolveFile({ workspace: "ws", item: "OLD_LAKEHOUSE", written: "ws.OLD_LAKEHOUSE/Files" }),
+    { workspace: "ws", item: "old.Lakehouse" });
+  assert.equal((await w.sql.lakehouseOf({ workspace: "ws", item: "old_lakehouse" })).item, "old.Lakehouse");
+  w.items = ["old_lakehouse.Lakehouse"];
+  assert.equal((await w.sql.resolve({ ...ref("old_lakehouse"), bare: true }, { fresh: true })).item, "old_lakehouse");
+  w.items = ["old.Lakehouse", "old_lakehouse.Lakehouse"];
+  await assert.rejects(w.sql.resolve({ ...ref("old_lakehouse"), bare: true }, { fresh: true }),
+    /has both a lakehouse old and a lakehouse old_lakehouse, so the name means two lakehouses\. Write ws\.old for the first/);
+});
+
 test("an item that isn't there says what the name may have meant", async () => {
   const w = world();
-  await assert.rejects(w.sql.resolve({ ...ref("old_lakehouse"), bare: true }),
-    /there is no lakehouse old_lakehouse in workspace ws — a lakehouse is named without _lakehouse: ws\.old\.dbo\.t/);
+  w.catalog.listItems = async () => [{ name: "old.Lakehouse", kind: "Lakehouse" }, { name: "gold.Warehouse", kind: "Warehouse" }];
+  await assert.rejects(w.sql.resolve({ ...ref("gold"), bare: true }), /there is no lakehouse gold in workspace ws — gold is a warehouse: ws\.gold_warehouse\.dbo\.t/i);
 });
 
 test("ws.x_warehouse is warehouse x, or the lakehouse named x_warehouse when that is all the workspace has", async () => {

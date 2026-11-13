@@ -67,16 +67,29 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   const namedFrom = new Map();
   const nameKey = (kind, workspace, item) => [kind, workspace, item].join('\u0000').toLowerCase();
 
-  // What the name may have meant, when its item isn't there: an item of that name of another kind, or a
-  // lakehouse written with the _lakehouse its name had for a while.
+  // What the name may have meant, when its item isn't there: an item of that name of another kind.
   function nearItem(ref, ws, items) {
     const named = (kind, item) => (ref.table ? sqlName({ ...ref, workspace: ws, kind, item })
       : [ws, kind === 'lakehouse' ? item : `${item}_${kind}`].map(sqlPart).join('.'));
     const other = items.find(i => sqlKind(i.kind) && sqlKind(i.kind) !== ref.kind && same(displayName(i.name), ref.item));
     if (other) return ` — ${ref.item} is a ${kindLabel(other.kind)}: ${named(sqlKind(other.kind), displayName(other.name))}`;
+    return '';
+  }
+
+  // The item a name means in a workspace's listing. A lakehouse can be written with _lakehouse after its name,
+  // as any other item has its kind: ws.data_lakehouse is lakehouse data, unless there is only a lakehouse named
+  // data_lakehouse. With both, the name means two lakehouses, and is refused.
+  function itemIn(items, ref, ws) {
+    const named = item => items.find(i => sqlKind(i.kind) === ref.kind && same(displayName(i.name), item));
+    const hit = named(ref.item);
     const m = ref.kind === 'lakehouse' && /^(.+)_lakehouse$/i.exec(ref.item);
-    const base = m && items.find(i => sqlKind(i.kind) === 'lakehouse' && same(displayName(i.name), m[1]));
-    return base ? ` — a lakehouse is named without _lakehouse: ${named('lakehouse', displayName(base.name))}` : '';
+    const base = m ? named(m[1]) : null;
+    if (hit && base) {
+      throw new Error(`${ref.name || sqlName(ref)}: workspace ${ws} has both a lakehouse ${displayName(base.name)} and a lakehouse ` +
+        `${displayName(hit.name)}, so the name means two lakehouses. Write ${sqlPart(ws)}.${sqlPart(displayName(base.name))} for the first, ` +
+        'and name the other\'s tables by their GUIDs: "<workspace id>"."<item id>".<schema>.<table>');
+    }
+    return hit || base;
   }
 
   // The workspace and the item's directory, as OneLake spells them. `ref.name` says what is being
@@ -94,7 +107,7 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
     };
     return revalidate(o => lookUp({ fresh: fresh || !!o.fresh }), async ({ ws, items }) => {
       if (ref.dir) return { ws, dir: ref.dir };
-      const hit = items.find(i => sqlKind(i.kind) === ref.kind && same(displayName(i.name), ref.item));
+      const hit = itemIn(items, ref, ws);
       if (!hit) {
         // Offline, the kept listing is all there is, so it cannot say the item does not exist.
         const why = offlineReason();
@@ -285,7 +298,9 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
         const workspaces = await onelake.workspaces().catch(() => []);
         const ws = workspaces.find(w => same(w, x.workspaceName)) || String(x.workspaceName);
         const items = await onelake.items(ws).catch(e => { throw new Error(`workspace ${ws} could not be listed — ${e.message}`); });
-        const hit = items.find(i => sqlKind(i.kind) && same(displayName(i.name), x.itemName));
+        const lh = /^(.+)_lakehouse$/i.exec(x.itemName);
+        const hit = items.find(i => sqlKind(i.kind) && same(displayName(i.name), x.itemName))
+          || (lh && items.find(i => sqlKind(i.kind) === 'lakehouse' && same(displayName(i.name), lh[1])));
         if (!hit) throw new Error(`there is no lakehouse or warehouse ${x.itemName} in workspace ${ws}`);
         out.push(sqlName({ kind: sqlKind(hit.kind), workspace: ws, item: displayName(hit.name), schema: x.schema, table: x.table }));
         continue;
