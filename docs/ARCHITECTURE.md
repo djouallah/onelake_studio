@@ -1006,13 +1006,13 @@ personal skills, and it follows the extension through updates.
 ## Keep offline
 
 **Keep offline**, a switch beside a semantic model's tabs, keeps every table the model reads on this machine and current,
-so it answers from disk and with no connection ([`core/models/modeldata.js`](../core/models/modeldata.js)). Each table's lake table is
-synced to its latest snapshot, as the idle job does it (`keepTable`), and nothing of it is read: the files that come
-here are the ones the model's queries open ([Reading OneLake tables](#reading-onelake-tables)), so a filter on a partition
-brings down that partition, not the table.
+so it answers from disk and with no connection ([`core/models/modeldata.js`](../core/models/modeldata.js)). Each table is kept
+whole (`keepWhole`): its lake table synced to its latest snapshot, as the idle job does it, then every file of it still on
+OneLake downloaded by the table service (`fetchTable`), as a statement's would be. A table counts as kept only once every
+file has come down.
 
 - **A background job, a client of the query server** (`engines.js backgroundEngine`), as a window is: the lake can be
-  open in one process only. It reads no rows, so it costs the server a log read per table, not a table read.
+  open in one process only. The downloads are the server's table service's (`lakeFetch` over the control pipe).
 - **It was asked for,** so it differs from the idle job: it starts at once, with no two quiet minutes first, and has no
   time limit. The idle job holds off meanwhile, or the two would sync the same tables.
 - **It stays on.** It's a row in the catalog per model, so it goes on with the tab closed and comes back with the next
@@ -1026,6 +1026,10 @@ brings down that partition, not the table.
 - **More than the disk cache holds stays off** (`diskCacheMaxGB`), counting the other models kept offline, since it would
   evict itself. **Clear Cached OneLake Data** switches them all off.
 - **A table that fails** is named beside the switch and tried again in an hour. With no connection it waits, and carries on.
+
+**Download Tables for Offline** (the cloud icon on a lakehouse, a warehouse or a schema in the tree) does the same once,
+for every table under it: each kept whole, with a notification counting them, and Cancel leaving what came down. Refused
+when the tables are more than the disk cache.
 
 ## Open in Excel
 

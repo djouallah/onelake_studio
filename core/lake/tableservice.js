@@ -79,12 +79,12 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
   const init = () => ready || (ready = withConn(c => c.run(`CREATE TABLE IF NOT EXISTS ${HELD} (
     local VARCHAR PRIMARY KEY, path VARCHAR, relative BOOLEAN, bytes BIGINT, last_read BIGINT, unread_since BIGINT)`)));
 
-  // What the lake reads from OneLake now, by full URL.
-  async function remoteFiles(c) {
+  // What the lake reads from OneLake now, by full URL: of every table, or of lake table `name`.
+  async function remoteFiles(c, name = null) {
     return rows(c, `SELECT f.data_file_id AS id, f.path, f.path_is_relative AS relative, f.file_size_bytes AS size,
         CASE WHEN f.path_is_relative THEN t.path || f.path ELSE f.path END AS url
       FROM ${META}.ducklake_data_file f JOIN ${META}.ducklake_table t ON t.table_id = f.table_id AND t.end_snapshot IS NULL
-      WHERE f.end_snapshot IS NULL AND (f.path_is_relative OR f.path LIKE 'abfs%')`);
+      WHERE f.end_snapshot IS NULL AND (f.path_is_relative OR f.path LIKE 'abfs%')${name == null ? '' : ` AND t.table_name = ${q(name)}`}`);
   }
 
   /** The paths statements opened, as DuckDB's FileSystem log names them. */
@@ -192,6 +192,31 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
     return withConn(heldOn);
   }
 
+  /**
+   * Every file of lake table `name` still on OneLake, brought here whole, as a statement's would be: for a table
+   * someone asked to have here (Keep offline, Download for offline). Resolves once none of them is queued or coming
+   * down, with how many are still on OneLake (a failed download, or one too big for the cache).
+   */
+  const asked = new Map();   // lake table -> its files' URLs, while fetchTable waits on them
+  async function fetchTable(name) {
+    await init();
+    const files = await withConn(c => remoteFiles(c, name));
+    const urls = new Set(files.map(f => f.url));
+    asked.set(name, urls);
+    for (const f of files) if (!queued.has(f.url) && !busy.has(f.url)) queued.set(f.url, Number(f.size));
+    pump();
+    try {
+      while (!closed && [...urls].some(u => queued.has(u) || busy.has(u))) await new Promise(r => setTimeout(r, 200));
+    } finally { if (asked.get(name) === urls) asked.delete(name); }
+    const left = await withConn(c => remoteFiles(c, name));
+    return { files: files.length, bytes: files.reduce((n, f) => n + Number(f.size), 0), left: left.length };
+  }
+  /** fetchTable(name) stopped: its files not started yet are left on OneLake. */
+  function stopTable(name) {
+    const urls = asked.get(name);
+    if (urls) for (const u of urls) queued.delete(u);
+  }
+
   async function idle() {
     while (queued.size || busy.size) await new Promise(r => setTimeout(r, 20));
   }
@@ -203,7 +228,7 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
     return { ...counts, queued: queued.size, busy: busy.size, held: Number(h.files), heldBytes: Number(h.bytes), going: Number(h.going) };
   }
 
-  return { noteOpened, tidy, held, idle, stats, close() { closed = true; queued.clear(); } };
+  return { noteOpened, fetchTable, stopTable, tidy, held, idle, stats, close() { closed = true; queued.clear(); } };
 }
 
 /**

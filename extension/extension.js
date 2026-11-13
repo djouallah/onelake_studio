@@ -972,6 +972,59 @@ async function activateInner(context) {
       type: 'lakehouse-health', workspace: n.workspace, item: n.item, name: n.item,
     }, `Table Health · ${String(n.item).replace(/\.[^.]+$/, '')}`)),
 
+    // Every table of a lakehouse, a warehouse or one schema, brought onto this machine whole, so it answers with no
+    // connection (a flight): each synced and every file of it downloaded (engine-host.js keepWhole).
+    vscode.commands.registerCommand('onelakeStudio.downloadTables', async n => {
+      if (!n || !n.item) return;
+      const lh = { workspace: n.workspace, item: n.item };
+      const where = `${String(n.item).replace(/\.[^.]+$/, '')}${n.kind === 'schema' && n.schema ? `.${n.schema}` : ''}`;
+      try {
+        const kept = await onelake.cached.tables(lh);
+        const all = kept && Array.isArray(kept.value) ? kept.value : await onelake.tables(lh);
+        const tables = all.filter(t => n.kind !== 'schema' || (t.schema || '') === (n.schema || ''));
+        if (!tables.length) { vscode.window.showInformationMessage(`${where} has no tables.`); return; }
+        const sizes = [];
+        for (const t of tables) {
+          const m = await onelake.table(lh, t).catch(() => null);
+          sizes.push(Number((m && m.stats && m.stats.totalFilesSize) || 0));
+        }
+        const total = sizes.reduce((a, b) => a + b, 0), room = settings.diskCacheBytes();
+        if (!(room > 0)) { vscode.window.showWarningMessage('The disk cache is off (onelakeStudio.diskCacheMaxGB), so nothing can be kept on this machine.'); return; }
+        if (total > room) { vscode.window.showWarningMessage(`${where} is ${fmtBytes(total)}: it won't fit, as the disk cache is ${fmtBytes(room)} (onelakeStudio.diskCacheMaxGB).`); return; }
+        const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
+        const eng = engines.ensureEngine({ readme: readme.fsPath });
+        if (!eng) throw new Error('DuckDB could not be loaded on this platform');
+        const failed = [];
+        let done = 0, bytes = 0;
+        const stopped = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Downloading ${where} for offline`, cancellable: true },
+          async (progress, token) => {
+            const stop = new AbortController();
+            token.onCancellationRequested(() => stop.abort());
+            for (const [i, t] of tables.entries()) {
+              if (stop.signal.aborted) return true;
+              progress.report({ message: `${done} of ${tables.length} tables · ${fmtBytes(bytes)} of ${fmtBytes(total)} · ${t.table}` });
+              try {
+                const got = await eng.keepWhole(sqlNameOf(lh, t), { signal: stop.signal });
+                if (got && got.left) failed.push(`${t.table}: ${got.left} of its ${got.files} files did not come down`);
+                else { done++; bytes += sizes[i]; }
+              } catch (e) {
+                if (stop.signal.aborted) return true;
+                failed.push(`${t.table}: ${(e && e.message) || e}`);
+              }
+            }
+            return false;
+          });
+        if (out) for (const f of failed) out.appendLine(`download for offline: ${where}: ${f}`);
+        const said = `${done} of ${tables.length} tables of ${where} are on this machine (${fmtBytes(bytes)}).`;
+        if (stopped) vscode.window.showInformationMessage(`Stopped. ${said}`);
+        else if (failed.length) vscode.window.showWarningMessage(`${said} ${failed.length} did not come down whole: ${failed[0]}${failed.length > 1 ? ' (the rest are in the log)' : ''}`);
+        else vscode.window.showInformationMessage(`${said} They answer with no connection.`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`Download for offline: ${(e && e.message) || e}`);
+      }
+    }),
+
     vscode.commands.registerCommand('onelakeStudio.openInternalTable', onClick(n => openInPanel({
       type: 'query', sql: `SELECT * FROM system_internal.${quoteIdent(n.table)} LIMIT ${settings.selectTopRows()}`,
     }))),

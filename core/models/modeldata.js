@@ -2,8 +2,9 @@
 // =============================================================================
 // modeldata.js — Keep offline: a semantic model's tables stay on this machine, current
 // =============================================================================
-// A table kept is its DuckLake table synced to the latest snapshot (engine-host.js keepTable): nothing of it is
-// read. Its files come here as statements open them (tableservice.js), and the sync keeps every copy still live.
+// A table kept is its DuckLake table synced to the latest snapshot, and every file of it downloaded here
+// (engine-host.js keepWhole, tableservice.js fetchTable), so it answers with no connection. A sync after that
+// keeps every copy still live, and the next tick downloads what a newer snapshot added.
 //
 // This is a background job. Once switched on it needs nothing from anyone: it goes on with the tab
 // closed, comes back with the next window, and never stops for a query. What keeps it out of a query's
@@ -184,7 +185,9 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
       const began = now();
       job.table = t.name;
       try {
-        await read(t.name, { signal: job.stop.signal });
+        const got = await read(t.name, { signal: job.stop.signal });
+        // Kept is every file here: one that didn't come down is tried again later.
+        if (got && got.left) throw new Error(`${got.left} of its ${got.files} files could not be downloaded`);
         // Nothing of the idle job's daily budget went on this: nobody asked that job for it.
         usage.noteKept(t.t, { location: t.location, at: now(), total: t.size, bytes: 0, ms: now() - began, error: null, retryAt: 0 });
         log(`keep offline: ${t.name}, ${fmtBytes(t.size)}, in ${Math.round((now() - began) / 1000)}s`);

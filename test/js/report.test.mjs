@@ -25,7 +25,7 @@ const MODEL = { tables: [
   { name: "trips", columns: [{ name: "fare", dataType: "double" }], measures: [{ name: "Total Fare" }] },
 ], relationships: [{ fromTable: "trips", toTable: "dim_zone" }, { fromTable: "trips", toTable: "dim_date" }] };
 const PIVOT_SQL = 'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare"\nFROM model\nGROUP BY ALL\n' +
-                  'ORDER BY "Borough"\nFETCH FIRST 5000 ROWS WITH TIES';
+                  'ORDER BY "Borough"\nFETCH FIRST 1000 ROWS WITH TIES';
 
 test("a pivot tile runs Pivot's query, and a click on it picks its first Rows field", () => {
   const fields = modelFields(MODEL);
@@ -148,7 +148,7 @@ test("Top N keeps the first rows as they are sorted, ties kept; a filter on a me
   assert.equal(pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"],
                             filters: [{ field: "Total Fare", op: "range", min: 0.5, measure: true }] }, fields).sql,
     'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare"\nFROM model\nGROUP BY ALL\n' +
-    'HAVING "Total Fare" >= 0.5\nORDER BY "Borough"\nFETCH FIRST 5000 ROWS WITH TIES', "by its name in the SELECT");
+    'HAVING "Total Fare" >= 0.5\nORDER BY "Borough"\nFETCH FIRST 1000 ROWS WITH TIES', "by its name in the SELECT");
   assert.match(pivotQuery({ rows: ["dim_zone.Borough"], values: ["\0sum\0trips.fare"],
                             filters: [{ field: "Total Fare", op: "range", min: 1, max: 9, measure: true }] }, fields).sql,
     /\nHAVING AGG\("Total Fare"\) >= 1\n  AND AGG\("Total Fare"\) <= 9\n/, "a measure not shown, as itself");

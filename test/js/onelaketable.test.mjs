@@ -243,6 +243,25 @@ test("the service brings a read file here, and only that file", { skip }, async 
   } finally { lake.close(); }
 });
 
+test("a table asked for whole comes here whole, no statement needed", { skip }, async () => {
+  const lake = await H.openLake();
+  try {
+    const t = await servedTable(lake, "part_multi");
+    await t.sync();
+    const all = await t.urls();
+    assert.ok(all.length > 1, "a table of several files");
+    const got = await t.service.fetchTable("part_multi");
+    assert.equal(got.files, all.length);
+    assert.equal(got.left, 0);
+    assert.equal((await t.urls()).length, 0, "every file is read from here now");
+    // Asked again, there is nothing left to bring.
+    assert.deepEqual(await t.service.fetchTable("part_multi"), { files: 0, bytes: 0, left: 0 });
+    const names = (await readDelta(lake.c, t.local)).fields.map(f => f.name);
+    const same = await H.sameRows(lake.c, "lake.part_multi", `delta_scan(${H.q(t.local)})`, names);
+    assert.deepEqual([same.onlyInFirst, same.onlyInSecond], [0, 0], JSON.stringify(same));
+  } finally { lake.close(); }
+});
+
 test("a copy a commit no longer names is deleted; one still named stays", { skip }, async () => {
   const lake = await H.openLake();
   try {

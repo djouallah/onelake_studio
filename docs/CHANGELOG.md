@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Download Tables for Offline.** A cloud icon on a lakehouse, a warehouse or a schema in the tree brings every table
+  under it onto this machine, whole, so it answers with no connection: on a flight, say. A notification counts the
+  tables and the bytes, and Cancel keeps what came down. It says so when the tables won't fit the disk cache.
+- **Fixed: Keep offline kept no data.** A semantic model kept offline synced its tables' metadata and downloaded none of
+  their files, while the switch said they were on this machine. It now downloads every file of every table, and a
+  table counts as kept only once they are all here.
+- **Visual opens on Top 1000.** A new visual keeps its first 1,000 rows; *All rows* is in the same list, and stays
+  picked once chosen.
 - **Row limits follow the settings everywhere.** A table's Data tab, the query a table puts in the box, an
   internal table and a snapshot's query read *Select Top Rows* rows (1,000 by default), where they read 100. A
   Visual, a table's pivot and a Report tile ask for up to *Max Result Rows* (200,000 by default), where they

@@ -196,6 +196,12 @@
         "category": "OneLake Studio"
       },
       {
+        "command": "onelakeStudio.downloadTables",
+        "title": "Download Tables for Offline",
+        "category": "OneLake Studio",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "onelakeStudio.copyColumns",
         "title": "Copy Column List",
         "category": "OneLake Studio"
@@ -417,6 +423,16 @@
           "group": "0_query@2"
         },
         {
+          "command": "onelakeStudio.downloadTables",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(item|schema)$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "onelakeStudio.downloadTables",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(item|schema)$/",
+          "group": "0_query@3"
+        },
+        {
           "command": "onelakeStudio.copySqlName",
           "when": "view == onelakeStudio.explorer && viewItem == table",
           "group": "1_copy@1"
@@ -607,6 +623,10 @@
         },
         {
           "command": "onelakeStudio.tableHealth",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.downloadTables",
           "when": "false"
         },
         {

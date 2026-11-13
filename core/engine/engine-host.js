@@ -1353,6 +1353,34 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // it, so it doesn't count as use.
   const keepTable = (name, { signal } = {}) => agentQuery(`DESCRIBE ${name}`, { signal, fresh: true, used: false, mark: KEEP_MARK });
 
+  // Every file of a lake table brought here whole by the table service, where the lake is: this process, or the
+  // shared server. `lakeStop` lets the files not started yet stay on OneLake.
+  const lakeFetch = name => init().then(() => (remote ? instance.lakeFetch(name) : lakeService ? lakeService.fetchTable(name) : null));
+  const lakeStop = name => init().then(() => (remote ? instance.lakeStop(name) : lakeService ? lakeService.stopTable(name) : null));
+  /**
+   * A table on this machine, whole (Keep offline, Download for offline): synced as keepTable does, then each of its
+   * files still on OneLake downloaded. `name` is its SQL name. Answers { files, bytes, left }, or null for a table
+   * with no files (nothing was ever written to it). A stop leaves what came down here.
+   */
+  async function keepWhole(name, { signal } = {}) {
+    await keepTable(name, { signal });
+    await init();
+    if (!capabilities.lake) throw new Error('this engine has no lake to keep tables in');
+    const [ref] = tableRefs(`SELECT * FROM ${name}`, SQL_KINDS);
+    if (!ref || !resolveTable) throw new Error(`${name} does not name a OneLake table`);
+    const r = await resolveTable(ref, {});
+    if (r.emptySql != null || (!r.deltaTable && !r.metadataLocation)) return null;
+    const { name: lake } = await lakeOf({ deltaTable: r.deltaTable || null, metadataLocation: r.metadataLocation || null, check: true });
+    if (!lake) throw new Error(`${name} is not in the lake yet`);
+    const stop = () => { lakeStop(lake).catch(() => {}); };
+    if (signal) signal.addEventListener('abort', stop, { once: true });
+    try {
+      const got = await lakeFetch(lake);
+      if (signal && signal.aborted) throw Object.assign(new Error('stopped'), { cancelled: true });
+      return got;
+    } finally { if (signal) signal.removeEventListener('abort', stop); }
+  }
+
   // Whether anyone has a statement running on this server, a table being kept aside. Over the control
   // pipe: over Quack, this would be a line in Logs every few seconds. Not a page method.
   async function othersRunning() {
@@ -1436,7 +1464,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, clearLogs };
   return api;
 }
 

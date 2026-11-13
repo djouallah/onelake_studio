@@ -215,7 +215,8 @@ which downloads a model's file. Neither is a listing.
 
 ## Reading data
 
-**Nothing downloads a table's file on its own.** A file comes here because a statement opened it, and the sync worker
+**Nothing downloads a table's file on its own.** A file comes here because a statement opened it, or because someone asked
+for the whole table (Keep offline, Download Tables for Offline: ARCHITECTURE.md), and the sync worker
 reads only listings, metadata and the commits a lake table needs ([Tables in use](#tables-in-use)). Bytes move when
 someone asks for them:
 

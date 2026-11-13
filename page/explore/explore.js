@@ -87,7 +87,8 @@ export const aggOf = id => { const m = /^\u0000(\w+)\u0000([\s\S]+)$/.exec(id); 
 const defaultAgg = f => f.type === 'number' ? 'sum' : 'count';
 // Totals are off until asked for. `v` 2: shelves saved before that kept totals on by
 // default, so their `totals` is not read back.
-const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields', slicer: 'list' });
+// A new visual keeps its first 1000 rows (Top 1000); All rows is a pick away, and kept once picked (top: null).
+const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields', slicer: 'list', top: 1000 });
 
 // =============================================================================
 // The model's fields, the query, the pivot: no DOM
@@ -936,7 +937,7 @@ export function createExplorer(root, ctx) {
   const totalsBtn = tool('totals', 'Totals', () => { state.totals = !state.totals; changed(); });
   const clearBtn = tool('clear', 'Clear the shelves', () => { state = { ...EMPTY(), mark: state.mark }; changed(); });
   // Top N: the first n rows as they are sorted, ties kept.
-  const TOPS = [0, 1, 3, 5, 10, 15, 20, 25, 50, 100];
+  const TOPS = [0, 1, 3, 5, 10, 15, 20, 25, 50, 100, 1000];
   const top = el('select', { 'aria-label': 'Top', title: 'Keep the first rows, as they are sorted (ties kept)' },
     TOPS.map(n => el('option', { value: n }, n ? `Top ${n}` : 'All rows')));
   const info = el('span', { class: 'ex-info' });

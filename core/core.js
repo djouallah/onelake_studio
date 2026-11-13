@@ -461,7 +461,8 @@ function createCore({
     cachedTable: t => onelake.cached.table({ workspace: t.workspace, item: t.item }, t),
     read: (name, o) => {
       const reader = engines.backgroundEngine();
-      return reader ? reader.keepTable(name, o) : Promise.reject(Object.assign(new Error('the engines are being stopped'), { cancelled: true }));
+      // Whole: synced, and every file of it downloaded, so it answers with no connection.
+      return reader ? reader.keepWhole(name, o) : Promise.reject(Object.assign(new Error('the engines are being stopped'), { cancelled: true }));
     },
     onIdle: () => { engines.closeBackgroundEngine(); },
     usage: onelake.usage,
