@@ -63,6 +63,8 @@ const ICON_PATHS = {
   copy: 'M5.5 5.5h7V13h-7zM3.5 10.5V3h7',
   close: 'M4 4l8 8M12 4l-8 8',
   resize: 'M13 7l-6 6M13 11l-2 2',
+  // A display folder in the field list.
+  folder: 'M2 4.5h4.5L8 6h6v7H2z',
 };
 export const icon = name => el('svg:svg', { class: 'ex-ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, el('svg:path', { d: ICON_PATHS[name] }));
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
@@ -91,9 +93,17 @@ const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 
 // The model's fields, the query, the pivot: no DOM
 // =============================================================================
 
+// A field's display folders, as the model writes them: several split by ";", each one a path
+// split by "\" ("Sales\Margins" is Margins in Sales). None is [].
+export const folderPaths = displayFolder => String(displayFolder ?? '').split(';')
+  .map(p => p.split('\\').map(s => s.trim()).filter(Boolean)).filter(p => p.length);
+
+// A field as a picker lists it: its table, its first display folder, its name.
+export const fieldPath = (t, f) => [t.name, ...(f.folders?.[0] ?? []), f.name].join(' › ');
+
 // Tables with their visible columns and measures, dimensions first (a dimension is a table a
 // relationship points to: the model says it, not the names). A hidden table hides all it holds,
-// its measures too, as Power BI does.
+// its measures too, as Power BI does. Each field has its display folders (folderPaths).
 export function modelFields(model) {
   const dims = new Set((model.relationships ?? []).map(r => r.toTable));
   const tables = (model.tables ?? []).filter(t => !t.isHidden).map(t => ({
@@ -101,10 +111,11 @@ export function modelFields(model) {
     name: t.name, dimension: dims.has(t.name), kind: dims.size ? (dims.has(t.name) ? 'dimension' : 'fact') : null,
     columns: (t.columns ?? []).filter(c => !c.isHidden && c.type !== 'rowNumber').map(c => ({ id: `${t.name}.${c.name}`, kind: 'column', table: t.name,
       name: c.name, type: TYPES[c.dataType] ?? 'text', format: c.formatString, description: c.description,
+      folders: folderPaths(c.displayFolder),
       // A column the host worked out from another (a table's date grains), not one the data has.
       derived: c.derivedFrom ? { from: c.derivedFrom, as: c.derivedAs ?? c.name } : null })),
     measures: (t.measures ?? []).filter(m => !m.isHidden).map(m => ({ id: m.name, kind: 'measure', table: t.name,
-      name: m.name, type: 'measure', format: m.formatString, description: m.description })),
+      name: m.name, type: 'measure', format: m.formatString, description: m.description, folders: folderPaths(m.displayFolder) })),
   })).filter(t => t.columns.length || t.measures.length)
     .sort((a, b) => Number(b.dimension) - Number(a.dimension) || a.name.localeCompare(b.name));
   const byId = new Map(tables.flatMap(t => [...t.columns, ...t.measures]).map(f => [f.id, f]));
@@ -1061,6 +1072,7 @@ export function createExplorer(root, ctx) {
   // The keyboard's way to the shelves, as a drag is the mouse's. Everything is drawn again after a
   // change, so the focus goes back to the field.
   const openTables = new Map();
+  const openFolders = new Map();   // "table\folder\subfolder" -> open
   const focusField = id => list.querySelector(`[data-field="${CSS.escape(id)}"]`)?.focus();
   function fieldKey(e, f) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1103,15 +1115,48 @@ export function createExplorer(root, ctx) {
       b.addEventListener('dragend', () => { drag = null; });
       return b;
     };
+    // A table's fields as their folders hold them: each folder first, by name, then the fields in none,
+    // columns before measures. A field in two folders is in both. The search reads the folder's path too.
+    const tree = (t, cols, ms) => {
+      const root = { folders: new Map(), cols: [], ms: [] };
+      const put = (f, into) => {
+        const paths = f.folders?.length ? f.folders : [[]];
+        for (const p of paths) {
+          if (term && !`${t.name} ${p.join(' ')} ${f.name}`.toLowerCase().includes(term)) continue;
+          let node = root;
+          for (const name of p) {
+            if (!node.folders.has(name)) node.folders.set(name, { folders: new Map(), cols: [], ms: [] });
+            node = node.folders.get(name);
+          }
+          node[into].push(f);
+        }
+      };
+      for (const f of cols) put(f, 'cols');
+      for (const f of ms) put(f, 'ms');
+      return root;
+    };
+    const empty = node => !node.cols.length && !node.ms.length && [...node.folders.values()].every(empty);
+    const contents = (t, node, path) => [
+      ...[...node.folders].sort(([a], [b]) => a.localeCompare(b)).filter(([, n]) => !empty(n)).map(([name, n]) => {
+        const key = `${t.name}\\${[...path, name].join('\\')}`;
+        // Closed until opened, and as it was left; open while searching, to show what matched.
+        const open = term || openFolders.get(key);
+        const folder = el('details', { class: 'ex-folder', open: open ? true : null },
+          el('summary', {}, icon('folder'), name),
+          el('div', { class: 'ex-folder-body' }, contents(t, n, [...path, name])));
+        folder.addEventListener('toggle', () => { if (!search.value.trim()) openFolders.set(key, folder.open); });
+        return folder;
+      }),
+      ...node.cols.map(item), node.cols.length && node.ms.length ? el('div', { class: 'ex-sep', role: 'separator' }) : null, ...node.ms.map(item),
+    ];
     list.replaceChildren(...fields.tables.map(t => {
-      const cols = t.columns.filter(f => !term || `${t.name} ${f.name}`.toLowerCase().includes(term));
-      const ms = t.measures.filter(f => !term || `${t.name} ${f.name}`.toLowerCase().includes(term));
-      if (!cols.length && !ms.length) return null;
+      const root = tree(t, t.columns, t.measures);
+      if (empty(root)) return null;
       // Open as it was left, so adding a field doesn't close the table it came from.
       const open = term || (openTables.has(t.name) ? openTables.get(t.name) : t.dimension || fields.tables.length === 1);
       const group = el('details', { class: 'ex-table-group', open: open ? true : null },
         el('summary', {}, t.name, t.kind && el('span', { class: 'ex-kind' }, t.kind)),
-        cols.map(item), cols.length && ms.length ? el('div', { class: 'ex-sep', role: 'separator' }) : null, ms.map(item));
+        contents(t, root, []));
       group.addEventListener('toggle', () => { if (!search.value.trim()) openTables.set(t.name, group.open); });
       return group;
     }).filter(Boolean));   // a table with nothing matching the search draws nothing, not "null"

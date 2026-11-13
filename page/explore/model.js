@@ -11,6 +11,7 @@
 
 import { modelPlaces, modelEdges, modelSize, MODEL_CARD } from './draw.js';
 import { el } from './dom.js';
+import { folderPaths } from './explore.js';
 
 const lines = v => Array.isArray(v) ? v.join('\n') : v ?? '';
 
@@ -221,7 +222,10 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
     out.push(el('h4', {}, `Columns (${t.columns.length})`));
     const table = el('table', { class: 'explore-table m-cols' });
     const hr = el('tr');
-    for (const h of ['Column', 'Type', 'Format']) hr.append(el('th', {}, h));
+    // A Folder column only when the table's columns have display folders.
+    const folderOf = x => folderPaths(x.displayFolder).map(p => p.join(' › ')).join('; ');
+    const foldered = t.columns.some(c => folderOf(c));
+    for (const h of ['Column', 'Type', 'Format', ...(foldered ? ['Folder'] : [])]) hr.append(el('th', {}, h));
     table.append(el('thead'), el('tbody'));
     table.tHead.append(hr);
     for (const c of t.columns) {
@@ -230,14 +234,20 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
       if (t.keys.includes(c.name)) name.prepend('⚷ ');
       if (c.isHidden) name.append(el('span', { class: 'm-tag' }, 'hidden'));
       if (c.description) name.append(el('div', { class: 'm-desc' }, lines(c.description)));
-      tr.append(name, el('td', {}, c.dataType ?? ''), el('td', {}, c.formatString ?? ''));
+      tr.append(name, el('td', {}, c.dataType ?? ''), el('td', {}, c.formatString ?? ''), ...(foldered ? [el('td', {}, folderOf(c))] : []));
       table.tBodies[0].append(tr);
     }
     out.push(table);
 
     if (t.measures.length) {
       out.push(el('h4', {}, `Measures (${t.measures.length})`));
-      for (const m of t.measures) {
+      // Under their display folders, the ones in none first; in the model's order within each.
+      const byFolder = t.measures.map((m, i) => ({ m, i, f: folderOf(m) }))
+        .sort((a, b) => (a.f === b.f ? a.i - b.i : !a.f ? -1 : !b.f ? 1 : a.f.localeCompare(b.f)));
+      let last = '';
+      for (const { m, f } of byFolder) {
+        if (f && f !== last) out.push(el('div', { class: 'm-folder' }, f));
+        last = f;
         const d = el('details', { class: 'm-measure' });
         const s = el('summary', {}, m.name);
         if (m.isHidden) s.append(el('span', { class: 'm-tag' }, 'hidden'));

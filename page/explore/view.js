@@ -27,7 +27,7 @@
 import { toCsv } from '../paths.js';
 import { renderModel } from './model.js';
 import { el } from './dom.js';
-import { createExplorer, pivotTitle, modelFields, valuesSql, setRowCap } from './explore.js';
+import { createExplorer, pivotTitle, modelFields, valuesSql, setRowCap, fieldPath } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, PALETTES, STYLES, registerChartTheme } from './theme.js';
@@ -557,7 +557,7 @@ export function mountExplore(root, ctx) {
   function addFilterButton() {
     const add = el('button', { type: 'button', class: 'rp-bar-add', title: 'Add a filter over every page' }, '+ Filter');
     add.addEventListener('click', () => {
-      const cols = reportFields().tables.flatMap(t => t.columns.filter(c => !c.derived).map(c => [c.id, `${t.name} › ${c.name}`, c.type]));
+      const cols = reportFields().tables.flatMap(t => t.columns.filter(c => !c.derived).map(c => [c.id, fieldPath(t, c), c.type]));
       const used = new Set(barFilters().map(x => x.field));
       const col = el('select', { 'aria-label': 'Column' }, cols.filter(([id]) => !used.has(id)).map(([id, t]) => el('option', { value: id }, t)));
       const style = el('select', { 'aria-label': 'How it is picked' },
@@ -663,7 +663,7 @@ export function mountExplore(root, ctx) {
   // Colours by value: a column's values, each given a colour that every tile draws it in.
   let colourColumn = null;
   function valueColourRows(theme) {
-    const cols = reportFields().tables.flatMap(t => t.columns.filter(c => c.type === 'text').map(c => [c.id, `${t.name} › ${c.name}`]));
+    const cols = reportFields().tables.flatMap(t => t.columns.filter(c => c.type === 'text').map(c => [c.id, fieldPath(t, c)]));
     const pick = paneSelect(colourColumn ?? '', [['', 'Pick a column'], ...cols], v => { colourColumn = v || null; drawTheme(); }, 'Column whose values get colours');
     const list = el('div', { class: 'rp-pane-values' });
     if (colourColumn) {

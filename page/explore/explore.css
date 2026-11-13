@@ -115,6 +115,7 @@ section.modelOpen #chartBtn { display: none; }
 .m-desc { color: var(--faint); font-size: 12px; line-height: 1.4; margin-top: 0.15rem; }
 .m-measure { border-bottom: 1px solid var(--row-line); padding: 0.35rem 0; }
 .m-measure summary { cursor: pointer; font-weight: 600; }
+.m-folder { font-size: 11px; font-weight: 600; color: var(--muted); margin: 0.5rem 0 0.15rem; }
 .m-fmt { float: right; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 400; color: var(--faint); }
 .m-measure pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.65rem; margin: 0.45rem 0 0.3rem; overflow-x: auto; white-space: pre; }
 .m-card { cursor: grab; outline: none; transition: opacity 0.15s; }
@@ -152,6 +153,11 @@ section.modelOpen #chartBtn { display: none; }
 .ex-list { overflow: auto; flex: 1 1 0; min-height: 0; }
 .ex-table-group summary { cursor: pointer; font-size: 12px; font-weight: 700; padding: 0.3rem 0.2rem; display: flex; align-items: baseline; gap: 0.4rem; }
 .ex-kind { font-size: 11px; font-weight: 500; color: var(--faint); }
+/* A display folder: its fields under it, one step in. */
+.ex-folder summary { cursor: pointer; font-size: 12px; color: var(--muted); height: 22px; padding: 0 0.4rem 0 0.8rem; display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; overflow: hidden; }
+.ex-folder summary:hover { background: var(--hover); border-radius: var(--radius-sm); }
+.ex-folder summary .ex-ico { width: 13px; height: 13px; }
+.ex-folder-body { padding-left: 0.8rem; }
 .ex-field { display: flex; align-items: center; gap: 0.4rem; width: 100%; height: 22px; text-align: left; font-size: 12px; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); padding: 0 0.4rem 0 0.8rem; cursor: grab; white-space: nowrap; overflow: hidden; }
 .ex-field:hover { background: var(--hover); }
 .ex-field.ex-used { color: var(--muted); }

@@ -398,3 +398,20 @@ test("a chart's bars are rounded at their free end, and a line alone fades under
   assert.equal(line.series[0].areaStyle.color.colorStops[1].color, "rgba(17,34,51,0)", "the fill fades to nothing");
   assert.deepEqual(line.series[0].markPoint.data.map(d => d.coord), [[1, 20]], "a dot on its last value");
 });
+
+test("a field's display folders: several split by ';', each a path split by a backslash", async () => {
+  const { folderPaths, fieldPath } = await import("../../page/explore/explore.js");
+  assert.deepEqual(folderPaths(undefined), []);
+  assert.deepEqual(folderPaths(""), []);
+  assert.deepEqual(folderPaths("Money"), [["Money"]]);
+  assert.deepEqual(folderPaths(String.raw`Sales\Margins\ Ratios `), [["Sales", "Margins", "Ratios"]]);
+  assert.deepEqual(folderPaths(String.raw`Sales\Margins;KPIs;;`), [["Sales", "Margins"], ["KPIs"]]);
+  const fields = modelFields({ tables: [{ name: "Sales",
+    columns: [{ name: "Order Date", dataType: "dateTime", displayFolder: "Dates" }, { name: "Amount", dataType: "double" }],
+    measures: [{ name: "Margin %", displayFolder: String.raw`Margins\Ratios` }, { name: "Total" }] }] });
+  const [t] = fields.tables;
+  assert.deepEqual(t.columns.map(c => c.folders), [[["Dates"]], []]);
+  assert.deepEqual(t.measures.map(m => m.folders), [[["Margins", "Ratios"]], []]);
+  assert.equal(fieldPath(t, t.columns[0]), "Sales › Dates › Order Date");
+  assert.equal(fieldPath(t, t.columns[1]), "Sales › Amount");
+});

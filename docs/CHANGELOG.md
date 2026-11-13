@@ -6,6 +6,10 @@
   internal table and a snapshot's query read *Select Top Rows* rows (1,000 by default), where they read 100. A
   Visual, a table's pivot and a Report tile ask for up to *Max Result Rows* (200,000 by default), where they
   stopped at 5,000. An exported app keeps the number it was exported with; on a semantic model, 100,000 at most.
+- **Display folders show in Visual.** A model's columns and measures sit in their display folders in the field list,
+  nested as `Sales\Margins` says, and in each folder a field lists more than once with `;`. Folders come first,
+  closed until opened; a search looks in folder names too and opens what it finds. The Model page shows a column's
+  folder and lists measures under theirs, and a Report's filter pickers name the folder.
 - **Open in Excel: a field with too many values says so.** Its list of members was cut at the row limit with no
   word; it now fails with the count, as a PivotTable that is too big already did.
 
