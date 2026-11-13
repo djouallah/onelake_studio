@@ -539,10 +539,15 @@ function checkPhysical(tree, what) {
   };
   walk(roots[0], false);
   const root = String(roots[0].name || '');
-  const want = { update: 'ICEBERG_UPDATE', delete: 'ICEBERG_DELETE', merge: 'MERGE_INTO' }[what];
-  if (!want) notRun(`DuckDB's plan of ${what} is checked by its bound plan only`);
-  if (root !== want) notRun(`DuckDB plans this as ${root}, not ${want}`);
+  // An UPDATE writes its rows anew (ICEBERG_INSERT, over the ICEBERG_UPDATE that marks the old ones deleted), or
+  // marks them alone; a DELETE marks them; a MERGE does any of those under its MERGE_INTO.
+  const shape = { update: { roots: ['ICEBERG_INSERT', 'ICEBERG_UPDATE'], has: 'ICEBERG_UPDATE' },
+                  delete: { roots: ['ICEBERG_DELETE'], has: 'ICEBERG_DELETE' },
+                  merge: { roots: ['MERGE_INTO'], has: null } }[what];
+  if (!shape) notRun(`DuckDB's plan of ${what} is checked by its bound plan only`);
+  if (!shape.roots.includes(root)) notRun(`DuckDB plans this as ${root}, not ${shape.has || shape.roots[0]}`);
   if (!writes.length) notRun("DuckDB's plan of this writes no Iceberg table");
+  if (shape.has && !writes.includes(shape.has)) notRun(`DuckDB's plan of this has no ${shape.has}`);
 }
 
 /** The statements of `sql`, as their text, in order: split where DuckDB would split them, empty ones left out. */

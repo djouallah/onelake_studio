@@ -513,6 +513,9 @@ test("an UPDATE, DELETE or MERGE whose bound plan DuckDB can't write is held to 
   assert.throws(() => checkPlan({ error: true, error_type: "not implemented", error_message: "IcebergScan serialization not implemented" },
     { plan: "LOGICAL_UPDATE", catalog: "ice_0123456789abcdef" }), err => isUnserialized(err));
   assert.doesNotThrow(() => checkPhysical([op("ICEBERG_UPDATE", op("EMPTY_RESULT"))], "update"));
+  // An UPDATE as DuckDB 2.0 plans one on OneLake: its rows written anew over the update that marks the old ones.
+  assert.doesNotThrow(() => checkPhysical([op("ICEBERG_INSERT", op("COPY_TO_FILE", op("ICEBERG_UPDATE", op("PROJECTION", op("ICEBERG_SCAN")))))], "update"));
+  assert.throws(() => checkPhysical([op("ICEBERG_INSERT", op("COPY_TO_FILE", op("PROJECTION")))], "update"), /has no ICEBERG_UPDATE/);
   assert.doesNotThrow(() => checkPhysical([op("ICEBERG_DELETE", op("ICEBERG_SCAN"))], "delete"));
   assert.doesNotThrow(() => checkPhysical([op("MERGE_INTO", op("ICEBERG_DELETE"), op("ICEBERG_INSERT", op("COPY_TO_FILE")), op("MERGE_ACTION_SOURCE"))], "merge"));
   assert.throws(() => checkPhysical([op("UPDATE", op("SEQ_SCAN"))], "update"), /plans a UPDATE in this/);
