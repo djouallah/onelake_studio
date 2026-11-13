@@ -63,7 +63,7 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   assert.equal(seen.length, 1);
   assert.equal(seen[0].count, 2);
   const r = await engine.call("query", ["SHOW ALL TABLES"]);
-  assert.deepEqual(r.rows.map(x => [x.schema, x.name]), [["w.lh.dbo", "t"]], "a bad entry costs only itself");
+  assert.deepEqual(r.rows.map(x => [x.schema, x.name]), [["w.lh_lakehouse.dbo", "t"]], "a bad entry costs only itself");
   assert.equal(warnings.filter(w => /bad could not be listed/.test(w)).length, 1, warnings.join(" | "));
   assert.equal(listings, 1, "the statement found the catalog already listed");
 });

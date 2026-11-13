@@ -292,7 +292,7 @@ test("DuckDB's error says a file as it was written, with its caret still on what
   // Past the URL, on the function before it, and inside it.
   assert.equal(namedError(pointing(before, before.indexOf("bad")), written), pointing(after, after.indexOf("bad")));
   assert.equal(namedError(pointing(before, before.indexOf("read_csv")), written), pointing(after, after.indexOf("read_csv")));
-  assert.equal(namedError(pointing(before, before.indexOf("Lakehouse")), written), pointing(after, after.indexOf("LAKEHOUSE")));
+  assert.equal(namedError(pointing(before, before.indexOf("Lakehouse")), written), pointing(after, after.indexOf("A.D_lakehouse")));
   assert.equal(namedError("Binder Error: nothing of ours", written), "Binder Error: nothing of ours");
 });
 
