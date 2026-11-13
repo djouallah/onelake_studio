@@ -181,7 +181,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       const name = engine.lakeName
         ? await engine.lakeName({ deltaTable: deltaTableOf(meta), metadataLocation: meta.metadataLocation }) : null;
       if (!name) return { inLake: false };
-      const facts = await tableFacts(sql => engine.call('query', [sql]), name);
+      const facts = { ...await tableFacts(sql => engine.call('query', [sql]), name), format: meta.format || null };
       if (meta.format === 'delta' && meta.stats && meta.stats.deltaVersion != null) {
         const d = await onelake.deltaState(lh, t, { run: sql => engine.call('query', [sql]) }).catch(() => null);
         if (d && d.lastCheckpoint != null) facts.checkpointGap = Number(meta.stats.deltaVersion) - Number(d.lastCheckpoint);

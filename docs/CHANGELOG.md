@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Table Health doesn't ask an Iceberg table for V-Order,** which only a Delta table's files can have.
 - **A schema with no tables shows in the tree.** `CREATE SCHEMA` made it in OneLake, and the tree showed it only once it
   had a table.
 - **Download Tables for Offline shows a table as on this machine at once.** Its icon changed only once a query read it. Table Health

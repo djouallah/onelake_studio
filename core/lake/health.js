@@ -78,7 +78,8 @@ const pct = x => `${Math.round(x * 100)}%`;
 
 /**
  * What the facts say, each as { kind, finding, detail, action }. Nothing is run: the action is what to consider.
- * @param {object} facts  tableFacts's, and `checkpointGap`: a Delta table's commits since its last checkpoint
+ * @param {object} facts  tableFacts's, `format` (the table's: 'delta' or 'iceberg'), and `checkpointGap`: a Delta
+ *   table's commits since its last checkpoint
  */
 function findings(facts) {
   const out = [];
@@ -96,7 +97,8 @@ function findings(facts) {
       action: 'OPTIMIZE to rewrite those files' });
   }
   const f = facts.footers;
-  if (f && f.files && f.vorder < f.files) {
+  // V-Order is how Fabric writes a Delta table's files: an Iceberg table has nothing to turn on.
+  if (f && f.files && f.vorder < f.files && facts.format !== 'iceberg') {
     out.push({ kind: 'no-vorder', finding: 'Not V-Ordered',
       detail: `${n0(f.files - f.vorder)} of the ${n0(f.files)} files here have no V-Order`,
       action: 'Write the table with V-Order on, then OPTIMIZE' });
@@ -131,7 +133,7 @@ async function lakehouseHealth({ tables, metaOf, lakeName, run }) {
     const meta = await metaOf(t).catch(() => null);
     const name = meta && meta.metadataLocation ? await lakeName(meta).catch(() => null) : null;
     if (!name) { out.push({ ...row, inLake: false }); continue; }
-    const facts = await tableFacts(run, name);
+    const facts = { ...await tableFacts(run, name), format: meta.format || null };
     out.push({ ...row, inLake: true, facts, findings: findings(facts) });
   }
   const rank = r => (!r.inLake ? 2 : r.findings.length ? 0 : 1);

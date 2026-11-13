@@ -42,6 +42,9 @@ test("the footers of the files here: V-Order and row groups, said of those files
   assert.deepEqual(mixed.map(x => x.kind), ["no-vorder", "small-row-groups"]);
   assert.match(mixed[0].detail, /20 of the 120 files here have no V-Order/);
   assert.match(mixed[1].detail, /50,000 rows per row group/);
+  // An Iceberg table has no V-Order to turn on: only its row groups are said.
+  assert.deepEqual(findings({ ...big, format: "iceberg", footers: { files: 120, vorder: 0, groups: 600, rows: 600 * 50_000 } }).map(x => x.kind),
+    ["small-row-groups"]);
   // No file here: nothing is said of V-Order or row groups.
   assert.deepEqual(kinds({ ...big, footers: null }), []);
 });
