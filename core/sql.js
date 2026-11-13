@@ -490,6 +490,7 @@ function writeOf(sql) {
 function checkPlan(parsed, { plan, catalog = null, file = null }) {
   if (!parsed || parsed.error) {
     const message = parsed ? String(parsed.error_message || 'DuckDB could not plan it') : 'DuckDB could not plan it';
+    if (UNSERIALIZED.test(message)) notRun(`DuckDB could not show its plan of this write, so it isn't run: ${message}`);
     if (/^(?:binder|catalog|parser|conversion|invalid input|not implemented)$/i.test(String(parsed && parsed.error_type))) throw new Error(message);
     notRun(`DuckDB could not show its plan of this write, so it isn't run: ${message}`);
   }
@@ -507,6 +508,41 @@ function checkPlan(parsed, { plan, catalog = null, file = null }) {
   if (String(where).toLowerCase() !== String(catalog).toLowerCase()) {
     notRun(`DuckDB would write to ${where || 'a catalog it doesn\'t name'}, not the lakehouse this statement names`);
   }
+}
+
+// DuckDB can't write the bound plan of an UPDATE, a DELETE or a MERGE on an Iceberg table as JSON: the scan of the
+// table it changes has no serialization. Their physical plan says it as well, by DuckDB-Iceberg's own operators: a
+// write to an Iceberg table is ICEBERG_INSERT, ICEBERG_UPDATE or ICEBERG_DELETE, and to nothing else. Which Iceberg
+// table it is, the statement's text alone can say: no statement may name a write's catalog (oneStatement), so the
+// only one it binds is the one engine-host.js named in it.
+const UNSERIALIZED = /serialization not implemented/i;
+const ICEBERG_WRITES = new Set(['ICEBERG_INSERT', 'ICEBERG_UPDATE', 'ICEBERG_DELETE']);
+// A write that is not an Iceberg one: to a DuckDB table, a file, another database.
+const OTHER_WRITES = /^(?:BATCH_)?(?:INSERT|UPDATE|DELETE|COPY_TO_FILE|CREATE_TABLE_AS|CREATE_TABLE|CREATE_INDEX|DROP|ALTER|ATTACH|DETACH|EXPORT|MERGE_INTO)$/;
+
+/**
+ * Holds DuckDB's physical plan of an UPDATE, a DELETE or a MERGE (EXPLAIN (FORMAT json), parsed) to what writeOf
+ * read in its text, when its bound plan can't be had (checkPlan's `unserialized`).
+ */
+function checkPhysical(tree, what) {
+  const roots = Array.isArray(tree) ? tree : [tree];
+  if (roots.length !== 1 || !roots[0]) notRun('DuckDB plans this as more than one statement');
+  const writes = [];
+  const walk = (n, under) => {
+    const name = String(n.name || '');
+    if (ICEBERG_WRITES.has(name)) writes.push(name);
+    // An Iceberg write writes its files with a COPY of its own, under it.
+    else if (OTHER_WRITES.test(name) && !(under && name === 'COPY_TO_FILE') && !(name === 'MERGE_INTO' && n === roots[0] && what === 'merge')) {
+      notRun(`DuckDB plans a ${name} in this, which isn't a write to the lakehouse it names`);
+    }
+    for (const c of n.children || []) walk(c, under || ICEBERG_WRITES.has(name));
+  };
+  walk(roots[0], false);
+  const root = String(roots[0].name || '');
+  const want = { update: 'ICEBERG_UPDATE', delete: 'ICEBERG_DELETE', merge: 'MERGE_INTO' }[what];
+  if (!want) notRun(`DuckDB's plan of ${what} is checked by its bound plan only`);
+  if (root !== want) notRun(`DuckDB plans this as ${root}, not ${want}`);
+  if (!writes.length) notRun("DuckDB's plan of this writes no Iceberg table");
 }
 
 /** The statements of `sql`, as their text, in order: split where DuckDB would split them, empty ones left out. */
@@ -858,4 +894,4 @@ function readsCatalog(sql) {
 }
 
 module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
-                   writeOf, checkPlan, statementsOf, ICE_PREFIX, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };
+                   writeOf, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };

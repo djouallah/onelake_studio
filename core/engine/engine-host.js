@@ -33,7 +33,8 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, checkPlan, ICE_PREFIX,
+const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, checkPlan, checkPhysical,
+        isUnserialized, ICE_PREFIX,
         tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
@@ -1113,6 +1114,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return typeof plan === 'string' ? JSON.parse(plan) : plan;
   }
 
+  // DuckDB's physical plan of a statement, EXPLAIN (FORMAT json), parsed: what it will run, which runs nothing.
+  async function physicalOf(statement, owner) {
+    const r = await withConn(c => c.runAndReadAll(`EXPLAIN (FORMAT json) ${statement}`), owner);
+    const row = r.getRowObjectsJson()[0] || {};
+    const text = row.explain_value != null ? row.explain_value : Object.values(row).pop();
+    return JSON.parse(String(text));
+  }
+
   // A Delta table isn't written: its Iceberg face in OneLake is read only, and SQL here writes Iceberg.
   async function refuseDelta(ref) {
     let r = null;
@@ -1153,7 +1162,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       }
       const never = () => false;
       const res = await withAuthRetry(() => withTables(statement, async run => {
-        checkPlan(await planOf(run, owner), expect);
+        // DuckDB's bound plan; an UPDATE, DELETE or MERGE on an Iceberg table has none it can write as JSON, and is
+        // held to its physical plan instead (sql.js checkPhysical).
+        const bound = await planOf(run, owner);
+        try { checkPlan(bound, expect); }
+        catch (e) {
+          if (!isUnserialized(e) || !['update', 'delete', 'merge'].includes(w.what)) throw e;
+          checkPhysical(await physicalOf(run, owner), w.what);
+        }
         begin();
         sent = true;
         if (!emit) return runAll(run, owner);

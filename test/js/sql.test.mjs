@@ -505,3 +505,23 @@ test("several statements are split where DuckDB splits them", () => {
   assert.deepEqual(statementsOf("SELECT 1 /* only */; -- nothing\n;"), ["SELECT 1 /* only */"]);
   assert.deepEqual(statementsOf(""), []);
 });
+
+test("an UPDATE, DELETE or MERGE whose bound plan DuckDB can't write is held to its physical plan", () => {
+  const { checkPhysical, isUnserialized } = require("../../core/sql.js");
+  const op = (name, ...children) => ({ name, children, extra_info: {} });
+  assert.ok(isUnserialized(new Error("Not run: DuckDB could not show its plan of this write, so it isn't run: IcebergScan serialization not implemented.")));
+  assert.throws(() => checkPlan({ error: true, error_type: "not implemented", error_message: "IcebergScan serialization not implemented" },
+    { plan: "LOGICAL_UPDATE", catalog: "ice_0123456789abcdef" }), err => isUnserialized(err));
+  assert.doesNotThrow(() => checkPhysical([op("ICEBERG_UPDATE", op("EMPTY_RESULT"))], "update"));
+  assert.doesNotThrow(() => checkPhysical([op("ICEBERG_DELETE", op("ICEBERG_SCAN"))], "delete"));
+  assert.doesNotThrow(() => checkPhysical([op("MERGE_INTO", op("ICEBERG_DELETE"), op("ICEBERG_INSERT", op("COPY_TO_FILE")), op("MERGE_ACTION_SOURCE"))], "merge"));
+  assert.throws(() => checkPhysical([op("UPDATE", op("SEQ_SCAN"))], "update"), /plans a UPDATE in this/);
+  assert.throws(() => checkPhysical([op("DELETE")], "delete"), /plans a DELETE in this/);
+  assert.throws(() => checkPhysical([op("MERGE_INTO", op("INSERT"))], "merge"), /plans a INSERT in this/);
+  assert.throws(() => checkPhysical([op("ICEBERG_DELETE")], "update"), /plans this as ICEBERG_DELETE, not ICEBERG_UPDATE/);
+  assert.throws(() => checkPhysical([op("MERGE_INTO", op("MERGE_ACTION_SOURCE"))], "merge"), /writes no Iceberg table/);
+  assert.throws(() => checkPhysical([op("ICEBERG_UPDATE", op("COPY_TO_FILE")), op("ICEBERG_UPDATE")], "update"), /more than one statement/);
+  assert.throws(() => checkPhysical([op("ICEBERG_INSERT")], "insert"), /checked by its bound plan only/);
+  assert.doesNotThrow(() => checkPhysical([op("ICEBERG_UPDATE", op("PROJECTION", op("COPY_TO_FILE")))], "update"), "an Iceberg write's own files");
+  assert.throws(() => checkPhysical([op("ICEBERG_UPDATE"), ], "update") && checkPhysical([op("PROJECTION", op("COPY_TO_FILE"))], "update"), /plans a COPY_TO_FILE|not ICEBERG_UPDATE/);
+});
