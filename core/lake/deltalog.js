@@ -192,7 +192,8 @@ async function readHistoryPage(readText, dir, commits, skip = 0, count = HISTORY
 // lakehouse or warehouse, https for some; segments may arrive percent-encoded.
 function tableDirOf(metadataLocation) {
   const loc = String(metadataLocation || '');
-  const m = /^abfss:\/\/([^@/]+)@[^/]+\/(.+)\/metadata\/[^/]+$/i.exec(loc)
+  // abfs:// too: OneLake's catalog gives the location so, the same place as abfss://.
+  const m = /^abfss?:\/\/([^@/]+)@[^/]+\/(.+)\/metadata\/[^/]+$/i.exec(loc)
          || /^https:\/\/[^/]+\/([^/]+)\/(.+)\/metadata\/[^/]+$/i.exec(loc);
   if (!m) return null;
   const dec = s => { try { return decodeURIComponent(s); } catch (_) { return s; } };

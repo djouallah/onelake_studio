@@ -50,7 +50,8 @@ function closestTables(name, listing, max = 3) {
 // metadata is kept. A summary from before tables had a format is read again before it comes here.
 function deltaTableOf(meta) {
   if (meta.format === 'iceberg') return null;
-  const loc = String(meta.metadataLocation || '');
+  // OneLake's catalog gives an abfs:// location, the same place as abfss://, which is what the engine reads by.
+  const loc = String(meta.metadataLocation || '').replace(/^abfs:\/\//i, 'abfss://');
   if (/^abfss:/i.test(loc)) return loc.replace(/\/metadata\/[^/]+$/, '');
   const at = tableDirOf(loc);
   return at ? abfssUrl(at.workspace, at.dir) : loc;

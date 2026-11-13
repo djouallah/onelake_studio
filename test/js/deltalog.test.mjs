@@ -183,6 +183,18 @@ test("the table directory comes out of its Iceberg metadata location", () => {
   assert.deepEqual(tableDirOf("https://onelake.dfs.fabric.microsoft.com/My%20WS/lh.Lakehouse/Tables/my%20t/metadata/1.metadata.json"),
     { workspace: "My WS", dir: "lh.Lakehouse/Tables/my t" });
   assert.equal(tableDirOf("abfss://ws@onelake.dfs.fabric.microsoft.com/x.parquet"), null);
+  // As OneLake's catalog gives it: abfs://, by GUIDs, under a schema.
+  assert.deepEqual(tableDirOf("abfs://91588e42-0f1c-4e56-bcaa-cbf015b8f312@onelake.dfs.fabric.microsoft.com/716ea81f-4155-4001-b291-01bfdbe7fd7f/Tables/landing/t/metadata/v2.metadata.json"),
+    { workspace: "91588e42-0f1c-4e56-bcaa-cbf015b8f312", dir: "716ea81f-4155-4001-b291-01bfdbe7fd7f/Tables/landing/t" });
+});
+
+test("a Delta table's folder from an abfs:// location, as OneLake's catalog gives it", async () => {
+  const { createRequire } = await import("node:module");
+  const { deltaTableOf } = createRequire(import.meta.url)("../../core/sqltables.js");
+  const at = "91588e42-0f1c-4e56-bcaa-cbf015b8f312@onelake.dfs.fabric.microsoft.com/716ea81f-4155-4001-b291-01bfdbe7fd7f/Tables/landing/t";
+  assert.equal(deltaTableOf({ format: "delta", metadataLocation: `abfs://${at}/metadata/v2.metadata.json` }), `abfss://${at}`);
+  assert.equal(deltaTableOf({ format: "delta", metadataLocation: `abfss://${at}/metadata/v2.metadata.json` }), `abfss://${at}`);
+  assert.equal(deltaTableOf({ format: "iceberg", metadataLocation: `abfs://${at}/metadata/v2.metadata.json` }), null);
 });
 
 test("the crc's state says which version the last checkpoint is of, and a later one is not this version's", async () => {
