@@ -249,8 +249,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   // A lakehouse a write names: its workspace and directory as OneLake spells them, the warehouse its Iceberg
   // catalog answers to (by those names, as catalog.js asks it), and the storage scopes its files are written under.
   // OneLake's catalog puts a table it makes under the workspace's GUID, abfs://<guid>@<host>/<item guid>/Tables/…,
-  // which nothing names but a table's own metadata: so the GUID is read off a table of the workspace, the
-  // lakehouse's own first, from what the store keeps. A workspace with no table at all has the name's scope only.
+  // which no OneLake listing names but a table's own metadata: so the GUID is read off a table of the workspace, the
+  // lakehouse's own first, from what the store keeps. A workspace with no table yet asks the Fabric API, once.
   const wsGuids = new Map();
   const GUID_AT = /^abfss?:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@/i;
   async function workspaceGuid(ws, dir) {
@@ -267,7 +267,9 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
         if (m) { wsGuids.set(key, m[1]); return m[1]; }
       }
     }
-    return null;
+    const id = onelake.workspaceId ? await onelake.workspaceId(ws).catch(() => null) : null;
+    if (id) wsGuids.set(key, String(id));
+    return id ? String(id) : null;
   }
   async function lakehouseOf(ref, { fresh = false } = {}) {
     const { ws, dir } = await locate({ kind: 'lakehouse', workspace: ref.workspace, item: ref.item, name: ref.name }, fresh);

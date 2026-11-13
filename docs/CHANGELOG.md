@@ -20,6 +20,8 @@
 - **Several statements run in turn.** A selection with several statements runs each, in order, and stops at the first
   that fails, with the cursor on it. The status line says which one is running, and the last one's rows are shown.
   The command line's `sql` does the same.
+- **Fixed: a proxy set in VS Code reached only the engine's own connection.** DuckDB's proxy settings held for the
+  connection that set them, and every query runs on one of its own. They hold for every connection now.
 - **A .sql file opens in the SQL box.** In VS Code a `.sql` file opens in OneLake Studio, as a saved query does, and
   Save writes it back to the file. *Reopen Editor With… > Text Editor* shows the text. The desktop app opens one from
   File › Open… and Windows' "Open with".

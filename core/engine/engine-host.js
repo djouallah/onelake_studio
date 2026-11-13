@@ -356,12 +356,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // preserve_insertion_order is left ON. Turning it off buys a little scan speed and
       // costs a preview of a CSV or a sheet that shows its rows in a scrambled order.
       //
-      // The editor's proxy, before anything is downloaded.
+      // The editor's proxy, before anything is downloaded. GLOBAL: a plain SET of an extension's setting holds for
+      // this connection only, and every statement runs on one of its own.
       const proxy = proxySettings(httpProxy);
       if (proxy) {
-        await conn.run(`SET http_proxy = ${sqlStr(proxy.host)};`);
-        if (proxy.user) await conn.run(`SET http_proxy_username = ${sqlStr(proxy.user)};`);
-        if (proxy.password) await conn.run(`SET http_proxy_password = ${sqlStr(proxy.password)};`);
+        await conn.run(`SET GLOBAL http_proxy = ${sqlStr(proxy.host)};`);
+        if (proxy.user) await conn.run(`SET GLOBAL http_proxy_username = ${sqlStr(proxy.user)};`);
+        if (proxy.password) await conn.run(`SET GLOBAL http_proxy_password = ${sqlStr(proxy.password)};`);
       }
       //
       // REQUIRED, and treated differently from the rest: `azure` is how anything is read from OneLake
@@ -381,9 +382,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // azure has an HTTP client of its own, with its own proxy settings.
       if (proxy) {
         try {
-          await conn.run(`SET azure_http_proxy = ${sqlStr(proxy.host)};`);
-          if (proxy.user) await conn.run(`SET azure_proxy_user_name = ${sqlStr(proxy.user)};`);
-          if (proxy.password) await conn.run(`SET azure_proxy_password = ${sqlStr(proxy.password)};`);
+          await conn.run(`SET GLOBAL azure_http_proxy = ${sqlStr(proxy.host)};`);
+          if (proxy.user) await conn.run(`SET GLOBAL azure_proxy_user_name = ${sqlStr(proxy.user)};`);
+          if (proxy.password) await conn.run(`SET GLOBAL azure_proxy_password = ${sqlStr(proxy.password)};`);
         } catch (e) { onWarn(`could not hand the proxy to DuckDB's azure extension — ${e.message}`); }
       }
 
@@ -460,7 +461,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // Iceberg catalog still work once ca_cert_file names an allowed bundle.
       if (lockdown) {
         const ca = await writeCaBundle(tmpDir);
-        await conn.run(`SET ca_cert_file = ${sqlStr(ca)};`);
+        // GLOBAL, for every connection: a write's Iceberg catalog is asked over https on a statement's own, and with
+        // no bundle named there it looks for the system's, which the lockdown refuses.
+        await conn.run(`SET GLOBAL ca_cert_file = ${sqlStr(ca)};`);
         // zip:// only over a remote archive: an entry of a Files/ zip is read as
         // zip://abfss://…, and a bare 'zip://' would open any local archive. Checked
         // against DuckDB 2.0: zip://abfss:// reads, zip://C:/… is refused, and a `..`
