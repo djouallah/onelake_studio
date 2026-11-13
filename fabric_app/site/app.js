@@ -154,8 +154,7 @@ function showRefused(model) {
 // On a semantic model: Explore's queries over the model go to the data source as they are written;
 // it turns them into DAX and runs them there, so the page's compiler passes them through.
 async function startModel(first, modelName, maxRows) {
-  const { createModelSource } = await import("./storage/modeldata.js");
-  const { MAX_ROWS: MODEL_MAX_ROWS } = await import("./storage/modelrows.js");
+  const { createModelSource, MAX_ROWS: MODEL_MAX_ROWS } = await import("./storage/modeldata.js");
   const data = createModelSource({ onStatus: s => boot.step(s) });
   await data.init();
   boot.step("Building Explore…");

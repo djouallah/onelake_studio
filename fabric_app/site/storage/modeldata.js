@@ -57,6 +57,9 @@ const refusedBy = e => e.category === "api" && !/empty body/i.test(e.message ?? 
 // A column of the answer by the name SQL gave it: 'Table'[Column] and [name] are the bracketed name.
 const fieldName = key => /\[((?:[^\]]|\]\])*)\]$/.exec(key)?.[1]?.replace(/\]\]/g, "]") ?? key;
 
+// The most rows one answer keeps: what the app's visuals ask for at most (app.js).
+export { MAX_ROWS };
+
 export function createModelSource({ onStatus = () => {} } = {}) {
   const auth = createAuth({
     connectors: async () => {
