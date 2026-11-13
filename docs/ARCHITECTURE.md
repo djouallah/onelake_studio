@@ -1084,8 +1084,8 @@ file has come down.
   evict itself. **Clear Cached OneLake Data** switches them all off.
 - **A table that fails** is named beside the switch and tried again in an hour. With no connection it waits, and carries on.
 
-**Download Tables for Offline** (the cloud icon on a lakehouse, a warehouse or a schema in the tree) does the same once,
-for every table under it: each kept whole, with a notification counting them, and Cancel leaving what came down. Refused
+**Download Tables for Offline** (the cloud icon on a lakehouse, a warehouse, a schema or a table in the tree) does the
+same once, for every table under it, or the one table: each kept whole, with a notification counting them, and Cancel leaving what came down. Refused
 when the tables are more than the disk cache.
 
 ## Open in Excel

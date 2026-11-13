@@ -978,16 +978,17 @@ async function activateInner(context) {
       type: 'lakehouse-health', workspace: n.workspace, item: n.item, name: n.item,
     }, `Table Health · ${String(n.item).replace(/\.[^.]+$/, '')}`)),
 
-    // Every table of a lakehouse, a warehouse or one schema, brought onto this machine whole, so it answers with no
-    // connection (a flight): each synced and every file of it downloaded (engine-host.js keepWhole).
+    // Every table of a lakehouse, a warehouse or one schema, or one table, brought onto this machine whole, so it
+    // answers with no connection (a flight): each synced and every file of it downloaded (engine-host.js keepWhole).
     vscode.commands.registerCommand('onelakeStudio.downloadTables', async n => {
       if (!n || !n.item) return;
       const lh = { workspace: n.workspace, item: n.item };
-      const where = `${String(n.item).replace(/\.[^.]+$/, '')}${n.kind === 'schema' && n.schema ? `.${n.schema}` : ''}`;
+      const one = n.kind === 'table' && n.table;
+      const where = `${String(n.item).replace(/\.[^.]+$/, '')}${(n.kind === 'schema' || one) && n.schema ? `.${n.schema}` : ''}${one ? `.${n.table}` : ''}`;
       try {
         const kept = await onelake.cached.tables(lh);
         const all = kept && Array.isArray(kept.value) ? kept.value : await onelake.tables(lh);
-        const tables = all.filter(t => n.kind !== 'schema' || (t.schema || '') === (n.schema || ''));
+        const tables = all.filter(t => (n.kind !== 'schema' && !one) || ((t.schema || '') === (n.schema || '') && (!one || t.table === n.table)));
         if (!tables.length) { vscode.window.showInformationMessage(`${where} has no tables.`); return; }
         const sizes = [];
         for (const t of tables) {
@@ -1022,10 +1023,11 @@ async function activateInner(context) {
             return false;
           });
         if (out) for (const f of failed) out.appendLine(`download for offline: ${where}: ${f}`);
-        const said = `${done} of ${tables.length} tables of ${where} are on this machine (${fmtBytes(bytes)}).`;
+        const said = one ? `${where} is ${done ? '' : 'not '}on this machine (${fmtBytes(bytes)}).`
+          : `${done} of ${tables.length} tables of ${where} are on this machine (${fmtBytes(bytes)}).`;
         if (stopped) vscode.window.showInformationMessage(`Stopped. ${said}`);
         else if (failed.length) vscode.window.showWarningMessage(`${said} ${failed.length} did not come down whole: ${failed[0]}${failed.length > 1 ? ' (the rest are in the log)' : ''}`);
-        else vscode.window.showInformationMessage(`${said} They answer with no connection.`);
+        else vscode.window.showInformationMessage(`${said} ${one ? 'It answers' : 'They answer'} with no connection.`);
       } catch (e) {
         vscode.window.showErrorMessage(`Download for offline: ${(e && e.message) || e}`);
       }

@@ -430,12 +430,12 @@
         },
         {
           "command": "onelakeStudio.downloadTables",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(item|schema)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(item|schema|table)$/",
           "group": "inline@2"
         },
         {
           "command": "onelakeStudio.downloadTables",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(item|schema)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(item|schema|table)$/",
           "group": "0_query@3"
         },
         {
