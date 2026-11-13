@@ -55,6 +55,7 @@ and F5 has its own.
 | --- | --- |
 | `workspace` | id, name |
 | `item` | id, workspace, name, kind, catalog prefix |
+| `lake_schema` | An item's schemas, as its catalog lists them: one with no table yet is in no listing of tables |
 | `lake_table` | item, schema, name, format, metadata location, version or snapshot, row count, bytes, file count |
 | `lake_column` | table, position, name, type, whether it partitions |
 | `snapshot` | table, version or snapshot id, time, operation, row and column changes, for History |

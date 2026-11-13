@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A schema with no tables shows in the tree.** `CREATE SCHEMA` made it in OneLake, and the tree showed it only once it
+  had a table.
 - **Download Tables for Offline shows a table as on this machine at once.** Its icon changed only once a query read it. Table Health
   answers for it offline in full, a Delta table's checkpoint included, with no query first.
 - **USE a schema, then name its tables alone.** `USE aemo.data.dbo` lets the tab's statements name

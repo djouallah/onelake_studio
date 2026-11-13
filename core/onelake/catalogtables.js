@@ -36,6 +36,9 @@ const SCHEMA = `
     snapshot_count REAL, format_version REAL, partition_columns TEXT, vorder INTEGER, delta_version REAL, has_history INTEGER,
     stats_extra TEXT,
     PRIMARY KEY (workspace, item, schema_name, name)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS lake_schema (
+    workspace TEXT NOT NULL, item TEXT NOT NULL, name TEXT NOT NULL, pos INTEGER NOT NULL,
+    PRIMARY KEY (workspace, item, name)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS lake_column (
     workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
     pos INTEGER NOT NULL, name TEXT, type TEXT, extra TEXT,
@@ -97,13 +100,13 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS lake_table_meta_ts ON lake_table (meta_ts);
 `;
 // What Clear Cached empties.
-const TABLES = ['semantic_view', 'listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
+const TABLES = ['semantic_view', 'listing_read', 'workspace', 'item', 'lake_schema', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
   'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure', 'table_use', 'table_kept', 'model_offline'];
 
 // Each kind of store key (onelake.js keys): the column each part after its kind goes in, where a row
 // says which entry it is about.
 const KEY_PARTS = {
-  workspaces: [], items: ['workspace'], tables: ['workspace', 'item'], files: ['workspace', 'item', 'dir'],
+  workspaces: [], items: ['workspace'], tables: ['workspace', 'item'], schemas: ['workspace', 'item'], files: ['workspace', 'item', 'dir'],
   models: ['workspace'], apps: ['workspace'], table: ['workspace', 'item', 'schema_name', 'table_name'],
   'delta-commits': ['workspace', 'item', 'schema_name', 'table_name'], 'delta-state': ['workspace', 'dir', 'table_name'],
   'item-named': ['workspace', 'item'], irc: ['item'], rows: ['dir'], peek: ['dir'], 'file-read': ['workspace', 'dir', 'table_name'],
@@ -239,6 +242,15 @@ function createCatalogTables({ statement }) {
       rows: ([ws, item]) => all(`SELECT schema_name, name, extra FROM lake_table
         WHERE workspace = ? AND item = ? AND listed_pos IS NOT NULL ORDER BY listed_pos`, ws, item)
         .map(r => ({ schema: r.schema_name, table: r.name, ...parsed(r.extra) })),
+    }),
+    // An item's schemas, as its catalog names them: one with no table yet is in no listing of tables.
+    schemas: listingOf('schemas', {
+      fits: v => Array.isArray(v) && v.every(s => typeof s === 'string'),
+      put([ws, item], value) {
+        run('DELETE FROM lake_schema WHERE workspace = ? AND item = ?', ws, item);
+        value.forEach((name, pos) => run('INSERT OR REPLACE INTO lake_schema VALUES (?, ?, ?, ?)', ws, item, name, pos));
+      },
+      rows: ([ws, item]) => all('SELECT name FROM lake_schema WHERE workspace = ? AND item = ? ORDER BY pos', ws, item).map(r => r.name),
     }),
     files: listingOf('files', {
       fits: listOf,

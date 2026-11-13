@@ -154,6 +154,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     workspaces: () => 'workspaces',
     items: ws => `items\u0000${ws}`,
     tables: lh => `tables\u0000${lh.workspace}\u0000${lh.item}`,
+    schemas: lh => `schemas\u0000${lh.workspace}\u0000${lh.item}`,
     files: (lh, dir) => `files\u0000${lh.workspace}\u0000${lh.item}\u0000${dir || ''}`,
     table: (lh, t) => `table\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
     peek: loc => `peek\u0000${loc}`,
@@ -174,7 +175,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     const [kind, a, b, c, d] = key.split('\u0000');
     if (kind === 'workspaces') return { kind };
     if (kind === 'items') return { kind, workspace: a };
-    if (kind === 'tables') return { kind, workspace: a, item: b };
+    // An item's schemas are drawn with its tables.
+    if (kind === 'tables' || kind === 'schemas') return { kind: 'tables', workspace: a, item: b };
     if (kind === 'files') return { kind, workspace: a, item: b, dir: c };
     if (kind === 'table') return { kind, workspace: a, item: b, schema: c, table: d };
     if (kind === 'models' || kind === 'apps') return { kind, workspace: a };
@@ -198,8 +200,22 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   const tables = (lh, o = {}) => {
     // A forced refresh of the listing must reach the catalog's own per-item memo too.
     if (o.fresh) catalog.reset(lh);
-    return get(keys.tables(lh), () => catalog.listTables(lh), o).then(value);
+    // Its schemas are kept beside it, from the same request: a schema with no table yet is in no listing of tables.
+    // When only they moved, the tables' answer is the same, so the tree is told here.
+    return get(keys.tables(lh), async () => {
+      let names = null;
+      const list = await catalog.listTables(lh, { onSchemas: n => { names = n; } });
+      if (names) {
+        const before = await store.known(keys.schemas(lh)).catch(() => null);
+        await store.put(keys.schemas(lh), names);
+        if (!before || JSON.stringify(before.value) !== JSON.stringify(names)) {
+          for (const fn of [...schemaSubs]) { try { fn({ kind: 'tables', ...lh }); } catch (_) {} }
+        }
+      }
+      return list;
+    }, o).then(value);
   };
+  const schemaSubs = new Set();
   const files = (lh, dir = '', o = {}) => get(keys.files(lh, dir), () => catalog.listFiles(lh, dir), o).then(value);
   const models = (ws, o = {}) => {
     if (!fabric) return Promise.reject(new Error('semantic models are not available here'));
@@ -538,6 +554,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     workspaces: () => store.known(keys.workspaces()),
     items: ws => store.known(keys.items(ws)),
     tables: lh => store.known(keys.tables(lh)),
+    schemas: lh => store.known(keys.schemas(lh)),
     files: (lh, dir = '') => store.known(keys.files(lh, dir)),
     models: ws => store.known(keys.models(ws)),
     apps: ws => store.known(keys.apps(ws)),
@@ -594,7 +611,11 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     icebergPrefix: lh => (catalog.ircPrefixFor ? catalog.ircPrefixFor(lh) : Promise.resolve(null)),
     // A workspace's GUID from the Fabric API, or null where there is none to ask (sqltables.js lakehouseOf).
     workspaceId: ws => (fabric && fabric.workspaceId ? fabric.workspaceId(ws) : Promise.resolve(null)),
-    onChanged: fn => listen('changed', key => fn(decode(key))),
+    onChanged: fn => {
+      const off = listen('changed', key => fn(decode(key)));
+      schemaSubs.add(fn);
+      return () => { off(); schemaSubs.delete(fn); };
+    },
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),
     useStore,

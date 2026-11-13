@@ -564,11 +564,13 @@ class LakehouseTree {
       const lh = { workspace: n.workspace, item: n.item };
       const tables = await this.onelake.tables(lh,
         { fresh: this._isFresh(`tables|${n.workspace}|${n.item}`, n.workspace, n.item) });
-      if (!tables.length) return [node('empty', 'No tables', { leaf: true })];
+      // A schema with no table yet is in no listing of tables: the item's schemas are kept beside it.
+      const kept = this.onelake.cached.schemas ? await this.onelake.cached.schemas(lh).catch(() => null) : null;
+      const schemas = [...new Set([...tables.map(t => t.schema || ''), ...((kept && kept.value) || [])])];
+      if (!tables.length && schemas.length <= 1) return [node('empty', 'No tables', { leaf: true })];
       // The tables are on screen, so their metadata is what the next click will want: read
       // it behind the user, so that click is a disk read rather than the catalog's seconds.
       this.onelake.prefetch(lh, tables);
-      const schemas = [...new Set(tables.map(t => t.schema || ''))];
       // OneLake gives schema-less items a synthetic single namespace. Rendering "dbo" as a
       // level of its own would be one click between here and every table in it, for a
       // grouping that isn't real.
@@ -579,8 +581,9 @@ class LakehouseTree {
 
     if (n.kind === 'schema') {
       const lh = { workspace: n.workspace, item: n.item };
-      const tables = await this.onelake.tables(lh);   // the parent's listing, from the store
-      return this._tables(lh, tables.filter(t => (t.schema || '') === n.schema));
+      const tables = (await this.onelake.tables(lh)).filter(t => (t.schema || '') === n.schema);   // the parent's listing, from the store
+      if (!tables.length) return [node('empty', 'No tables', { leaf: true })];
+      return this._tables(lh, tables);
     }
 
     if (n.kind === 'dir') {

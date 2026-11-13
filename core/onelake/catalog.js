@@ -241,7 +241,8 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // Not memoised here: the store (onelake.js) already holds the answer, in memory and on
   // disk, and single-flights the request — a memo here only meant the store's refresh after
   // its TTL got the session's first answer back, so a new table never showed up.
-  async function listTables(lh) {
+  // `onSchemas` hears every schema the item has, one with no table yet too, which the tables alone can't say.
+  async function listTables(lh, { onSchemas = null } = {}) {
     let prefix = await ircPrefixFor(lh);
     const listSchemas = () => getJson(`${tableOrigin}/iceberg/v1/${prefix}/namespaces`,
       `Listing schemas in ${lh.item}`);
@@ -253,6 +254,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       ({ json: ns } = await listSchemas());
     }
     const names = (ns.namespaces || []).map(n => (Array.isArray(n) ? n.join('.') : String(n)));
+    if (onSchemas) onSchemas(names);
     if (!names.length) return [];
 
     const lists = await mapPool(names, n => getJson(
