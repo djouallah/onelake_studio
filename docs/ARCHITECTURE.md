@@ -1087,7 +1087,8 @@ file has come down.
 
 **Download Tables for Offline** (the cloud icon on a lakehouse, a warehouse, a schema or a table in the tree) does the
 same once, for every table under it, or the one table: each kept whole, with a notification counting them, and Cancel leaving what came down. Refused
-when the tables are more than the disk cache.
+when the tables are more than the disk cache. A Delta table's log state comes down with it, so Table Health answers
+offline in full, the tree draws the table as read at once, and neither waits for a query.
 
 ## Open in Excel
 

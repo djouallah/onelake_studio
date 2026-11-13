@@ -990,9 +990,10 @@ async function activateInner(context) {
         const all = kept && Array.isArray(kept.value) ? kept.value : await onelake.tables(lh);
         const tables = all.filter(t => (n.kind !== 'schema' && !one) || ((t.schema || '') === (n.schema || '') && (!one || t.table === n.table)));
         if (!tables.length) { vscode.window.showInformationMessage(`${where} has no tables.`); return; }
-        const sizes = [];
+        const sizes = [], metas = [];
         for (const t of tables) {
           const m = await onelake.table(lh, t).catch(() => null);
+          metas.push(m);
           sizes.push(Number((m && m.stats && m.stats.totalFilesSize) || 0));
         }
         const total = sizes.reduce((a, b) => a + b, 0), room = settings.diskCacheBytes();
@@ -1015,6 +1016,11 @@ async function activateInner(context) {
                 const got = await eng.keepWhole(sqlNameOf(lh, t), { signal: stop.signal });
                 if (got && got.left) failed.push(`${t.table}: ${got.left} of its ${got.files} files did not come down`);
                 else { done++; bytes += sizes[i]; }
+                // A Delta table's log state too, which Table Health reads for its checkpoint, offline as well.
+                const m = metas[i];
+                if (m && m.format === 'delta' && m.stats && m.stats.deltaVersion != null) {
+                  await onelake.deltaState(lh, t, { run: sql => eng.call('query', [sql]) }).catch(() => {});
+                }
               } catch (e) {
                 if (stop.signal.aborted) return true;
                 failed.push(`${t.table}: ${(e && e.message) || e}`);

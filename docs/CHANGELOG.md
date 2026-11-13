@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- **Download Tables for Offline shows a table as on this machine at once.** Its icon changed only once a query read it.
+- **Download Tables for Offline shows a table as on this machine at once.** Its icon changed only once a query read it. Table Health
+  answers for it offline in full, a Delta table's checkpoint included, with no query first.
 - **USE a schema, then name its tables alone.** `USE aemo.data.dbo` lets the tab's statements name
   `dim_duid` for `aemo.data.dbo.dim_duid`, and `mart.sales` for `aemo.data.mart.sales`, in reads and as a write's
   target. `USE onelake` ends it. A name that is also a file's view, or another table of the engine's, is refused.
