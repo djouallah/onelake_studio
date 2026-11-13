@@ -114,4 +114,29 @@ function findings(facts) {
   return out;
 }
 
-module.exports = { tableFacts, findings, BINS, VORDER_KEY, FOOTERS_AT_MOST };
+/**
+ * Every table of a lakehouse that this machine knows, each with its facts and findings when the lake holds it:
+ * findings first, then the most files. Only what is kept here is read, so it works offline and asks nothing of
+ * OneLake; a table whose metadata isn't kept, or that no query has read, is listed as not read yet.
+ * @param {object} o
+ * @param {{schema?: string, table: string}[]} o.tables   the lakehouse's tables, as its listing keeps them
+ * @param {(t) => Promise<object|null>} o.metaOf           a table's kept metadata, or null
+ * @param {(meta) => Promise<string|null>} o.lakeName      its name in the lake, or null
+ * @param {(sql: string) => Promise<{rows: object[]}>} o.run
+ */
+async function lakehouseHealth({ tables, metaOf, lakeName, run }) {
+  const out = [];
+  for (const t of tables) {
+    const row = { schema: t.schema || '', table: t.table };
+    const meta = await metaOf(t).catch(() => null);
+    const name = meta && meta.metadataLocation ? await lakeName(meta).catch(() => null) : null;
+    if (!name) { out.push({ ...row, inLake: false }); continue; }
+    const facts = await tableFacts(run, name);
+    out.push({ ...row, inLake: true, facts, findings: findings(facts) });
+  }
+  const rank = r => (!r.inLake ? 2 : r.findings.length ? 0 : 1);
+  return out.sort((a, b) => rank(a) - rank(b) || (b.facts?.files ?? 0) - (a.facts?.files ?? 0)
+    || `${a.schema}.${a.table}`.localeCompare(`${b.schema}.${b.table}`));
+}
+
+module.exports = { tableFacts, findings, lakehouseHealth, BINS, VORDER_KEY, FOOTERS_AT_MOST };

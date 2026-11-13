@@ -33,6 +33,9 @@ const USAGE = {
   table: "  table <ws> <item> <schema.table>    columns and stats (metadata only)",
   exists: `  exists <ws> <item> <schema.table>   whether a table is there, from the listings: yes (exit 0),
                                         no with the closest names (exit 1), not cached (exit 4)`,
+  health: `  health <ws> <item>                  each table's file layout and findings (small files, deleted
+                                        rows, no V-Order, small row groups), from what this machine
+                                        holds: no OneLake request; a table no query read is "not read"`,
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
   sql: `  sql "<sql>"                         read-only SQL; a table is kind.workspace.item.schema.table
                                         (lakehouse.aemo.data.dbo.dim_duid); a file is

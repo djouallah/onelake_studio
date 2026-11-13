@@ -183,8 +183,15 @@
     #statsView td, #dbOverview td { font-variant-numeric: tabular-nums; }
     .statsNote { color: var(--muted); font-size: 0.85rem; }
     /* Health — findings from the table's files, and their sizes as bars. */
-    #statsView table.health td.finding { color: var(--warn); font-weight: 600; white-space: nowrap; }
-    #statsView table.health td.action { color: var(--muted); }
+    #statsView table.health td.finding, #docView table.health td.finding { color: var(--warn); font-weight: 600; white-space: nowrap; }
+    #statsView table.health td.action, #docView table.health td.action { color: var(--muted); }
+    /* A lakehouse's Table Health: a row opens its table. */
+    #docView table.tableHealth { width: 100%; }
+    #docView table.tableHealth th { text-align: left; font-weight: 500; color: var(--muted); }
+    #docView table.tableHealth .num { text-align: right; font-variant-numeric: tabular-nums; }
+    #docView table.tableHealth tbody tr { cursor: pointer; }
+    #docView table.tableHealth tbody tr:hover { background: var(--vscode-list-hoverBackground); }
+    #docView table.tableHealth tr.notRead td { color: var(--muted); }
     #statsView table.sizes td.bar { width: 14rem; }
     #statsView table.sizes .bar span { display: block; height: 0.7rem; min-width: 1px; background: var(--accent); border-radius: 2px; }
     /* History — one row per commit or snapshot, newest first. */

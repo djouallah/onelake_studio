@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { tableFacts, findings, VORDER_KEY } = require("../../core/lake/health.js");
+const { tableFacts, findings, lakehouseHealth, VORDER_KEY } = require("../../core/lake/health.js");
 let duckdb = null;
 try { duckdb = require("@duckdb/node-api"); } catch (_) {}
 const skip = !duckdb && "@duckdb/node-api is not installed: the lake's workflow runs this";
@@ -84,4 +84,21 @@ test("the facts come from the lake's metadata, and from the footers of the files
     db.closeSync();
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+});
+
+test("a lakehouse's tables: findings first, then the most files; a table the lake doesn't hold is not read yet", async () => {
+  // A run that answers each lake table's summary query with its own numbers, and no file here.
+  const lake = { t_small: { files: 400, bytes: 400 * MB, b0: 400 }, t_fine: { files: 3, bytes: 900 * MB, b3: 3 }, t_more: { files: 9, bytes: 9 * 300 * MB, b3: 9 } };
+  const run = async sql => {
+    const name = /table_name = '([^']+)'/.exec(sql)[1];
+    return { rows: [{ records: 0, deleted: 0, here: 0, b0: 0, b1: 0, b2: 0, b3: 0, b4: 0, ...lake[name] }] };
+  };
+  const tables = [{ schema: "dbo", table: "fine" }, { schema: "dbo", table: "gone" }, { schema: "dbo", table: "small" },
+                  { schema: "dbo", table: "more" }, { schema: "dbo", table: "never" }];
+  const metaOf = async t => (t.table === "never" ? null : { metadataLocation: `abfss://w@h/${t.table}/metadata/v1.json` });
+  const lakeName = async meta => { const t = /\/([a-z]+)\/metadata/.exec(meta.metadataLocation)[1]; return t === "gone" ? null : `t_${t}`; };
+  const rows = await lakehouseHealth({ tables, metaOf, lakeName, run });
+  assert.deepEqual(rows.map(r => r.table), ["small", "more", "fine", "gone", "never"]);
+  assert.deepEqual(rows[0].findings.map(f => f.kind), ["small-files"]);
+  assert.deepEqual(rows.slice(3).map(r => r.inLake), [false, false]);
 });

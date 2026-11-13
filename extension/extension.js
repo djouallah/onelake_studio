@@ -563,6 +563,7 @@ async function activateInner(context) {
     }
     // A table's and an item's names are matched ignoring case, as its SQL name is (NAMING.md); a path in Files/ is exact.
     if (msg.type === 'open-table') return `table:${[msg.workspace, msg.item, msg.schema || 'dbo', msg.table].join('/').toLowerCase()}`;
+    if (msg.type === 'lakehouse-health') return `health:${`${msg.workspace}/${msg.item}`.toLowerCase()}`;
     if (msg.type === 'open-file' && msg.path) return `file:${`${msg.workspace}/${msg.item}`.toLowerCase()}/${msg.path}`;
     return null;
   }
@@ -965,6 +966,11 @@ async function activateInner(context) {
       type: 'open-table',
       workspace: n.workspace, item: n.item, schema: n.schema, table: n.table,
     }))),
+
+    // A lakehouse's tables as the lake holds them, findings first, in a tab of its own.
+    vscode.commands.registerCommand('onelakeStudio.tableHealth', n => n && n.item && openInPanel({
+      type: 'lakehouse-health', workspace: n.workspace, item: n.item, name: n.item,
+    }, `Table Health · ${String(n.item).replace(/\.[^.]+$/, '')}`)),
 
     vscode.commands.registerCommand('onelakeStudio.openInternalTable', onClick(n => openInPanel({
       type: 'query', sql: `SELECT * FROM system_internal.${quoteIdent(n.table)} LIMIT ${settings.selectTopRows()}`,

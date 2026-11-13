@@ -191,6 +191,11 @@
         "category": "OneLake Studio"
       },
       {
+        "command": "onelakeStudio.tableHealth",
+        "title": "Table Health",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.copyColumns",
         "title": "Copy Column List",
         "category": "OneLake Studio"
@@ -407,6 +412,11 @@
           "group": "0_query@1"
         },
         {
+          "command": "onelakeStudio.tableHealth",
+          "when": "view == onelakeStudio.explorer && viewItem == item",
+          "group": "0_query@2"
+        },
+        {
           "command": "onelakeStudio.copySqlName",
           "when": "view == onelakeStudio.explorer && viewItem == table",
           "group": "1_copy@1"
@@ -593,6 +603,10 @@
         },
         {
           "command": "onelakeStudio.selectTop",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.tableHealth",
           "when": "false"
         },
         {

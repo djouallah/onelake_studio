@@ -39,7 +39,8 @@ const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, fileSqlName } =
 const { mapPool, offlineError } = require('../core/onelake/http');
 const { walkCached } = require('../core/onelake/onelake');
 const { readJob } = require('../core/onelake/syncworker');
-const { editDistance } = require('../core/sqltables');
+const { editDistance, deltaTableOf } = require('../core/sqltables');
+const { lakehouseHealth } = require('../core/lake/health');
 const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED } = require('../core/sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 const { buildCube } = require('../xmla/cube');
@@ -546,6 +547,33 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       ]));
       io.out('');
       io.table([col('column'), col('type')], (m.schemaFields || []).map(f => [f.name, f.type]), { limit: Infinity });
+    },
+
+    // Each table's file layout and findings, from what the lake holds here: no OneLake request (health.js).
+    async health([ws, item], opts, io) {
+      const lh = await itemOf(ws, item, await look('items', [ws], opts));
+      const listed = await onelake.cached.tables(lh);
+      if (!listed) throw notCached(...IN_TREE.tables(lh));
+      const eng = await engine();
+      const rows = await lakehouseHealth({
+        tables: listed.value,
+        metaOf: async t => { const e = await onelake.cached.table(lh, t); return e ? e.value : null; },
+        lakeName: meta => eng.lakeName({ deltaTable: deltaTableOf(meta), metadataLocation: meta.metadataLocation }),
+        run: sql => eng.agentQuery(sql, { signal: opts.signal, used: false }),
+      });
+      const MB = 1024 * 1024;
+      io.data({ tables: rows.map(r => ({ table: r.schema ? `${r.schema}.${r.table}` : r.table, sqlName: sqlNameOf(lh, r), read: r.inLake,
+        ...(r.inLake ? { files: r.facts.files, bytes: r.facts.bytes, rows: r.facts.records, deletedRows: r.facts.deleted,
+          filesHere: r.facts.here, footers: r.facts.footers, findings: r.findings } : {}) })) });
+      io.table([col('table'), col('finding'), col('files', 'integer'), col('avg_file_mb', 'number', 'avg file (MB)'),
+                col('deleted_pct', 'number', 'deleted %'), col('action')],
+        rows.map(r => {
+          const label = r.schema ? `${r.schema}.${r.table}` : r.table;
+          if (!r.inLake) return [label, 'not read', null, null, null, ''];
+          const f = r.facts, x = r.findings;
+          return [label, x.map(y => y.finding).join(', ') || '—', f.files, f.files ? Math.round(10 * f.bytes / f.files / MB) / 10 : null,
+                  f.records ? Math.round(1000 * f.deleted / f.records) / 10 : null, [...new Set(x.map(y => y.action))].join('; ')];
+        }));
     },
 
     // Whether a table is there, from the listings alone, so it needs no table's metadata. A no comes

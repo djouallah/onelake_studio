@@ -41,6 +41,7 @@ const COMMANDS = {
   find: { usage: 'find <text>', min: 1, max: 1, flags: LISTING },
   table: { usage: 'table <ws> <item> <schema.table>', min: 3, max: 3, flags: ['fresh', 'csv', 'json'] },
   exists: { usage: 'exists <ws> <item> <schema.table>', min: 3, max: 3, flags: ['fresh', 'json'] },
+  health: { usage: 'health <ws> <item>', min: 2, max: 2, flags: ['csv', 'json', 'limit'] },
   model: { usage: 'model <ws> <model>', min: 2, max: 2, flags: ['fresh', 'json'] },
   sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['csv', 'json', 'limit', 'showSql', 'fresh'] },
   export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json'] },

@@ -1149,6 +1149,53 @@ async function loadHealth() {
   if (viewMode === 'stats') renderMeta();
 }
 
+// A lakehouse's tables as the lake holds them, findings first: one row each, a click opens it in a tab.
+async function showLakehouseHealth(m) {
+  if (!await goToLakehouse(m.workspace, m.item)) return;
+  closeModelView();
+  closeDb();
+  const my = ++selSeq;
+  engine.cancelLoad();
+  activeFile = null;
+  setActiveStats(null);
+  activeTableRef = null; tableStage = 'none'; activeSqlName = null;
+  const name = String(m.name || m.item).replace(/\.[^.]+$/, '');
+  $('activeTable').textContent = `Table Health · ${name}`;
+  clearResults('(reading what the lake holds…)');
+  let rows;
+  try { rows = await engine.lakehouseHealth(lakehouse); }
+  catch (e) { if (my === selSeq) clearResults(`Table Health could not be worked out: ${e.message}`, { error: true }); return; }
+  if (my !== selSeq) return;
+  clearResults('');
+  $('docView').innerHTML = lakehouseHealthHtml(name, rows);
+  $('docView').hidden = false;
+  $('docView').onclick = e => {
+    const tr = e.target.closest('tr[data-sql]');
+    if (tr) engine.openTable(tr.dataset.sql).catch(err => setStatus(`Could not open it: ${err.message}`, 'error'));
+  };
+}
+function lakehouseHealthHtml(name, rows) {
+  const held = rows.filter(r => r.inLake), found = held.filter(r => r.findings.length);
+  const notRead = rows.length - held.length;
+  const head = `<h2>Table Health · ${escapeHtml(name)}</h2><p class="statsNote">${n0(rows.length)} tables · ` +
+    `${n0(found.length)} with findings${notRead ? ` · ${n0(notRead)} not read yet` : ''}</p>`;
+  if (!rows.length) return head + '<p class="statsNote">No table of this lakehouse is known here yet: open it in the tree first.</p>';
+  const cell = (v, cls = '') => `<td${cls ? ` class="${cls}"` : ''}>${escapeHtml(String(v))}</td>`;
+  const body = rows.map(r => {
+    const label = r.schema ? `${r.schema}.${r.table}` : r.table;
+    if (!r.inLake) return `<tr data-sql="${escapeHtml(r.sqlName)}" class="notRead">${cell(label)}${cell('not read yet', 'action')}<td></td><td></td><td></td><td></td></tr>`;
+    const f = r.facts, x = r.findings;
+    return `<tr data-sql="${escapeHtml(r.sqlName)}">${cell(label)}` +
+      cell(x.length ? x.map(y => y.finding).join(', ') : '—', x.length ? 'finding' : '') +
+      cell(n0(f.files), 'num') + cell(f.files ? fmtMB(f.bytes / f.files) : '—', 'num') +
+      cell(f.records && f.deleted ? `${Math.round(100 * f.deleted / f.records)}%` : '—', 'num') +
+      cell(x.length ? x.map(y => y.action).filter((a, i, all) => all.indexOf(a) === i).join('; ') : '', 'action') + '</tr>';
+  }).join('');
+  return head + '<table class="health tableHealth"><thead><tr><th>Table</th><th>Finding</th><th class="num">Files</th>' +
+    '<th class="num">Avg file</th><th class="num">Deleted</th><th>Action</th></tr></thead><tbody>' + body + '</tbody></table>' +
+    '<p class="statsNote">From what this machine holds of each table: nothing was asked of OneLake. A table no query has read yet has no files here to look at.</p>';
+}
+
 const fmtMB = b => `${(b / 1048576).toLocaleString('en', { maximumFractionDigits: b < 10485760 ? 1 : 0 })} MB`;
 function healthHtml(h) {
   if (!h || h.pending) return '';
@@ -1787,6 +1834,8 @@ window.addEventListener('message', async e => {
     // SQL for the box, from the tree: a new query, a saved one, Select Top Rows (run at once).
     else if (m.type === 'query') openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null);
     else if (m.type === 'run-sql') { openInBox(String(m.sql ?? ''), null); await runBox(); }
+    // A lakehouse's Table Health: every table this machine holds, from the lake.
+    else if (m.type === 'lakehouse-health') await showLakehouseHealth(m);
     // Go to: a name, put at the cursor.
     else if (m.type === 'insert-sql') {
       const box = showBox();

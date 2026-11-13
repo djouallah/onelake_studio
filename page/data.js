@@ -506,6 +506,7 @@ export function createEngine({
   const deltaState = (lh, t) => callHost("onelake.deltaState", tableArg(lh, t));
   // Its file layout, from what the lake holds of it: no OneLake request.
   const tableHealth = (lh, t) => callHost("onelake.health", tableArg(lh, t));
+  const lakehouseHealth = lh => callHost("onelake.lakehouseHealth", [{ workspace: lh.workspace, item: lh.item }]);
   const deltaHistory = (lh, t, skip = 0) => callHost("onelake.deltaHistory", tableArg(lh, t, { skip }));
 
   // What a table selection costs now. `columns` comes from the Iceberg schema rather than
@@ -708,7 +709,7 @@ export function createEngine({
   // A query variable's value, asked of the user: text, or null when dismissed.
   const askVariable = name => callHost("host.askVariable", [{ name }]);
 
-  return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, deltaHistory,
+  return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
            semanticViews, semanticKeep, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, openTable, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

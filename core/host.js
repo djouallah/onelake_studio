@@ -24,7 +24,7 @@ const { relative, resolve, isAbsolute } = require('node:path');
 // A target from the page, reduced to the strings it may carry.
 const { sqlNameOf, ONELAKE_FILE_URL } = require('./names');
 const { deltaTableOf } = require('./sqltables');
-const { tableFacts, findings } = require('./lake/health');
+const { tableFacts, findings, lakehouseHealth } = require('./lake/health');
 
 const lhOf = x =>({ workspace: String(x.workspace), item: String(x.item) });
 const tableOf = x => ({ schema: String(x.schema || ''), table: String(x.table) });
@@ -187,6 +187,19 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         if (d && d.lastCheckpoint != null) facts.checkpointGap = Number(meta.stats.deltaVersion) - Number(d.lastCheckpoint);
       }
       return { inLake: true, facts, findings: findings(facts) };
+    },
+    // The same for every table of a lakehouse this machine knows, from what is kept: no OneLake request.
+    'onelake.lakehouseHealth': async x => {
+      const lh = lhOf(x);
+      const kept = await onelake.cached.tables(lh);
+      const tables = (kept && Array.isArray(kept.value) ? kept.value : []);
+      const rows = await lakehouseHealth({
+        tables,
+        metaOf: async t => { const k = await onelake.cached.table(lh, t); return k ? k.value : null; },
+        lakeName: meta => (engine.lakeName ? engine.lakeName({ deltaTable: deltaTableOf(meta), metadataLocation: meta.metadataLocation }) : null),
+        run: sql => engine.call('query', [sql]),
+      });
+      return rows.map(r => ({ ...r, sqlName: sqlNameOf(lh, r) }));
     },
     'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql]), x.limit),
     'onelake.rowsOutOfReach': x => onelake.rowsOutOfReach(lhOf(x), tableOf(x)),

@@ -11,6 +11,10 @@
   Findings come with what to consider doing: many small files, many deleted rows, files without V-Order, small row
   groups, and a Delta table far past its last checkpoint. It is read from what the lake holds and from the footers of
   the files here, never from OneLake, so it works offline; a table no query has read yet says so.
+- **Table Health for a whole lakehouse.** *Table Health* on a lakehouse or warehouse in the tree opens a tab with
+  one row per table: its findings first, then the tables with the most files, with files, average file size,
+  deleted rows and what to consider doing. A click on a row opens the table. It reads only what this machine holds,
+  offline too; a table no query has read yet says so. The command line has it as `health <ws> <item>`.
 - **Display folders show in Visual.** A model's columns and measures sit in their display folders in the field list,
   nested as `Sales\Margins` says, and in each folder a field lists more than once with `;`. Folders come first,
   closed until opened; a search looks in folder names too and opens what it finds. The Model page shows a column's
