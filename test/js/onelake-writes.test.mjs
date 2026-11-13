@@ -21,44 +21,53 @@ const skip = !(TOKEN && WS && LH) && "ONELAKE_TOKEN, ONELAKE_CI_WORKSPACE and ON
 if (skip && process.env.NO_SKIP) throw new Error(skip);
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../../core/engine/engine-host.js");
-const { DuckDBInstance } = require("@duckdb/node-api");
+// Loaded only when it runs: npm test's job has no DuckDB.
+const { createEngineHost } = skip ? {} : require("../../core/engine/engine-host.js");
+const { DuckDBInstance } = skip ? {} : require("@duckdb/node-api");
+const { sourceFormat } = require("../../core/names.js");
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
 const ICEBERG = "https://onelake.table.fabric.microsoft.com/iceberg";
 const DFS = "onelake.dfs.fabric.microsoft.com";
 const ITEM = `${LH}.Lakehouse`;
+const WAREHOUSE = `${WS}/${ITEM}`;
 const q = s => `"${String(s).replace(/"/g, '""')}"`;
 const lit = s => `'${String(s).replace(/'/g, "''")}'`;
 const auth = { authorization: `Bearer ${TOKEN}` };
 
-// The lakehouse's GUIDs, as OneLake's Iceberg catalog gives them (catalog.js ircPrefixFor, sqltables.js lakehouseOf).
+// The catalog's prefix for the lakehouse, which it gives by name (catalog.js ircPrefixFor).
 async function prefixOf() {
-  const r = await fetch(`${ICEBERG}/v1/config?warehouse=${encodeURIComponent(`${WS}/${ITEM}`)}`, { headers: auth });
+  const r = await fetch(`${ICEBERG}/v1/config?warehouse=${encodeURIComponent(WAREHOUSE)}`, { headers: auth });
   assert.ok(r.ok, `the Iceberg catalog's config: ${r.status}`);
   return (await r.json()).overrides.prefix;
 }
+const loadTable = (prefix, schema, table) =>
+  fetch(`${ICEBERG}/v1/${prefix}/namespaces/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}`, { headers: auth });
 
-// A table as the store resolves one (sqltables.js resolve): a Delta table by its folder, which has a _delta_log, and
-// any other by the metadata its catalog answers now. Always asked of OneLake, as a Refresh would.
+// A table as the store resolves one (onelake.js summarize, sqltables.js resolve): Delta when the catalog's metadata
+// says it was converted from Delta, empty with no snapshot, else Iceberg by its metadata location. Always asked of
+// OneLake, as after a Refresh.
 function resolverFor(prefix) {
   return async ref => {
-    const folder = `${ITEM}/Tables/${ref.schema || "dbo"}/${ref.table}`;
-    const log = await fetch(`https://${DFS}/${encodeURIComponent(WS)}?resource=filesystem&recursive=false&maxResults=1&directory=${encodeURIComponent(`${folder}/_delta_log`)}`,
-      { headers: { ...auth, "x-ms-version": "2023-11-03" } }).catch(() => null);
-    const named = { kind: "lakehouse", workspace: WS, item: LH, schema: ref.schema || "dbo", table: ref.table, at: Date.now() };
-    if (log && log.ok) return { ...named, deltaTable: `abfss://${WS}@${DFS}/${folder}` };
-    const r = await fetch(`${ICEBERG}/v1/${prefix}/namespaces/${encodeURIComponent(ref.schema || "dbo")}/tables/${encodeURIComponent(ref.table)}`, { headers: auth });
+    const schema = ref.schema || "dbo";
+    const named = { kind: "lakehouse", workspace: WS, item: LH, schema, table: ref.table, at: Date.now() };
+    const r = await loadTable(prefix, schema, ref.table);
     if (r.status === 404) throw Object.assign(new Error(`there is no table ${ref.table}`), { noTable: true });
     assert.ok(r.ok, `loadTable ${ref.table}: ${r.status}`);
-    const meta = await r.json();
-    return { ...named, metadataLocation: meta["metadata-location"], tableUuid: meta.metadata && meta.metadata["table-uuid"] };
+    const { metadata, "metadata-location": location } = await r.json();
+    if (sourceFormat(metadata).format === "delta") return { ...named, deltaTable: location.replace(/\/metadata\/[^/]+$/, "").replace(/^abfs:/, "abfss:") };
+    const snap = metadata["current-snapshot-id"];
+    if (snap == null || String(snap) === "-1" || !(metadata.snapshots || []).length) return { ...named, emptySql: "SELECT NULL AS nothing WHERE false" };
+    return { ...named, metadataLocation: location, tableUuid: metadata["table-uuid"] || null };
   };
 }
 
 test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { skip, timeout: 900_000 }, async t => {
   const prefix = await prefixOf();
-  assert.match(String(prefix), /^[0-9a-f-]{36}\/[0-9a-f-]{36}$/i, "the catalog names the item by its GUIDs");
-  const [wsId, itemId] = String(prefix).split("/");
+  // The workspace's GUID, off a table of it, as sqltables.js lakehouseOf reads it: the catalog writes there.
+  const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
+  const wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1];
+  assert.ok(wsId, `a table's metadata names its workspace by GUID: ${known["metadata-location"]}`);
+  console.log(`prefix ${prefix}, workspace ${wsId}`);
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const warnings = [], written = [];
@@ -71,7 +80,8 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     resolveLakehouse: async ref => {
       assert.equal(String(ref.workspace).toLowerCase(), WS.toLowerCase());
       assert.equal(String(ref.item).toLowerCase(), LH.toLowerCase());
-      return { workspace: WS, item: ITEM, warehouse: `${wsId}/${itemId}`, scope: `abfss://${wsId}@${DFS}/` };
+      return { workspace: WS, item: ITEM, warehouse: WAREHOUSE,
+               scopes: [WS, wsId].flatMap(w => [`abfss://${w}@${DFS}/`, `abfs://${w}@${DFS}/`]) };
     },
     resolveTable: resolverFor(prefix),
     resolveFile: async () => ({ workspace: WS, item: ITEM }),
@@ -93,7 +103,7 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   await c.run("SET TimeZone = 'UTC'");
   await c.run(`CREATE SECRET onelake (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ${lit(TOKEN)})`);
   await c.run(`CREATE SECRET ice (TYPE iceberg, TOKEN ${lit(TOKEN)})`);
-  await c.run(`ATTACH ${lit(prefix)} AS back (TYPE iceberg, URI ${lit(ICEBERG)}, SECRET ice,
+  await c.run(`ATTACH ${lit(WAREHOUSE)} AS back (TYPE iceberg, URI ${lit(ICEBERG)}, SECRET ice,
     ACCESS_DELEGATION_MODE 'none', STAGE_CREATE_TABLES false, SKIP_CREATE_TABLE_METADATA_UPDATES true, DEFAULT_SCHEMA 'dbo')`);
   const back = async sql => (await c.runAndReadAll(sql)).getRowObjectsJson();
 

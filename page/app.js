@@ -1532,9 +1532,9 @@ function enterQuery(title) {
 
 // The SQL box: written, run and saved here, so a query never opens a .sql file, and nothing else
 // in VS Code has a say in it. It holds one query: the saved one it came from, when it did. A .sql file
-// opened from disk is one too, and `activeFile` is its path: Save writes it back there.
+// opened from disk is one too, and `boxFile` is its path: Save writes it back there.
 let activeQuery = null;
-let activeFile = null;
+let boxFile = null;
 const sameName = (a, b) => a != null && String(a).toLowerCase() === String(b).toLowerCase();
 function nameBoxQuery(name) {
   activeQuery = name;
@@ -1567,7 +1567,7 @@ function putInBox(sql) {
   typeInBox(box, sql);
   clearTimeout(draftTimer);     // what was put here isn't a draft to keep
   nameBoxQuery(null);
-  activeFile = null;
+  boxFile = null;
   box.setSelectionRange(0, 0);
 }
 // What was clicked, as SQL to start from: a click isn't a request to type, so the cursor stays where
@@ -1578,12 +1578,12 @@ function offerInBox(sql) {
   if (box.value.trim() && box.value !== offered) return;
   box.value = offered = sql;
   activeQuery = null;
-  activeFile = null;
+  boxFile = null;
 }
 function openInBox(sql, name, file = null) {
   putInBox(sql);
   nameBoxQuery(name);
-  activeFile = file;
+  boxFile = file;
   $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
   setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.` : 'Run ▶ (Ctrl+Enter) runs the statement under the cursor.');
 }
@@ -1681,7 +1681,7 @@ async function saveBox() {
   const sql = $('sqlEditor').value;
   if (!sql.trim()) { setStatus('Nothing to save: write a query first.'); return; }
   try {
-    const saved = await engine.saveQuery(activeQuery || '', sql, activeFile);
+    const saved = await engine.saveQuery(activeQuery || '', sql, boxFile);
     nameBoxQuery(saved.name);
     if ($('activeTable').textContent.startsWith('Query')) $('activeTable').textContent = `Query: ${saved.name}`;
     setStatus(saved.file ? `Saved to ${saved.file}.` : `Saved as ${saved.name} under Queries.`, 'ok');

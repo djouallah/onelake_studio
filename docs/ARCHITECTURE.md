@@ -718,11 +718,13 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
   SQL or mirrored database; a name of the engine's own (`memory`, `lake`, `system_internal`, …); and a `COPY` to
   anywhere but a lakehouse's `Files/`. What OneLake's catalog itself turns down fails with its own error.
 - **How a table is written:** DuckDB writes Iceberg only through a catalog. So the host attaches the lakehouse's
-  Iceberg REST catalog (`https://onelake.table.fabric.microsoft.com/iceberg`, the warehouse by the item's GUIDs) in the
+  Iceberg REST catalog (`https://onelake.table.fabric.microsoft.com/iceberg`, the warehouse `<workspace>/<item>`) in the
   server, for that one statement, under a name of its own (`ice_` and 16 hex digits), and detaches it after: nothing
   stays attached for a listing to find, and two statements never share one. The options are those OneLake takes: no
-  vended credentials (DuckDB writes the data files with the storage secret, scoped to the workspace's GUID) and no
-  staged create. The token is an Iceberg secret's, as an `ATTACH`'s `TOKEN` shows in `duckdb_databases()`. The write's
+  vended credentials and no staged create. DuckDB writes the data files with the storage secret, where the catalog puts
+  them: `abfs://<workspace GUID>@onelake…/<item GUID>/Tables/…`. Nothing names that GUID but a table's own metadata, so
+  it is read off a table of the workspace the store keeps, and the secret's scope gets it (`lakehouseOf` in
+  [`core/sqltables.js`](../core/sqltables.js)). A workspace with no table yet has the name's scope alone. The token is an Iceberg secret's, as an `ATTACH`'s `TOKEN` shows in `duckdb_databases()`. The write's
   target is named as that catalog's table, as a file's name is given its URL, and the statement's reads go through the
   lake as any read does. No statement may name such a catalog itself.
 - **Checked by DuckDB, then run.** The statement's text says what it writes and where (`writeOf`). Then DuckDB's own

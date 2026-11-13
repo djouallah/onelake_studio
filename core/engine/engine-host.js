@@ -115,7 +115,8 @@ const FORBIDDEN = /\b(?:HTTP|status|code)[ :]*403\b|\b403 Forbidden\b|Authorizat
 // in a metadata.json. Spaces are allowed — a workspace named "ANZ Retail Demo" gets name-based
 // paths with them, and DuckDB reads those fine; sqlStr quotes the string either way. Line
 // breaks and NULs are not.
-const ONELAKE_METADATA = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]+\.metadata\.json$/i;
+// abfs:// too: OneLake's Iceberg catalog names the tables it makes so (SQL's writes).
+const ONELAKE_METADATA = /^abfss?:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]+\.metadata\.json$/i;
 const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
 // A Delta table's folder, whose log is read into the lake as it is named: only this shape may pass.
 const ONELAKE_TABLE = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]*[^/\r\n\0]$/i;
@@ -205,8 +206,8 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // Each becomes a view DuckDB lists (syncCatalog), so SHOW ALL TABLES and information_schema see
 // what the tree has seen without a single request to OneLake.
 //
-// `resolveLakehouse` finds a lakehouse a write names: { workspace, item, warehouse, scope }, the warehouse its
-// Iceberg catalog answers to and the storage scope its files are written under. `onWritten` hears what a write
+// `resolveLakehouse` finds a lakehouse a write names: { workspace, item, warehouse, scopes }, the warehouse its
+// Iceberg catalog answers to and the storage scopes its files are written under. `onWritten` hears what a write
 // changed: { kind: 'tables' | 'files', workspace, item, dir }, for the listings to be read again.
 //
 // `checkConnectivity` asks whether the internet is still there, once a read has failed. `onRowsRead`
@@ -1142,7 +1143,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         expect = { plan: w.plan, file: url };
       } else {
         if (w.target === 'table') await refuseDelta(w.ref);
-        await allowStorage([lh.scope]);
+        await allowStorage(lh.scopes || []);
         attached = await iceAttach(lh.warehouse);
         statement = place([attached, w.ref.schema, ...(w.target === 'table' ? [w.ref.table] : [])].map(quoteIdent).join('.'));
         expect = { plan: w.plan, catalog: attached };

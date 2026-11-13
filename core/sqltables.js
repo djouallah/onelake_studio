@@ -247,15 +247,33 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   }
 
   // A lakehouse a write names: its workspace and directory as OneLake spells them, the warehouse its Iceberg
-  // catalog answers to, and the storage scope its files are written under. OneLake's catalog gives the item's
-  // GUIDs as its prefix, and the files of a table it makes are under the workspace's GUID.
-  const GUIDS = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  // catalog answers to (by those names, as catalog.js asks it), and the storage scopes its files are written under.
+  // OneLake's catalog puts a table it makes under the workspace's GUID, abfs://<guid>@<host>/<item guid>/Tables/…,
+  // which nothing names but a table's own metadata: so the GUID is read off a table of the workspace, the
+  // lakehouse's own first, from what the store keeps. A workspace with no table at all has the name's scope only.
+  const wsGuids = new Map();
+  const GUID_AT = /^abfss?:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@/i;
+  async function workspaceGuid(ws, dir) {
+    const key = String(ws).toLowerCase();
+    if (wsGuids.has(key)) return wsGuids.get(key);
+    const items = await onelake.items(ws).catch(() => []);
+    const order = [dir, ...items.filter(i => sqlKind(i.kind) && i.name !== dir).map(i => i.name)];
+    for (const item of order.slice(0, 8)) {
+      const lh = { workspace: ws, item };
+      const tables = await onelake.tables(lh).catch(() => []);
+      for (const t of (tables || []).slice(0, 3)) {
+        const meta = await onelake.table(lh, t).catch(() => null);
+        const m = GUID_AT.exec(String((meta && meta.metadataLocation) || ''));
+        if (m) { wsGuids.set(key, m[1]); return m[1]; }
+      }
+    }
+    return null;
+  }
   async function lakehouseOf(ref, { fresh = false } = {}) {
     const { ws, dir } = await locate({ kind: 'lakehouse', workspace: ref.workspace, item: ref.item, name: ref.name }, fresh);
-    const prefix = onelake.icebergPrefix ? await onelake.icebergPrefix({ workspace: ws, item: dir }) : null;
-    const ids = GUIDS.exec(String(prefix || ''));
-    return { workspace: ws, item: dir, warehouse: ids ? `${ids[1]}/${ids[2]}` : `${ws}/${dir}`,
-             scope: `abfss://${ids ? ids[1] : ws}@${DFS_HOST}/` };
+    const guid = await workspaceGuid(ws, dir);
+    const scopes = [ws, ...(guid ? [guid] : [])].flatMap(w => [`abfss://${w}@${DFS_HOST}/`, `abfs://${w}@${DFS_HOST}/`]);
+    return { workspace: ws, item: dir, warehouse: `${ws}/${dir}`, scopes };
   }
 
   return { resolve, resolveFile, lakehouseOf, nameTables, place, forget: () => namedFrom.clear() };
