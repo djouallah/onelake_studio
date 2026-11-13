@@ -254,7 +254,7 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
       [`INSERT INTO ${tbl(a)} SELECT 9, 'z', 9 ON CONFLICT DO NOTHING`, /ON CONFLICT isn't/],
       [`TRUNCATE ${tbl(a)}`, /TRUNCATE isn't/],
       [`CREATE VIEW ${tbl(`${run}_v`)} AS SELECT 1`, /CREATE VIEW isn't/],
-      ["INSERT INTO memory.main.x SELECT 1", /engine's own/],
+      ["INSERT INTO onelake.main.x SELECT 1", /engine's own/],
       ["CREATE TABLE lake.main.x AS SELECT 1", /engine's own/],
       [`INSERT INTO ${q(WS)}.${q(`${LH}_warehouse`)}.dbo.t SELECT 1`, /lakehouse only/],
       ["COPY (SELECT 1) TO 'x.csv'", /COPY writes to a lakehouse's Files/],
