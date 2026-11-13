@@ -523,5 +523,5 @@ test("an UPDATE, DELETE or MERGE whose bound plan DuckDB can't write is held to 
   assert.throws(() => checkPhysical([op("ICEBERG_UPDATE", op("COPY_TO_FILE")), op("ICEBERG_UPDATE")], "update"), /more than one statement/);
   assert.throws(() => checkPhysical([op("ICEBERG_INSERT")], "insert"), /checked by its bound plan only/);
   assert.doesNotThrow(() => checkPhysical([op("ICEBERG_UPDATE", op("PROJECTION", op("COPY_TO_FILE")))], "update"), "an Iceberg write's own files");
-  assert.throws(() => checkPhysical([op("ICEBERG_UPDATE"), ], "update") && checkPhysical([op("PROJECTION", op("COPY_TO_FILE"))], "update"), /plans a COPY_TO_FILE|not ICEBERG_UPDATE/);
+  assert.throws(() => checkPhysical([op("PROJECTION", op("COPY_TO_FILE"))], "update"), /plans a COPY_TO_FILE in this/, "a COPY under no Iceberg write is a write elsewhere");
 });
