@@ -1653,6 +1653,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     try {
       const got = await lakeFetch(lake);
       if (signal && signal.aborted) throw Object.assign(new Error('stopped'), { cancelled: true });
+      // Its rows are on this machine now, as a statement reading them would have said: the tree draws it so at once.
+      const location = r.metadataLocation;
+      if (!(got && got.left) && location && !rowsSaid.has(location)) {
+        rowsSaid.add(location);
+        try { onRowsRead(location); } catch (_) {}
+      }
       return got;
     } finally { if (signal) signal.removeEventListener('abort', stop); }
   }
