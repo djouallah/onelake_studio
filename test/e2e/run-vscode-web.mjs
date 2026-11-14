@@ -468,8 +468,13 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     const r = await act(() => f.locator("#sqlEditor").press("Control+s"));
     check("it says so", /Saved as Query 1/.test(r.status), r.status);
     check("the file is there", existsSync(join(folder, "Query 1.sql")));
+    check("Save is off once it is saved", await f.locator("#saveQueryBtn").isDisabled());
+    await f.locator("#sqlEditor").press("End");
+    await f.locator("#sqlEditor").type(" -- again");
+    check("an edit turns it on again", !(await f.locator("#saveQueryBtn").isDisabled()));
     const again = await act(() => f.locator("#saveQueryBtn").click());
     check("saving again is the same query", /Saved as Query 1/.test(again.status) && !existsSync(join(folder, "Query 2.sql")), again.status);
+    check("and Save is off again", await f.locator("#saveQueryBtn").isDisabled());
   });
 
   await step("A .sql file from disk: Save writes it back, and no query is kept for it", async () => {
@@ -484,11 +489,13 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     }, 15000);
     const f = await panel();
     check("the button says Save", (await f.locator("#saveQueryBtn").textContent()) === "Save");
+    check("and is off: the box is the file as it is", await f.locator("#saveQueryBtn").isDisabled());
     await f.locator("#sqlEditor").fill("select 'edited' as kept");
     const r = await act(() => f.locator("#sqlEditor").press("Control+s"));
     check("it says so", /Saved kept\.sql/.test(r.status), r.status);
     check("the file holds it", readFileSync(file, "utf8") === "select 'edited' as kept", readFileSync(file, "utf8"));
     check("the saved query of that name is as it was", readFileSync(saved, "utf8") === before, readFileSync(saved, "utf8"));
+    check("Save is off once it is saved", await f.locator("#saveQueryBtn").isDisabled());
   });
 
   await step("Tree: a table click adds a tab with its SQL, not run, and the last tab is left as it was", async () => {

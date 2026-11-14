@@ -128,7 +128,7 @@ function wireUi() {
   $('planBtn').onclick = () => runBox({ plan: true });
   $('saveQueryBtn').onclick = saveBox;
   $('sqlEditor').addEventListener('keydown', onBoxKey);
-  $('sqlEditor').addEventListener('input', keepDraft);
+  $('sqlEditor').addEventListener('input', () => { keepDraft(); setBoxSaved(); });
   $('profileBtn').onclick = profileResult;
   $('chartBtn').onclick = toggleChart;
   $('docPretty').onclick = () => {
@@ -1571,6 +1571,13 @@ function setBoxFile(file) {
   b.textContent = file ? 'Save' : 'Save Query';
   b.title = file ? `Write the box's SQL back to ${file.name} (Ctrl+S)` : "Keep the box's SQL under Queries in the OneLake sidebar (Ctrl+S)";
 }
+// The text as last saved, or as the file or the saved query it came from: Save is off while the box holds it, so a
+// save shows it took. null: nothing is saved of what is there (a new query, a table's SQL).
+let boxSaved = null;
+function setBoxSaved(text = undefined) {
+  if (text !== undefined) boxSaved = text;
+  $('saveQueryBtn').disabled = boxSaved != null && $('sqlEditor').value === boxSaved;
+}
 const sameName = (a, b) => a != null && String(a).toLowerCase() === String(b).toLowerCase();
 function nameBoxQuery(name) {
   activeQuery = name;
@@ -1604,6 +1611,7 @@ function putInBox(sql) {
   clearTimeout(draftTimer);     // what was put here isn't a draft to keep
   nameBoxQuery(null);
   setBoxFile(null);
+  setBoxSaved(null);
   box.setSelectionRange(0, 0);
 }
 // What was clicked, as SQL to start from: a click isn't a request to type, so the cursor stays where
@@ -1615,12 +1623,15 @@ function offerInBox(sql) {
   box.value = offered = sql;
   activeQuery = null;
   setBoxFile(null);
+  setBoxSaved(null);
 }
 // `file`: the .sql file the text is, which Save writes back (setBoxFile).
 function openInBox(sql, name, file = null) {
   putInBox(sql);
   nameBoxQuery(file ? null : name);
   setBoxFile(file);
+  // A file's text, or a saved query's (named), is saved already.
+  setBoxSaved(file || name ? $('sqlEditor').value : null);
   $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
   setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.` : 'Run ▶ (Ctrl+Enter) runs the statement under the cursor.');
 }
@@ -1716,10 +1727,12 @@ async function runOne(span, { plan = false, text }) {
 // asked (Rename in the tree names it). Save, for a .sql file: back over that file.
 async function saveBox() {
   const sql = $('sqlEditor').value;
+  if ($('saveQueryBtn').disabled) return;   // saved already: Ctrl+S has nothing to do
   if (boxFile) {
     const { name, ...where } = boxFile;
     try {
       await engine.saveFileText({ ...where, text: sql });
+      setBoxSaved(sql);
       setStatus(`Saved ${name}.`, 'ok');
     } catch (e) {
       setStatus(`Could not save ${name}: ${e.message}`, 'error');
@@ -1730,6 +1743,7 @@ async function saveBox() {
   try {
     const saved = await engine.saveQuery(activeQuery || '', sql);
     nameBoxQuery(saved.name);
+    setBoxSaved(sql);
     if ($('activeTable').textContent.startsWith('Query')) $('activeTable').textContent = `Query: ${saved.name}`;
     setStatus(`Saved as ${saved.name} under Queries.`, 'ok');
   } catch (e) {
