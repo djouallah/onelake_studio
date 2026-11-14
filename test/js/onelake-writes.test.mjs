@@ -73,9 +73,12 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const warnings = [], written = [];
+  // The Writes settings, as the extension hands them in (core.js engineCallbacks), set by each test that needs them.
+  const opts = { writes: true, drop: false, format: "iceberg" };
   const engine = createEngineHost({
     extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
     fileCacheDir: cacheDir, fileCacheMaxBytes: 1e9,
+    writesAllowed: () => opts.writes, dropAllowed: () => opts.drop, newTableFormat: () => opts.format,
     getToken: async () => TOKEN,
     onWarn: w => warnings.push(w),
     onWritten: w => written.push(w),
@@ -353,6 +356,46 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     await noneAttached();
   });
 
+  await t.test("DROP TABLE on a Delta table is refused, with Allow Drop Table on, and changes nothing", async () => {
+    assert.ok(folders.has(DW), "the Delta table was read");
+    const before = await deltaState(DW);
+    opts.drop = true;
+    try {
+      await assert.rejects(engine.agentQuery(`DROP TABLE ${tbl(DW)}`), new RegExp(`${DW} is a Delta table, and DuckDB can't drop one`));
+    } finally { opts.drop = false; }
+    assert.deepEqual(await deltaState(DW), before, "the Delta table is as it was");
+    await noneAttached();
+  });
+
+  // New Table Format delta: the delta extension makes the table in its own folder under Tables/<schema>/, with
+  // CREATE TABLE (columns) only. OneLake then shows it as any Delta table, and INSERT adds to it.
+  await t.test("New Table Format delta: CREATE TABLE (columns) makes a Delta table, INSERT adds to it, CREATE TABLE AS is refused", async () => {
+    const name = `${run}_newdelta`;
+    const dir = `${ITEM}/Tables/test/${name}`;
+    t.after(() => fetch(`https://${DFS}/${WS}/${dir}?recursive=true`, { method: "DELETE", headers: { ...auth, "x-ms-version": "2023-11-03" } }).catch(() => {}));
+    opts.format = "delta";
+    try {
+      await assert.rejects(engine.agentQuery(`CREATE TABLE ${tbl(name)} AS SELECT 1::BIGINT AS id`), /it has no CREATE TABLE AS/);
+      await sql(`CREATE TABLE ${tbl(name)} (id BIGINT, s VARCHAR)`);
+      folders.set(name, `abfss://${WS}@${DFS}/${dir}`);
+      const made = await deltaLog(name);
+      assert.ok(commits(made) >= 1, `it has a Delta log: ${made.join(", ")}`);
+      // OneLake's Iceberg face of it, which is how the engine finds a table to INSERT into.
+      const until = Date.now() + 5 * 60_000;
+      for (;;) {
+        const r = await loadTable(prefix, "test", name);
+        if (r.ok && sourceFormat((await r.json()).metadata).format === "delta") break;
+        assert.ok(Date.now() < until, `${name} has no Iceberg face after 5 minutes: ${r.status}`);
+        await new Promise(res => setTimeout(res, 10_000));
+      }
+      await sql(`INSERT INTO ${tbl(name)} VALUES (1, 'a'), (2, 'b')`);
+      assert.equal(await deltaRows(name), "2", "its rows, as the Delta log has them");
+      assert.equal(commits(await deltaLog(name)), commits(made) + 1, "the INSERT is one more commit");
+      assert.equal(String((await sql(`SELECT count(*)::BIGINT AS n FROM ${tbl(name)}`))[0].n), "2", "the engine reads them");
+    } finally { opts.format = "iceberg"; }
+    await noneAttached();
+  });
+
   // Each Delta feature's table, INSERTed into: what the delta extension can write, and that what it wrote reads.
   // What it can't write is refused, with nothing written: column mapping as Spark writes it is on writer version 5,
   // whose legacy features include checkConstraints, which delta-kernel doesn't write.
@@ -380,11 +423,46 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     });
   }
 
+  await t.test("Allow Writes off: every write is refused, with nothing sent", async () => {
+    const count = async () => String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(a)}`))[0].n);
+    const before = await count();
+    opts.writes = false;
+    opts.drop = true;
+    try {
+      for (const text of [`INSERT INTO ${tbl(a)} VALUES (8, 'h', 8)`, `DELETE FROM ${tbl(a)} WHERE true`, `DROP TABLE ${tbl(a)}`,
+                          `CREATE TABLE ${tbl(`${run}_off`)} AS SELECT 1 AS one`]) {
+        await assert.rejects(engine.agentQuery(text), /writing to OneLake is off\. Turn on Allow Writes/, text);
+      }
+    } finally { opts.writes = true; opts.drop = false; }
+    assert.equal(await count(), before, "nothing was written");
+    assert.equal((await loadTable(prefix, "test", `${run}_off`)).status, 404, "no table was made");
+    await noneAttached();
+  });
+
+  await t.test("DROP TABLE drops an Iceberg table only with Allow Drop Table on", async () => {
+    const d = `${run}_drop`;
+    made.push(["test", d]);
+    await sql(`CREATE TABLE ${tbl(d)} AS SELECT 1 AS one`);
+    await assert.rejects(engine.agentQuery(`DROP TABLE ${tbl(d)}`), /DROP TABLE is off\. Turn on Allow Drop Table/);
+    assert.equal((await loadTable(prefix, "test", d)).status, 200, "it is still there");
+    opts.drop = true;
+    try {
+      await sql(`DROP TABLE ${tbl(d)}`);
+      assert.equal((await loadTable(prefix, "test", d)).status, 404, "the catalog no longer has it");
+      const folder = await fetch(`https://${DFS}/${encodeURIComponent(WS)}?resource=filesystem&recursive=true&directory=${encodeURIComponent(`${ITEM}/Tables/test/${d}`)}`,
+        { headers: { ...auth, "x-ms-version": "2023-11-03" } });
+      console.log(`${d} after DROP TABLE: its folder ${folder.ok ? `lists ${(await folder.json()).paths.length} path(s)` : `is gone (${folder.status})`}`);
+      await sql(`DROP TABLE IF EXISTS ${tbl(d)}`);
+      assert.ok(written.some(w => w.kind === "tables"), "its lakehouse's tables are listed again");
+    } finally { opts.drop = false; }
+    await noneAttached();
+  });
+
   await t.test("what is refused writes nothing, and leaves nothing attached", async () => {
     const count = async () => String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(a)}`))[0].n);
     const before = await count();
     for (const [text, why] of [
-      [`DROP TABLE ${tbl(a)}`, /DROP is blocked/],
+      [`DROP TABLE ${tbl(a)}`, /DROP TABLE is off/],
       [`DROP SCHEMA ${lh}.${q(schema)} CASCADE`, /DROP is blocked/],
       [`CREATE OR REPLACE TABLE ${tbl(a)} AS SELECT 1 AS id`, /CREATE OR REPLACE isn't/],
       [`INSERT INTO ${tbl(a)} SELECT 9, 'z', 9 ON CONFLICT DO NOTHING`, /ON CONFLICT isn't/],

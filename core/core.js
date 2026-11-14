@@ -128,6 +128,10 @@ function createCore({
         again.catch(e => log(`${w.workspace}/${w.item} was written, and its listing could not be read again — ${(e && e.message) || e}`));
       },
       offlineReason: () => connectivity.reason(),
+      // SQL's writes to OneLake: off unless the settings are on, each read at the write (package.json's Writes).
+      writesAllowed: () => settings.read('allowWrites', false) === true,
+      dropAllowed: () => settings.read('allowDropTable', false) === true,
+      newTableFormat: () => (settings.read('newTableFormat', 'iceberg') === 'delta' ? 'delta' : 'iceberg'),
       checkConnectivity: () => connectivity.check(),
       onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
       onFileRead: url => { if (onelake) onelake.fileRead(url).catch(() => {}); },

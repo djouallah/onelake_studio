@@ -698,8 +698,40 @@
         }
       },
       {
-        "title": "Cache",
+        "title": "Writes",
         "order": 1,
+        "properties": {
+          "onelakeStudio.allowWrites": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "order": 1,
+            "markdownDescription": "Let SQL write to OneLake: `CREATE TABLE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `ALTER TABLE`, `CREATE SCHEMA` and `COPY` to a lakehouse's `Files/`, from the SQL box and the command line. Off, each is refused and nothing is sent. Reads work as always."
+          },
+          "onelakeStudio.allowDropTable": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "order": 2,
+            "markdownDescription": "Let `DROP TABLE` delete a lakehouse's Iceberg table, its files with it. It can't be undone. Needs `#onelakeStudio.allowWrites#`. A Delta table is never dropped here: DuckDB can't drop one."
+          },
+          "onelakeStudio.newTableFormat": {
+            "type": "string",
+            "enum": ["iceberg", "delta"],
+            "default": "iceberg",
+            "scope": "machine",
+            "order": 3,
+            "markdownDescription": "The format `CREATE TABLE` makes a new table in.",
+            "markdownEnumDescriptions": [
+              "Every write works: `CREATE TABLE AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `ALTER TABLE`, `DROP TABLE`. Its Parquet is laid out for Direct Lake.",
+              "DuckDB's Delta writing is very limited. It can do `CREATE TABLE (columns)` and then `INSERT`, and nothing else: no `CREATE TABLE AS`, `UPDATE`, `DELETE`, `MERGE`, `ALTER TABLE` or `DROP TABLE`, and no Parquet layout settings."
+            ]
+          }
+        }
+      },
+      {
+        "title": "Cache",
+        "order": 2,
         "properties": {
           "onelakeStudio.catalogTtlMinutes": {
             "type": "number",

@@ -99,16 +99,17 @@ ATTACH ':memory:' AS x
 ----
 Not run
 
-# What the page sends to set up its reads is the page's. DROP is blocked for now, of anything.
+# What the page sends to set up its reads is the page's. DROP TABLE drops a lakehouse's table only, and only
+# with Allow Drop Table on (off here, as by default); any other DROP is blocked.
 statement error
 DROP TABLE onelake.main.not_a_table
 ----
-DROP is blocked
+engine's own
 
 statement error
 DROP TABLE IF EXISTS cat1.lh.dbo.no_such_table
 ----
-DROP is blocked
+DROP TABLE is off
 
 statement error
 DROP VIEW cat1.lh.dbo.t

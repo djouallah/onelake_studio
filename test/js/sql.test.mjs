@@ -416,6 +416,12 @@ test("a write is found with what it writes, and where", () => {
   table("CREATE TABLE aemo.data.dbo.monthly (a INT)", "create table", t);
   table("CREATE TABLE IF NOT EXISTS aemo.data.dbo.monthly AS SELECT 1 AS a", "create table", t);
   table("ALTER TABLE aemo.data.dbo.monthly ADD COLUMN b INT", "alter", t);
+  // DROP TABLE is a write; engine-host.js runs it only with Allow Drop Table on.
+  assert.equal(table("DROP TABLE aemo.data.dbo.monthly", "drop table", t).plan, "LOGICAL_DROP");
+  table("drop table if exists aemo.data.dbo.monthly", "drop table", t);
+  // A CREATE TABLE … AS says so (a new Delta table can't be one); a column list's AS doesn't count.
+  assert.equal(writeOf("CREATE TABLE aemo.data.dbo.monthly AS SELECT 1 AS a").query, true);
+  assert.equal(writeOf("CREATE TABLE aemo.data.dbo.monthly (a INT, b INT GENERATED ALWAYS AS (a + 1))").query, false);
   table("WITH s AS (SELECT 1 AS a) INSERT INTO aemo.data.dbo.monthly SELECT * FROM s", "insert", t);
   table('/* why */ INSERT INTO "ANZ Retail"."gold-1".sales."order" SELECT 1', "insert",
         { workspace: "ANZ Retail", item: "gold-1", schema: "sales", table: "order" });
@@ -466,8 +472,9 @@ test("where the target is written is where it is named again", () => {
 
 test("what isn't one of DuckDB's Iceberg writes to a lakehouse is refused, saying why", () => {
   const refused = [
-    ["DROP TABLE aemo.data.dbo.monthly", /DROP is blocked/],
     ["drop schema aemo.data.raw cascade", /DROP is blocked/],
+    ["DROP VIEW aemo.data.dbo.v", /DROP is blocked/],
+    ["DROP TABLE onelake.main.t", /engine's own/],
     ["TRUNCATE aemo.data.dbo.monthly", /TRUNCATE isn't/],
     ["CREATE OR REPLACE TABLE aemo.data.dbo.monthly AS SELECT 1", /CREATE OR REPLACE isn't/],
     ["INSERT OR REPLACE INTO aemo.data.dbo.monthly SELECT 1", /INSERT OR REPLACE isn't/],
@@ -547,6 +554,11 @@ test("DuckDB's plan has the last word: the kind of statement, and the catalog or
     /would write to memory, not the lakehouse/);
   assert.throws(() => checkPlan(planned("LOGICAL_DROP", { info: { catalog: ice } }), { plan: "LOGICAL_INSERT", catalog: ice }),
     /plans this as DROP, not INSERT/);
+  // A DROP TABLE's plan, as DuckDB 2.0 writes it: a table's, in the write's catalog. Of a schema, it is refused.
+  const drop = type => planned("LOGICAL_DROP", { info: { info_type: "DROP_INFO", type, catalog: ice, schema: "dbo", name: "t",
+    qualified_name: { path: [ice, "dbo", "t"] } } });
+  checkPlan(drop("TABLE_ENTRY"), { plan: "LOGICAL_DROP", catalog: ice });
+  assert.throws(() => checkPlan(drop("SCHEMA_ENTRY"), { plan: "LOGICAL_DROP", catalog: ice }), /a DROP of schema_entry, not of a table/);
   assert.throws(() => checkPlan(planned("LOGICAL_COPY_TO_FILE", { file_path: "C:/x.csv" }), { plan: "LOGICAL_COPY_TO_FILE", file: url }),
     /would write C:\/x\.csv/);
   assert.throws(() => checkPlan({ error: false, plans: [{ type: "LOGICAL_INSERT" }, { type: "LOGICAL_DROP" }] }, { plan: "LOGICAL_INSERT", catalog: ice }),

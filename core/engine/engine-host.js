@@ -227,7 +227,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, lakeFolder = 'lake', resolveTable = null, resolveFile = null,
                             resolveLakehouse = null, onWritten = () => {},
-                            catalogTables = null, offlineReason = () => null, checkConnectivity = null,
+                            catalogTables = null, offlineReason = () => null, checkConnectivity = null, writesAllowed = () => true,
+                            dropAllowed = () => false, newTableFormat = () => 'iceberg',
                             onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
   let served = null;            // serve: the address Quack answers on
@@ -1230,25 +1231,34 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   // The Delta table a write goes to, by its folder, or null for one written through the Iceberg catalog: an Iceberg
-  // table, or a new one, which is made as Iceberg. A Delta table's Iceberg face in OneLake is read only, so it is
-  // written by the delta extension instead, which adds rows only: anything else to it is refused here.
+  // table, or a new one made as Iceberg. A Delta table's Iceberg face in OneLake is read only, so it is written by
+  // the delta extension instead, which adds rows only: anything else to it is refused here, a DROP included.
   // What the store holds says it first. A Delta table is asked of OneLake again: one dropped and made again as
   // Iceberg has a Delta log beside it that is OneLake's conversion, which is never to be written.
-  async function deltaTarget(w) {
+  // A new table with New Table Format delta (onelakeStudio.newTableFormat) is made in its own folder, under the
+  // lakehouse's Tables/<schema>/, by the delta extension, which has CREATE TABLE (columns) and no CREATE TABLE AS.
+  async function deltaTarget(w, lh) {
     const ref = { kind: 'lakehouse', ...w.ref };
     let r = null;
     try {
       r = await resolveTable(ref, {});
       if (r && r.deltaTable) r = await resolveTable(ref, { fresh: true });
     } catch (e) {
-      if (w.what === 'create table') return null;   // not there: the CREATE makes it
-      throw e;
+      if (w.what === 'drop table') return null;     // not there: DuckDB says so, or IF EXISTS does nothing
+      if (w.what !== 'create table') throw e;
+      if (newTableFormat() !== 'delta') return null;  // not there: the CREATE makes it, as Iceberg
+      if (w.query) {
+        notRunError('DuckDB makes a Delta table only with CREATE TABLE (columns), then INSERT; it has no CREATE TABLE AS. ' +
+          "Write it in two statements, or set New Table Format to iceberg in OneLake Studio's settings");
+      }
+      return { folder: abfssUrl(lh.workspace, `${lh.item}/Tables/${w.ref.schema}/${w.ref.table}`), create: true };
     }
     if (!r || !r.deltaTable) return null;
     const name = sqlName(r);
+    if (w.what === 'drop table') notRunError(`${name} is a Delta table, and DuckDB can't drop one`);
     if (w.what === 'create table') notRunError(`${name} is already there, as a Delta table`);
     if (w.what !== 'insert') notRunError(`${name} is a Delta table, and DuckDB's only write to a Delta table is INSERT`);
-    return r.deltaTable;
+    return { folder: r.deltaTable };
   }
   const notRunError = why => { throw new Error(`Not run: ${why}.`); };
 
@@ -1257,9 +1267,18 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
    * says, where it says. Never sent twice: a failure is said, not tried again. `emit` streams its answer in batches.
    */
   async function runWrite(sql, { owner, begin = () => {}, signal, emit = null }) {
-    // A new table's Parquet, as Direct Lake reads it best, with nothing asked of whoever wrote it (sql.js TABLE_PROPERTIES).
-    sql = withTableProperties(sql);
+    // A new Iceberg table's Parquet, as Direct Lake reads it best, with nothing asked of whoever wrote it (sql.js
+    // TABLE_PROPERTIES). A new Delta table has none: the delta extension sets no Parquet layout.
+    if (newTableFormat() !== 'delta') sql = withTableProperties(sql);
     const w = writeOf(sql);
+    // Off until the person turns them on (onelakeStudio.allowWrites, allowDropTable): nothing is sent before then,
+    // whoever sends it. A DROP TABLE needs both.
+    if (!writesAllowed()) {
+      throw Object.assign(new Error("Not run: writing to OneLake is off. Turn on Allow Writes in OneLake Studio's settings."), { writesOff: true });
+    }
+    if (w.what === 'drop table' && !dropAllowed()) {
+      throw Object.assign(new Error("Not run: DROP TABLE is off. Turn on Allow Drop Table in OneLake Studio's settings."), { writesOff: true });
+    }
     const why = offlineReason();
     if (why) {
       throw Object.assign(new Error(`Not run: a write needs OneLake, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}.`), { offline: true });
@@ -1277,10 +1296,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         statement = place(sqlStr(url));
         expect = { plan: w.plan, file: url };
       } else {
-        const folder = w.target === 'table' ? await deltaTarget(w) : null;
+        const target = w.target === 'table' ? await deltaTarget(w, lh) : null;
+        const folder = target && target.folder;
         await allowStorage([...(lh.scopes || []), ...(folder ? [scopeOfUrl(folder)] : [])]);
         if (folder) {
           delta = await deltaAttach(folder);
+          // The table is the attached folder's own, as the delta extension names it: <alias>.main.<alias>.
           statement = place([delta, 'main', delta].map(quoteIdent).join('.'));
           expect = { plan: w.plan, catalog: delta };
         } else {
@@ -1325,6 +1346,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     if (w.target === 'table') {
       // The view a statement made of the table reads its old snapshot: made again on its next read.
       made.delete(sqlName({ kind: 'lakehouse', ...w.ref }).toLowerCase());
+      // A dropped table has nothing to read again: the listing above no longer has it.
+      if (w.what === 'drop table') return;
       await sourceOf({ kind: 'lakehouse', ...w.ref }, { fresh: true })
         .catch(e => onWarn(`${w.ref.workspace}.${w.ref.item}.${w.ref.schema}.${w.ref.table} was written, and its new snapshot isn't read yet — ${e.message}`));
     }

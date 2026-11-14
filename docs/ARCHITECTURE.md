@@ -709,12 +709,19 @@ its header and is black, always; the chrome is the text's colour, and colour is 
 
 A statement in the SQL box or the command line's `sql` can write to a lakehouse, and to nothing else
 ([`core/sql.js`](../core/sql.js) `writeOf` and `checkPlan`, [`core/engine/engine-host.js`](../core/engine/engine-host.js)
-`runWrite`). There is no dialog: running it is the consent.
+`runWrite`). There is no dialog: running it is the consent, once the settings let it run.
+
+- **The settings** (*Writes*, read at each statement): **Allow Writes** (`onelakeStudio.allowWrites`) is off by default,
+  and every write is refused until it is on, with nothing sent. **Allow Drop Table** (`allowDropTable`) is off by
+  default too, and `DROP TABLE` needs both. **New Table Format** (`newTableFormat`) is `iceberg` by default, or
+  `delta`. The command line reads the same keys from its settings file.
 
 | Statement | Where it writes |
 | --- | --- |
 | `CREATE TABLE … (…)`, `CREATE TABLE … AS …`, `INSERT INTO`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE` | A lakehouse table that is Iceberg, or a new one, made as Iceberg |
 | `INSERT INTO` | A lakehouse table that is Delta |
+| `DROP TABLE [IF EXISTS]` | A lakehouse table that is Iceberg: it and its files are gone. A Delta table is refused |
+| `CREATE TABLE … (…)`, with New Table Format `delta` | A new Delta table, in its own folder `Tables/<schema>/<table>`, by DuckDB's delta extension. `CREATE TABLE … AS` is refused: the extension has none |
 | `CREATE SCHEMA` | A lakehouse with schemas |
 | `COPY (…) TO '<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
 
@@ -726,7 +733,7 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 
 - **The names:** a table is `<ws>.<lh>.<schema>.<table>` ([NAMING.md](NAMING.md#a-writes-target)), and a
   schema is `<ws>.<lh>.<schema>`.
-- **What is refused, before anything runs:** `DROP` of anything, for now; what DuckDB's Iceberg writer doesn't have
+- **What is refused, before anything runs:** any `DROP` but `DROP TABLE`; what DuckDB's Iceberg writer doesn't have
   (`CREATE OR REPLACE`, `INSERT OR REPLACE`, `ON CONFLICT`, `TRUNCATE`, `COPY … FROM`); a view, a macro, a secret or any
   other `CREATE`; anything but `INSERT INTO` on a table that is Delta in OneLake; a warehouse, a
   SQL or mirrored database; a name of the engine's own (`lake`, `system_internal`, …); and a `COPY` to

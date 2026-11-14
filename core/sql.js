@@ -366,6 +366,7 @@ const FILE_SHAPE = "COPY writes to a lakehouse's Files/: TO '<workspace>.<lakeho
 // What DuckDB's plan of each is (checkPlan).
 const PLANS = { insert: 'LOGICAL_INSERT', update: 'LOGICAL_UPDATE', delete: 'LOGICAL_DELETE', merge: 'LOGICAL_MERGE_INTO',
                 'create table': 'LOGICAL_CREATE_TABLE', 'create schema': 'LOGICAL_CREATE_SCHEMA', alter: 'LOGICAL_ALTER',
+                'drop table': 'LOGICAL_DROP',
                 copy: 'LOGICAL_COPY_TO_FILE' };
 
 /**
@@ -387,9 +388,10 @@ function writeOf(sql) {
   }
   const verb = w(k);
   const VERB = (tk[k] && tk[k].v ? tk[k].v : 'this').toUpperCase();
-  if (verb === 'drop') notRun('DROP is blocked: no table or schema is dropped');
+  // DROP TABLE is a write (engine-host.js lets it run only when Allow Drop Table is on); no other DROP is.
+  if (verb === 'drop' && w(k + 1) !== 'table') notRun('DROP is blocked: only DROP TABLE drops anything, and no schema is dropped');
   if (verb === 'truncate') notRun("TRUNCATE isn't one of DuckDB's Iceberg writes");
-  if (!['insert', 'update', 'delete', 'merge', 'create', 'alter', 'copy'].includes(verb)) {
+  if (!['insert', 'update', 'delete', 'merge', 'create', 'alter', 'copy', 'drop'].includes(verb)) {
     notRun(`${VERB} is not a read, nor one of the writes to a lakehouse`);
   }
   const topWord = word => tk.some((t, j) => j > k && t.depth === 0 && t.t === 'word' && t.w === word);
@@ -449,10 +451,12 @@ function writeOf(sql) {
     if (w(k + 1) !== 'table') notRun(`ALTER ${(tk[k + 1] && tk[k + 1].v || '').toUpperCase()} isn't a write to a lakehouse: only ALTER TABLE is`);
     return as('alter', table(ifWords(k + 2, ['if', 'exists'])));
   }
+  if (verb === 'drop') return as('drop table', table(ifWords(k + 2, ['if', 'exists'])));
   if (verb === 'create') {
     if (w(k + 1) === 'or') notRun("CREATE OR REPLACE isn't one of DuckDB's Iceberg writes");
     if (['temp', 'temporary'].includes(w(k + 1))) notRun('a temporary table is not in a lakehouse');
-    if (w(k + 1) === 'table') return as('create table', table(ifWords(k + 2, ['if', 'not', 'exists'])));
+    // `query`: a CREATE TABLE … AS, whose AS is the only top-level one (a column list's are in its parentheses).
+    if (w(k + 1) === 'table') return { ...as('create table', table(ifWords(k + 2, ['if', 'not', 'exists']))), query: topWord('as') };
     if (w(k + 1) === 'schema') return as('create schema', schema(ifWords(k + 2, ['if', 'not', 'exists'])));
     notRun(`CREATE ${(tk[k + 1] && tk[k + 1].v || '').toUpperCase()} isn't a write to a lakehouse: only CREATE TABLE and CREATE SCHEMA are`);
   }
@@ -552,6 +556,8 @@ function checkPlan(parsed, { plan, catalog = null, file = null }) {
     return;
   }
   const info = p.table_info || p.info || {};
+  // A DROP is of a table, never of a schema or anything else under the same plan.
+  if (p.type === 'LOGICAL_DROP' && info.type !== 'TABLE_ENTRY') notRun(`DuckDB plans this as a DROP of ${String(info.type || 'something').toLowerCase()}, not of a table`);
   const path = info.qualified_name && Array.isArray(info.qualified_name.path) ? info.qualified_name.path : null;
   const where = (path && path[0]) || info.catalog || '';
   if (String(where).toLowerCase() !== String(catalog).toLowerCase()) {

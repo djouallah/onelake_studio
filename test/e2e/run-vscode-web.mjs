@@ -413,6 +413,14 @@ async function runMatrix() {
     });
   }
 
+  await step("Run: a write to a lakehouse is off until Allow Writes is turned on", async () => {
+    for (const sql of [`INSERT INTO "${WORKSPACE}".data.dbo.orders SELECT 1`, `DROP TABLE "${WORKSPACE}".data.dbo.orders`]) {
+      const r = await runIt(sql);
+      settled(sql, r);
+      check("it says the setting", isError(r) && /writing to OneLake is off\. Turn on Allow Writes/.test(r.status), r.status);
+    }
+  });
+
   await step("Run: an empty box says so", async () => {
     const r = await runIt("   ");
     check("nothing to run ends at once", r.settled === "settled" && r.ms < 5000 && /nothing here/i.test(r.status), `${r.ms} ms; ${r.status}`);
