@@ -96,6 +96,9 @@ function createHandler({ token, port, backend, log = () => {} }) {
  */
 function serveXmla({ port, token, backend, log = () => {}, onPortLost = () => {} }) {
   let server = null, timer = null, disposed = false, said = null;
+  // Settled once this address answers: this server listening on it, or another window's, already there.
+  let answers;
+  const listening = new Promise(resolve => { answers = resolve; });
 
   function ours() {
     return new Promise(resolve => {
@@ -122,15 +125,16 @@ function serveXmla({ port, token, backend, log = () => {}, onPortLost = () => {}
         if (!disposed) timer = setTimeout(start, RETRY_MS);
         return;
       }
-      if (await ours()) { if (!disposed) timer = setTimeout(start, RETRY_MS); return; }
+      if (await ours()) { answers(port); if (!disposed) timer = setTimeout(start, RETRY_MS); return; }
       log(`xmla: port ${port} is taken by something else`);
       onPortLost();
     });
-    server.listen(port, '127.0.0.1', () => log(`xmla: serving Excel on 127.0.0.1:${port}`));
+    server.listen(port, '127.0.0.1', () => { log(`xmla: serving Excel on 127.0.0.1:${port}`); answers(port); });
   }
   start();
 
   return {
+    listening,
     dispose() {
       disposed = true;
       clearTimeout(timer);

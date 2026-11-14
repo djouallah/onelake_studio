@@ -103,7 +103,17 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
       fs.mkdirSync(dirname(file), { recursive: true });
       const opened = () => {
         const d = new DatabaseSync(file);
-        try { d.exec(SCHEMA); return d; }
+        try {
+          // A file a newer OneLake Studio wrote (the desktop app and the extension share it, and one can be
+          // the older): its tables may not be these, and writing to them as if they were would spoil what the
+          // newer one keeps. Nothing is written to it, and this one remembers nothing until it is updated.
+          const found = Number(d.prepare('PRAGMA user_version').get().user_version);
+          if (found > SCHEMA_VERSION) {
+            throw new Error(`${file} was written by a newer OneLake Studio (schema ${found}, and this one knows ${SCHEMA_VERSION}): update this one`);
+          }
+          d.exec(SCHEMA);
+          return d;
+        }
         catch (e) { try { d.close(); } catch (_) {} throw e; }
       };
       try { db = opened(); }
@@ -113,6 +123,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
         setAside(file);
         db = opened();
       }
+
     } catch (e) {
       if (!said) log(`the catalog file can't be read, so nothing is remembered: ${e.message}`);
       said = true;

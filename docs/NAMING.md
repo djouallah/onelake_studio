@@ -147,9 +147,9 @@ workspace of a name in the tenant and one semantic model of a name in a workspac
 file must use this name too, and it does not get a second one: if the name is taken in that workspace, the
 newer model overwrites what we have under it. The name therefore identifies exactly one model at a time.
 
-**Overwriting never reaches the Power BI item.** Nothing here writes a semantic model item in Fabric, so a
-model created from a file replaces only our own view of that name, and an export replaces only our own
-copy and app. Until the Fabric item is downloaded again, `<workspace>.<model>_semanticmodel` is the one
+**Opening and exporting never reach the Power BI item.** A model opened from a file replaces only our own view of
+that name, and an export replaces only our own copy and app. Only **Create Semantic Model** writes a semantic model
+item in Fabric, and it asks first. Until the Fabric item is downloaded again, `<workspace>.<model>_semanticmodel` is the one
 created last.
 
 Why two parts and not four:

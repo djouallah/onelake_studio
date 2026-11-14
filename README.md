@@ -43,8 +43,13 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 
 Needs desktop VS Code 1.101+ on Windows x64, macOS on Apple silicon, or Linux (x64 or arm64).
 
-**Read only.** There are three exceptions, and each asks first. *Export to Fabric* publishes an app. *Create Semantic
-Model* makes a Power BI semantic model of a model file. *Upload Files…* writes files from your computer into a lakehouse's `Files/`. Opening a semantic model keeps it on your machine only.
+**What it writes.** SQL reads. It writes a lakehouse's tables only once you turn on *Allow Table Writes*, and
+`COPY` writes a file to a lakehouse's `Files/` unless you turn off *Allow Copy to Files*. Three commands write too,
+and each asks first: *Export to Fabric* publishes an app, *Create Semantic Model* makes a Power BI semantic model of
+a model file, and *Upload Files…* writes files from your computer into a lakehouse's `Files/`. Opening a semantic
+model keeps it on your machine only.
+
+How to report a security problem, and what is and isn't guarded: [SECURITY.md](SECURITY.md).
 
 How it works: [the website](https://djouallah.github.io/onelake_studio/architecture.html). Commands,
 settings and release notes: [the docs](https://djouallah.github.io/onelake_studio/docs/).

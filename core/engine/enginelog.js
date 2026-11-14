@@ -97,8 +97,11 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
   async function move() {
     const rows = await engine.readLog(last);
     if (!rows.length) return;
+    // Rows count as moved only once the log file has them: one that was busy gets them again next turn.
+    const was = { last, moved, asked };
     const fresh = take(rows);
-    if (maxBytes > 0) logs.add(fresh);
+    try { if (maxBytes > 0) logs.add(fresh); }
+    catch (e) { ({ last, moved, asked } = was); throw e; }
     if (moved > EMPTY_PAST_ROWS) {
       // What was logged while the rows above were being kept, read just before the log is emptied:
       // emptying takes everything, and a statement in neither read would never be in the Logs tab.

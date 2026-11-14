@@ -500,7 +500,20 @@ function createCore({
   const xmlaPortKey = `xmlaPort${dev ? '.dev' : ''}`, xmlaTokenKey = `xmlaToken${dev ? '.dev' : ''}`;
   const randomPort = () => 49152 + (randomBytes(2).readUInt16LE(0) % 16384);
   let xmlaServer = null, xmlaAddress = null;
-  async function startXmla({ create = false } = {}) {
+  // How long an address is waited for before it is given out anyway: a workbook that connects too early says so.
+  const XMLA_UP_MS = 5000;
+  // One start at a time: two callers in the same moment would otherwise each open a server.
+  let xmlaStarting = null;
+  async function startXmla(o = {}) {
+    if (xmlaAddress) return xmlaAddress;
+    if (xmlaStarting) {
+      const address = await xmlaStarting;
+      if (address || !o.create) return address;
+    }
+    xmlaStarting = startXmlaOnce(o).finally(() => { xmlaStarting = null; });
+    return xmlaStarting;
+  }
+  async function startXmlaOnce({ create = false } = {}) {
     if (process.platform !== 'win32') return null;
     if (xmlaAddress) return xmlaAddress;
     let port = memento.get(xmlaPortKey);
@@ -512,20 +525,26 @@ function createCore({
       await secrets.store(xmlaTokenKey, token);
       await memento.update(xmlaPortKey, port);
     }
-    const serve = p => {
-      xmlaAddress = { port: p, token };
-      xmlaServer = serveXmla({
+    // The address once something answers on it: given out before that, Excel (and `serve`'s caller) was
+    // sometimes refused the connection, and after a port was lost it was given the port that was lost.
+    const serve = p => new Promise(resolve => {
+      const address = { port: p, token };
+      const server = serveXmla({
         port: p, token, log,
         backend: { cube: c => agent.excelCube(c), query: (sql, o) => agent.excelQuery(sql, o) },
         // Something else took it: a new port. A workbook saved on the old one stops refreshing.
         onPortLost: () => {
           const next = randomPort();
           memento.update(xmlaPortKey, next);
-          serve(next);
+          resolve(serve(next));
         },
       });
-    };
-    serve(port);
+      xmlaServer = server;
+      server.listening.then(() => resolve(address));
+    });
+    const up = serve(port);
+    const late = new Promise(resolve => { const t = setTimeout(() => resolve({ port, token }), XMLA_UP_MS); if (t.unref) t.unref(); });
+    xmlaAddress = await Promise.race([up, late]);
     return xmlaAddress;
   }
   subscribe({ dispose: () => { if (xmlaServer) xmlaServer.dispose(); } });

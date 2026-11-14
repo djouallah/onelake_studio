@@ -651,3 +651,33 @@ test("Clear takes what says which tables are in use, and a table's time reads wi
   for (const name of ["table_use", "table_kept"]) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${name}`).get().n, 0, name);
   assert.equal(backend.keptAt("table\0w\0i.Lakehouse\0dbo\0a"), null);
 });
+
+test("a file a newer version wrote is left as it is: nothing is written to it, and this one remembers nothing", async t => {
+  const { open, file } = await setup(t);
+  const first = open();
+  await first.store.put("workspaces", ["a"]);
+  first.backend.close();
+  // The newer version's own table and its own schema number, as an update of the other app would leave them.
+  const newer = new DatabaseSync(file);
+  newer.exec("CREATE TABLE of_the_newer_version (x); INSERT INTO of_the_newer_version VALUES (1); PRAGMA user_version = 999");
+  const tables = () => { const d = new DatabaseSync(file); try { return d.prepare("SELECT name, sql FROM sqlite_master ORDER BY name").all(); } finally { d.close(); } };
+  newer.close();
+  const before = tables();
+
+  const said = [];
+  const older = open({ log: m => said.push(m) });
+  await assert.rejects(async () => older.backend.read("workspaces"), /was written by a newer OneLake Studio \(schema 999/);
+  // The store goes on with nothing kept, as when the file can't be read at all.
+  assert.equal(await older.store.peek("workspaces"), undefined);
+  await older.store.put("items", ["x"]);
+  assert.deepEqual(await older.store.peek("items"), ["x"], "this window still has what it read, in memory");
+  assert.equal(said.filter(m => /newer OneLake Studio/.test(m)).length, 1, `said once: ${said.join(" | ")}`);
+  older.backend.close();
+
+  assert.deepEqual(tables(), before, "not a table added, dropped or changed");
+  const after = new DatabaseSync(file);
+  t.after(() => after.close());
+  assert.equal(after.prepare("PRAGMA user_version").get().user_version, 999);
+  assert.equal(after.prepare("SELECT count(*) AS n FROM of_the_newer_version").get().n, 1);
+  assert.ok(!existsSync(`${file}.bad`), "and it was not set aside as a broken file");
+});

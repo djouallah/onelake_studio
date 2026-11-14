@@ -146,11 +146,12 @@ jobs:
         working-directory: fabric_app/rayfin/functions
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npx tsc --noEmit
+          # --build: the function reads the app's data schema, a project of its own that is built first.
+          npx tsc --build
 
   # Mistakes a reader misses: a name that is nothing, a key written twice, code no path reaches. Not
   # style, and nothing here formats. ESLint is installed beside the tree, not into it: the product has
-  # no use for it. Not one of the package job's needs until the tree is clean of what it finds.
+  # no use for it. The first run found Download CSV broken in every model's Visual: a key written twice.
   lint:
     runs-on: ubuntu-26.04
     steps:
@@ -318,7 +319,7 @@ jobs:
       - run: node scripts/function-bundle.mjs
 
   package:
-    needs: [test, checks, engine, cli-os, page, prepare]
+    needs: [test, checks, lint, engine, cli-os, page, prepare]
     runs-on: ubuntu-26.04
     strategy:
       # Every leg's failure is worth seeing in the same run; a release needs ALL of them green

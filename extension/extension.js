@@ -925,15 +925,24 @@ async function activateInner(context) {
         `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, files, table data and semantic model copies? They will be read from OneLake and Fabric again.`,
         { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
-      await onelake.clear();
-      await removeDir(modelsDir);
-      // This window hears nothing of its own Clear from the file.
-      core.onStoreCleared();
-      // The engine has the disk cache's files open and lists what was cleared: it goes first, and is
-      // rebuilt on the next open. The panel's tables live in that engine, so the panel goes with it.
-      closePanel();
-      await engines.resetEngine();
-      await removeDir(fileCacheDir);
+      try {
+        await onelake.clear();
+        await removeDir(modelsDir);
+        // This window hears nothing of its own Clear from the file.
+        core.onStoreCleared();
+        // The engine has the disk cache's files open and lists what was cleared: it goes first, and is
+        // rebuilt on the next open. Every tab goes with it, Logs and Performance too: they ask the engine
+        // every few seconds, which would start it again on the folder being deleted.
+        closeAllTabs();
+        await engines.resetEngine();
+        await removeDir(fileCacheDir);
+      } catch (e) {
+        // A file something still holds (Windows): what could be deleted is, and this says what stopped it.
+        log(`clear cache: ${(e && e.stack) || e}`);
+        tree.redraw();
+        vscode.window.showErrorMessage(`OneLake Studio: the cache was only partly cleared — ${e.message}. Close what may be using it and clear it again.`);
+        return;
+      }
       tree.redraw();
       vscode.window.showInformationMessage(
         `OneLake Studio: cleared ${fmtBytes(size)} of cached OneLake data.`);

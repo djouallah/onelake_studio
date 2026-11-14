@@ -500,7 +500,7 @@ Results show in the tab:
 - **Chart** ([`page/chart.js`](../page/chart.js)): draws the rows on screen. Nothing is queried again.
 - **Profile:** each column of the result, over every row the query returns (`SUMMARIZE`).
 - **Export…** writes every row to a CSV, Parquet or Excel file. The engine writes it, through VS Code's
-  save dialog. SQL typed by hand still cannot `COPY`.
+  save dialog. SQL typed by hand can `COPY` only to a lakehouse's `Files/` ([SQL writes](#sql-writes)).
 
 ## Semantic models
 
@@ -825,7 +825,9 @@ the same button on Explore's Model page when it is open there (`fabric.createSem
 Lake (refreshed once made) or DirectQuery (its SQL endpoint signed in to by SSO) (`createSemanticModel` in
 [`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), and nothing else: no app, no zip, no Report. One dialog asks which: its
 buttons are the two modes, and it says the workspace, the file, and whether a model of that name is there, whose
-definition is then replaced (*Update the semantic model …?*). The definition is TMSL made from the file
+definition is then replaced (*Update the semantic model …?*). A DirectQuery model's sign-in can be set only by its
+owner, so a model someone else owns has to be taken over: that is asked first (*Take it over?*), and a No leaves it
+with its owner, its definition updated and its sign-in as it was. The definition is TMSL made from the file
 ([`fabric_app/export/pbimodel.js`](../fabric_app/export/pbimodel.js)), written over the Fabric API ([`fabric_app/export/fabricmodel.js`](../fabric_app/export/fabricmodel.js)).
 Direct Lake takes no calculated column: a model with one is refused before anything is written, and the message says to
 make it DirectQuery. The workspace's semantic models are listed again after. The command line's
@@ -896,6 +898,11 @@ and the command line's `export` takes no `--mode`.
   the owner's rights. On a semantic model it is the other way round (below).
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
   local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
+- **A file from another computer asks first.** The local copy names the app it is published over, and the sign-in
+  redirects that app keeps. Both are taken at its word only for an app this computer published (their ids are kept
+  in the window's own state, `exportedItems`). Any other file is asked about before it is published, with the
+  redirects it would add shown: it would replace an app of yours with its own pages. Asked once: published, the app
+  is this computer's. An app exported by a version from before this is asked about once too.
 - **Saving over the file rewrites it**, from this Explore, its report kept: nothing is asked about what changed in it.
   An edit made in the file (by a person or an agent) is published by opening the `.fabricapp` and exporting there,
   which publishes it as it is.
@@ -1051,7 +1058,7 @@ local pipe or socket ([`cli/bridge.js`](../cli/bridge.js)). The extension answer
   files are VS Code's for this extension. The tenant and the proxy come from VS Code's `settings.json`.
 - **Its own engine:** VS Code's server has its session token in VS Code's secret storage, so this one is a server of its
   own, sharing the catalog and the log. The lake can be open in one process only, so it has a lake of its own,
-  `lake-standalone`, beside VS Code's in the same cache folder. Its token is in a file in this user's profile, and opens a
+  `lake-standalone`, beside VS Code's in the same cache folder. Its token is in a plain file in this user's profile, and opens a
   local port, no more.
 - **Nothing stays running:** no sync and no idle job. The process ends with the answer, and its server a minute after.
 - **Not here:** `export`, which asks for an OK in VS Code. Exit code 3 says so.
@@ -1206,6 +1213,10 @@ every window. The rest apply at once.
 
 ## Limitations
 
+- **A statement can read any `https://` address.** So SQL someone else wrote, or an agent wrote after reading
+  hostile text, can send data out in a URL. The OneLake token goes only to OneLake. See [SECURITY.md](https://github.com/djouallah/onelake_studio/blob/main/SECURITY.md).
+- **The guard on SQL is in the window, not in the engine's process.** Whatever holds the engine's session token can
+  send it any SQL. Every program running as you is trusted with that already.
 - **A lakehouse with no schemas of its own lists its tables under `dbo`**, the namespace OneLake's catalog
   reports for those items.
 - **An item its catalog cannot serve shows an error rather than a table list.** There is no DFS fallback.

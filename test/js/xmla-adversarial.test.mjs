@@ -13,7 +13,8 @@ const { buildCube } = require("../../xmla/cube.js");
 const { parseSelect } = require("../../xmla/mdx.js");
 const { literal } = require("../../xmla/cellset.js");
 const { discover } = require("../../xmla/rowsets.js");
-const { createHandler } = require("../../xmla/server.js");
+const { createHandler, serveXmla, PING } = require("../../xmla/server.js");
+const net = require("node:net");
 
 const timed = run => { const t0 = Date.now(); run(); return Date.now() - t0; };
 
@@ -194,4 +195,46 @@ test("through the port: a body past the limit is cut off, not kept", async () =>
     assert.ok(r.error || r.status !== 200, `it was not answered as a request: ${JSON.stringify(r)}`);
     assert.ok(process.memoryUsage().rss - before < 200 * 1024 * 1024, "and its megabytes were not all held");
   });
+});
+
+// --- the address, given out only once it answers ---
+
+const freePort = () => new Promise(resolve => {
+  const s = net.createServer();
+  s.listen(0, "127.0.0.1", () => { const { port } = s.address(); s.close(() => resolve(port)); });
+});
+
+test("the endpoint says it is up only once it answers, and a second window on the same address hears so too", async () => {
+  const port = await freePort();
+  const token = "the-token";
+  const ping = async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/${token}`);
+    return [res.status, await res.text()];
+  };
+  const first = serveXmla({ port, token, backend: refuses });
+  try {
+    assert.equal(await first.listening, port);
+    // Asked the moment it says so: no connection refused, which is what a caller told too early got.
+    assert.deepEqual(await ping(), [200, PING]);
+    // Another window, the same port and token: the first goes on serving, and the second knows the address answers.
+    let lost = 0;
+    const second = serveXmla({ port, token, backend: refuses, onPortLost: () => lost++ });
+    try {
+      assert.equal(await Promise.race([second.listening, new Promise(r => setTimeout(() => r("never"), 5000))]), port);
+      assert.equal(lost, 0);
+    } finally { second.dispose(); }
+  } finally { first.dispose(); }
+});
+
+test("a port something else holds is said to be lost, and never said to be up", async () => {
+  const other = net.createServer(sock => sock.destroy());
+  await new Promise(r => other.listen(0, "127.0.0.1", r));
+  const { port } = other.address();
+  let lost = 0;
+  const server = serveXmla({ port, token: "t", backend: refuses, onPortLost: () => lost++ });
+  try {
+    const up = await Promise.race([server.listening, new Promise(r => setTimeout(() => r("not up"), 4000))]);
+    assert.equal(up, "not up");
+    assert.equal(lost, 1);
+  } finally { server.dispose(); other.close(); }
 });
