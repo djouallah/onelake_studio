@@ -22,13 +22,15 @@
 
 const { relative, resolve, isAbsolute } = require('node:path');
 // A target from the page, reduced to the strings it may carry.
-const { sqlNameOf, ONELAKE_FILE_URL } = require('./names');
+const { sqlNameOf, strip, ONELAKE_FILE_URL } = require('./names');
 const { deltaTableOf } = require('./sqltables');
 const { tableFacts, findings, lakehouseHealth } = require('./lake/health');
 
 const lhOf = x =>({ workspace: String(x.workspace), item: String(x.item) });
 const tableOf = x => ({ schema: String(x.schema || ''), table: String(x.table) });
 const RANGE = /^bytes=\d+-\d*$/;
+// What a tab's Save writes back: a .sql file in the SQL box, a model file on its Model page.
+const SAVABLE = /\.(sql|bim|ya?ml)$/i;
 
 // The engine's own methods the page may call. Everything else on the engine — opening a
 // table by metadata location, writing a temp file — is the host's to do, below.
@@ -54,6 +56,8 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        text on the clipboard (the grid's copies)
  * @param {(x: {name: string, sql: string}) => Promise<{name: string, path: string}>} [o.saveQuery]
  *        Save Query: the box's SQL under Queries, over the one named, else as a new "Query N"
+ * @param {(x: {disk?: string, workspace?: string, path?: string, text: string}) => Promise<void>} [o.saveFileText]
+ *        Save: a file a tab opened, written back — on this machine (disk), or in a lakehouse's Files/
  * @param {(x: {sql: string, name: string|null}) => Promise<void>} [o.saveDraft]
  *        the box's text, for the next panel
  * @param {(name: string) => Promise<string|null>} [o.askVariable]
@@ -66,7 +70,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, openInExcel = null, offlineState = null, setOffline = null,
-                             nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
+                             nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveFileText = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -255,6 +259,22 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'host.saveQuery': async x => {
       if (!saveQuery) throw new Error('saving queries is not available here');
       return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? '') });
+    },
+    // Save: the text of a file a tab opened, back over that file. Only a .sql or a model file; on this machine
+    // only one the host opened (it says which), in OneLake only one in a lakehouse's Files/.
+    'host.saveFileText': async x => {
+      if (!saveFileText) throw new Error('saving files is not available here');
+      const text = String((x && x.text) ?? '');
+      if (x && x.disk) {
+        const disk = String(x.disk);
+        if (!SAVABLE.test(disk)) throw new Error(`${disk}: only a .sql, .bim or .yaml file is saved here`);
+        return saveFileText({ disk, text });
+      }
+      const path = strip((x && x.path) ?? '');
+      if (!x || !x.workspace || !SAVABLE.test(path) || !/^[^/]+\/Files\/./.test(path) || path.split('/').some(s => s === '.' || s === '..')) {
+        throw new Error(`${path || 'that file'}: only a .sql, .bim or .yaml file in a lakehouse's Files/ is saved to OneLake`);
+      }
+      return saveFileText({ workspace: String(x.workspace), path, text });
     },
     'host.saveDraft': async x => {
       if (saveDraft) await saveDraft({ sql: String((x && x.sql) ?? ''), name: x && x.name ? String(x.name) : null });

@@ -95,7 +95,19 @@ section.modelOpen #chartBtn { display: none; }
 .text-file-note[hidden] { display: none; }
 .text-file-note .swatch { display: inline-block; width: 3px; height: 0.9em; margin-right: 0.45rem; vertical-align: -0.1em;
   background: var(--vscode-editorWarning-foreground, #cca700); }
-.text-file-note:not([hidden]) + .text-file { margin-top: 0.4rem; }
+.text-file-note:not([hidden]) + .text-file, .text-file-note:not([hidden]) + .text-edit { margin-top: 0.4rem; }
+/* A file written in: the box over the coloured <pre>, one size with it, its own text clear and its caret shown.
+   The <pre> sizes the layer both are in, so the box never scrolls apart from it; the frame scrolls a long line. */
+.text-edit { margin: var(--gap) var(--gutter) 1.5rem; overflow-x: auto; }
+.text-edit[hidden] { display: none; }
+.text-layer { position: relative; width: max-content; min-width: 100%; }
+.text-layer > .text-file { margin: 0; overflow: visible; min-height: 40vh; box-sizing: border-box; }
+.text-box { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; margin: 0; resize: none; overflow: hidden;
+  font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 13px; line-height: 1.45;
+  white-space: pre; tab-size: 4; padding: 0.75rem 1rem; border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: transparent; caret-color: var(--text); outline: none; }
+.text-box:focus-visible { border-color: var(--vscode-focusBorder, var(--accent)); }
+.text-box::selection { background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.6)); color: transparent; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
 .model-diagram { padding: 0.8rem; display: flex; position: relative; }
 /* Not clipped to its viewBox: a card dragged past the drawing's edge stays on screen, and the drawing grows to it when it is let go (fit). */

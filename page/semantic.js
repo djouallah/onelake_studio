@@ -245,6 +245,13 @@ export async function defineView(name, path, text, mode = "replace", modules = n
            lakeTables: Object.fromEntries([...lake].map(([table, l]) => [table, l.ident])) };
 }
 
+// Whether a model file's text opens as a model, with nothing defined: throws what opening it would
+// say. A model file's Save asks it first, so a file is never written into one that doesn't open.
+export async function checkModel(fileName, text, modules = null) {
+  const mods = await ready(modules);
+  mods.tmslToModel(bimOf(fileName, text, mods));
+}
+
 // A model opened from a file, in its workspace: under the semantic model's own name when it is
 // one (the tree's click), else the file's — ws.nem_semanticmodel for nem.bim or nem.yaml.
 export const registerModel = (fileName, text, modules = null, schema = null, name = null) =>

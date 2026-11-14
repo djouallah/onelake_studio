@@ -157,13 +157,15 @@ export function foreignDialects(text) {
 
 /**
  * The HTML to put in a <pre>, or null when the file is too large to colour and is shown as
- * stored. `ext` is the file's extension: a .bim is JSON, anything else YAML.
+ * stored. `ext` is the file's extension: a .bim is JSON, anything else YAML. `asIs`: a .bim's
+ * text as written, not re-indented — under a box it is being written in, the two must match.
  */
-export function prettyModelText(text, ext = '') {
+export function prettyModelText(text, ext = '', { asIs = false, max = PRETTY_MAX } = {}) {
   const s = String(text);
-  if (s.length > PRETTY_MAX) return null;
+  if (s.length > max) return null;
   const json = /^\.?bim$/i.test(ext) || /^\s*[{[]/.test(s);
   if (!json) return prettyYaml(s);
+  if (asIs) return prettyJson(s);
   // Parsed, an integer past 2^53 would come back as another number: such text is coloured as it is.
   let indented = s;
   if (!/\d{16}/.test(s)) {

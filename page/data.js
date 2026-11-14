@@ -711,6 +711,8 @@ export function createEngine({
   const copyText = text => callHost("host.copyText", [{ text }]);
   // Save Query: the box's SQL under Queries, over the one named, else as a new "Query N".
   const saveQuery = (name, sql) => callHost("host.saveQuery", [{ name, sql }]);
+  // Save: a file the tab opened, its text written back — { disk } on this machine, or { workspace, path } in Files/.
+  const saveFileText = x => callHost("host.saveFileText", [x]);
   // The box's text, for the next panel.
   const saveDraft = draft => callHost("host.saveDraft", [draft]);
   // A query variable's value, asked of the user: text, or null when dismissed.
@@ -718,5 +720,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, openTable, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

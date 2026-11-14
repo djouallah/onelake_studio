@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Edit and save a file you open.** A `.sql` file opened from disk or from a lakehouse's `Files/` has **Save** in place
+  of Save Query, which writes the box back over that file; Save Query made a copy under *Queries*, over any query of
+  the same name. A `.bim` or Ossie `.yaml` model file is written in on Model's YAML (or BIM), still coloured, and
+  **Save** writes it back and opens the model again from it. Text that isn't a model is not saved. Saving to OneLake
+  needs a connection.
+
 ## 0.2.23
 
 - **Table Health doesn't ask an Iceberg table for V-Order,** which only a Delta table's files can have.

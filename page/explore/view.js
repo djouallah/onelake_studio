@@ -231,6 +231,14 @@ export function mountExplore(root, ctx) {
   const viewTab = (label, asText) => el('button', { type: 'button', class: 'subtab', role: 'tab', onclick: () => showText(asText) }, label);
   const diagramTab = viewTab('Diagram', false), fileTab = viewTab(/^bim$/i.test(ctx.ext || '') ? 'BIM' : 'YAML', true);
   const textPre = el('pre', { class: 'text-file', hidden: true });
+  // A file that can be saved (ctx.saveText) is written in: a box over the coloured <pre>, its own text clear, the
+  // <pre> coloured again as it is typed. Save writes it back.
+  const editable = ctx.text != null && !!ctx.saveText;
+  const textBox = editable ? el('textarea', { class: 'text-box', spellcheck: 'false', wrap: 'off', 'aria-label': `${ctx.name}'s file` }) : null;
+  const textEdit = editable ? el('div', { class: 'text-edit', hidden: true }, el('div', { class: 'text-layer' }, textPre, textBox)) : null;
+  if (editable) { textPre.hidden = false; textPre.setAttribute('aria-hidden', 'true'); }
+  const saveBtn = editable ? btn('Save', () => saveFile(), true) : null;
+  if (saveBtn) { saveBtn.title = 'Write this text back to the file (Ctrl+S)'; saveBtn.disabled = true; saveBtn.hidden = true; }
   // Over the file, when it has custom_extensions or a dialect other than Ossie SQL: what its amber
   // lines are (pretty.js tk-ext).
   const ossie = ctx.text != null && !/^bim$/i.test(ctx.ext || '');
@@ -245,8 +253,8 @@ export function mountExplore(root, ctx) {
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
   const modelActions = modelSwitch || createBtn || excelBtn
-    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, createBtn, excelBtn) : null;
-  const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textPre);
+    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, excelBtn) : null;
+  const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textEdit || textPre);
 
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
@@ -1036,14 +1044,73 @@ export function mountExplore(root, ctx) {
     }
     if (on && !coloured) {
       coloured = true;
-      const html = prettyModelText(ctx.text, ctx.ext);
-      if (html == null) textPre.textContent = ctx.text; else textPre.innerHTML = html;
+      if (editable) {
+        textBox.value = ctx.text;
+        colourBox();
+      } else {
+        const html = prettyModelText(ctx.text, ctx.ext);
+        if (html == null) textPre.textContent = ctx.text; else textPre.innerHTML = html;
+      }
     }
     modelPage.hidden = on;
-    textPre.hidden = !on;
+    if (editable) { textEdit.hidden = !on; saveBtn.hidden = !on; } else textPre.hidden = !on;
     textNote.hidden = !on || !(vendors.length || dialects.length) || !textPre.querySelector('.tk-ext');
   }
-  showText(false);
+
+  // --- The file, written in (editable) ---
+  // What the box holds, as the file was: a textarea's value has \n for every line end, so a file written with
+  // \r\n is written back with them.
+  const crlf = editable && /\r\n/.test(ctx.text);
+  const original = editable ? String(ctx.text).replace(/\r\n?/g, '\n') : '';
+  const changed = () => textBox.value !== original;
+  // The <pre> under the box, as the box's text: coloured as written, up to a size whose colouring keeps up with
+  // typing; past it, plain. A last empty line gets a line of its own, so the two stay one height.
+  const LIVE_COLOUR_MAX = 512 * 1024;
+  let colourTimer = null;
+  function colourBox() {
+    clearTimeout(colourTimer);
+    const text = textBox.value;
+    const html = prettyModelText(text, ctx.ext, { asIs: true, max: LIVE_COLOUR_MAX });
+    if (html == null) textPre.textContent = text + '\n'; else textPre.innerHTML = html + '\n';
+  }
+  if (editable) {
+    textBox.addEventListener('input', () => {
+      // At once while it is quick; a big file's colours a moment after the typing stops.
+      if (textBox.value.length < 64 * 1024) colourBox(); else { clearTimeout(colourTimer); colourTimer = setTimeout(colourBox, 150); }
+      saveBtn.disabled = !changed();
+    });
+    let leaving = false;
+    textBox.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); }
+      else if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        // Tab indents here, as in the SQL box, so Esc then Tab is how the keyboard leaves it.
+        if (leaving) { leaving = false; return; }
+        e.preventDefault();
+        if (!document.execCommand('insertText', false, '  ')) textBox.setRangeText('  ', textBox.selectionStart, textBox.selectionEnd, 'end');
+        textBox.dispatchEvent(new Event('input'));
+      }
+      leaving = e.key === 'Escape';
+    });
+  }
+  // Save: the host checks it opens as a model, writes it, and opens the model again from it — this view goes.
+  // One that doesn't open is not written, and stays here to be put right.
+  let savingFile = false;
+  async function saveFile() {
+    if (!editable || savingFile || !changed()) return;
+    savingFile = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await ctx.saveText(crlf ? textBox.value.replace(/\n/g, '\r\n') : textBox.value);
+    } catch (e) {
+      setStatus(`Not saved: ${e.message}`, 'error');
+    } finally {
+      savingFile = false;
+      saveBtn.textContent = 'Save';
+      saveBtn.disabled = !changed();
+    }
+  }
+  showText(!!ctx.openOnText && ctx.text != null);
 
   // --- Running: compiled once, answered from this view's results when it ran before ---
   const compile = text => compileModelSql(ctx.compiler, text, ctx.name);

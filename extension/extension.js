@@ -153,6 +153,8 @@ let nameModelTables = null;
 let openTableByName = null;
 // Save Query, from the panel's SQL box. Set by activateInner.
 let saveQuery = null;
+// Save, from a tab with a file it opened: the SQL box's .sql file, a Model page's model file. Set by activateInner.
+let saveFileText = null;
 
 async function show(context, { newTab = false, key = null, ...options } = {}) {
   if (!newTab && revealPanel()) return true;
@@ -213,6 +215,7 @@ async function show(context, { newTab = false, key = null, ...options } = {}) {
         await vscode.window.showTextDocument(doc, { preview: false });
       },
       saveQuery: x => (saveQuery ? saveQuery(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      saveFileText: x => (saveFileText ? saveFileText(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       saveDraft: x => memento.update(QUERY_DRAFT_KEY, x),
       askVariable: askQueryVariable,
       openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -682,6 +685,25 @@ async function activateInner(context) {
     }
   }
 
+  // The .sql and model files openPath opened: the only files on this machine a tab's Save writes.
+  const openedFiles = new Set();
+  // Save: a tab's text back over the file it opened. On this machine, as it is; in a lakehouse's Files/, beside
+  // it and renamed into place (onelakewrite.js, as Upload writes), and its folder listed again, so the tree and
+  // the next open read this version, not the bytes kept of the last.
+  saveFileText = async ({ disk, workspace, path, text }) => {
+    if (disk) {
+      if (!openedFiles.has(pathKey(disk))) throw new Error(`${basename(disk)} was not opened here, so it is not written here`);
+      await fsp.writeFile(disk, text, 'utf8');
+      return;
+    }
+    if (connectivity.offline()) throw new Error('Saving to OneLake needs a connection.');
+    const over = await core.writer.stat(workspace, path);
+    await core.writer.writeFile(workspace, path, Buffer.from(text, 'utf8'), { over });
+    const [item, , ...rest] = path.split('/');
+    await onelake.files({ workspace, item }, rest.slice(0, -1).join('/'), { fresh: true })
+      .catch(e => { if (out) out.appendLine(`${workspace}/${path} was saved, and its folder could not be listed again — ${(e && e.message) || e}`); });
+  };
+
   // A file from disk: VS Code's Explorer or an editor's title bar, a .fabricapp's editor, the desktop
   // app's File > Open… or a double-click. A .fabricapp opens its model on the Report page, drawing this
   // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it; a .sql file
@@ -698,10 +720,12 @@ async function activateInner(context) {
       if (/\.fabricapp$/i.test(fsPath)) return await openAppFile(fsPath);
       if (/\.sql$/i.test(fsPath)) {
         const sql = await fsp.readFile(fsPath, 'utf8');
-        await openInPanel({ type: 'query', name: name.replace(/\.sql$/i, ''), sql }, name, pathKey(fsPath));
+        openedFiles.add(pathKey(fsPath));
+        await openInPanel({ type: 'query', name: name.replace(/\.sql$/i, ''), sql, file: fsPath }, name, pathKey(fsPath));
         return;
       }
       const found = await core.models.modelFile(fsPath);
+      openedFiles.add(pathKey(fsPath));
       const workspace = found.workspace || (found.choices && found.choices.length === 1 ? found.choices[0] : null);
       if (!workspace) {
         throw new Error(`${name} names its tables <lakehouse>.<schema>.<table>, and ${found.choices && found.choices.length

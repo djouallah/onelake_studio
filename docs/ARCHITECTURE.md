@@ -469,7 +469,8 @@ once and counts, though the answer still comes through the host.
 - **The box holds one query.** The text last written comes back when **Open OneLake Studio** opens a tab with
   none open, in the next window too.
 - **New Query** (the **+** on *Queries*) opens a new tab with `SHOW ALL TABLES` in its box, not run. A saved query
-  opens in a new tab too. **Save Query** (Ctrl+S) writes it back, or keeps a new one under *Queries* as `Query N`.
+  opens in a new tab too. **Save Query** (Ctrl+S) writes it back, or keeps a new one under *Queries* as `Query N`. A `.sql`
+  file's box has **Save** in its place, which writes the box back over that file ([Opening files from disk](#opening-files-from-disk)).
 - **Run** (Ctrl+Enter) runs the statement under the cursor, or the selection. A selection with several statements
   runs each in turn, in order, and stops at the first that fails, with the cursor on it; the status line says which
   one is running (`2/3 · …`), and the last one's rows are shown. **Plan** shows where one statement spends its time.
@@ -573,7 +574,7 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 
 A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
-- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Create
+- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Save (a model file it can write back, on YAML only), Create
   Semantic Model (a model file only) and Open in Excel at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
@@ -752,8 +753,14 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 A model file, an app's file or a `.sql` file on this machine opens in a tab, as one from the tree does (`openPath` in
 [`extension/extension.js`](../extension/extension.js), the command `onelakeStudio.openPath`).
 - **A `.sql` file** opens in the SQL box, not run, in a tab named after it, as a saved query does. A file open already
-  brings its tab forward. **Save Query** keeps it under *Queries*, as any query. A `.sql` file in a lakehouse's `Files/`
-  opens in the box the same way, from the tree.
+  brings its tab forward. A `.sql` file in a lakehouse's `Files/` opens in the box the same way, from the tree.
+- **Save** (Ctrl+S) writes a file back where it was opened from: a `.sql` file's box, and a model file's text on Model's
+  YAML (or BIM), which is written in there (`host.saveFileText`). On this machine, only a file `openPath` opened, and
+  offline too. In a lakehouse's `Files/`, it is written beside the file and renamed into place, as Upload writes
+  ([`fabric_app/export/onelakewrite.js`](../fabric_app/export/onelakewrite.js)), and its folder is listed again; that
+  needs a connection. A model's text that doesn't open as a model is not written, and says why. Once saved, the
+  model opens again from the new text. A semantic model's local copy and an app's file are read only: Fabric's copy
+  is the model, and Refresh reads it again.
 - **A model file**, a `.bim`, or a `.yaml`/`.yml` that is an Ossie model (a top-level `version:` and `datasets:`): its
   model, its tables OneLake's by the names in it, in the workspace that holds them (`modelFile` in
   [`core/models/models.js`](../core/models/models.js)). One whose tables more than one workspace could hold says so, and is opened from

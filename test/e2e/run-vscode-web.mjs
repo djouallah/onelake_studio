@@ -6,7 +6,7 @@
 //
 // CI's "browser" job runs it (.github/workflows/extension.yml), which sets up the server and hosts.
 import { spawn, execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -462,6 +462,25 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     check("the file is there", existsSync(join(folder, "Query 1.sql")));
     const again = await act(() => f.locator("#saveQueryBtn").click());
     check("saving again is the same query", /Saved as Query 1/.test(again.status) && !existsSync(join(folder, "Query 2.sql")), again.status);
+  });
+
+  await step("A .sql file from disk: Save writes it back, and no query is kept for it", async () => {
+    // Named as a saved query is: Save Query once wrote over that query.
+    const file = join(home, "kept.sql");
+    writeFileSync(file, "select 'on disk' as kept", "utf8");
+    const before = readFileSync(saved, "utf8");
+    await drive("exec", { command: "onelakeStudio.openPath", args: [file] });
+    await until("the file in the box", async () => {
+      const x = await panelState();
+      return /on disk/.test(x.box) && x;
+    }, 15000);
+    const f = await panel();
+    check("the button says Save", (await f.locator("#saveQueryBtn").textContent()) === "Save");
+    await f.locator("#sqlEditor").fill("select 'edited' as kept");
+    const r = await act(() => f.locator("#sqlEditor").press("Control+s"));
+    check("it says so", /Saved kept\.sql/.test(r.status), r.status);
+    check("the file holds it", readFileSync(file, "utf8") === "select 'edited' as kept", readFileSync(file, "utf8"));
+    check("the saved query of that name is as it was", readFileSync(saved, "utf8") === before, readFileSync(saved, "utf8"));
   });
 
   await step("Tree: a table click adds a tab with its SQL, not run, and the last tab is left as it was", async () => {

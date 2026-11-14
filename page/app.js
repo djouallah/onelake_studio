@@ -247,7 +247,8 @@ async function selectFile(file) {
       const text = new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
       if (my !== selSeq) return;
       activeFile = null;
-      openInBox(text, file.name.replace(/\.sql$/i, ''));
+      // Its Save writes it back there.
+      openInBox(text, file.name.replace(/\.sql$/i, ''), { workspace: lakehouse.workspace, path: file.path, name: file.name });
     } catch (e) {
       if (my === selSeq) setStatus(`Could not open ${file.name}: ${e.message}`, 'error');
     }
@@ -348,7 +349,7 @@ function closeModelView() {
 // A .bim from Files/ (read through the host), or the .yaml the extension downloaded from
 // Fabric and hands over as text (open-model): the same view either way. An Ossie .yaml from
 // Files/ comes with its text already read (selectFile looked), and is still a OneLake file.
-async function openModelView(file, text = null, { fromOneLake = text == null } = {}) {
+async function openModelView(file, text = null, { fromOneLake = text == null, openOnText = false } = {}) {
   closeModelView();
   closeDb();
   const my = ++selSeq;
@@ -438,7 +439,21 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
         stamp: () => engine.modelReportStamp({ workspace: m.schema, model: m.view }),
         save: (spec, stamp) => engine.modelReportSave({ workspace: m.schema, model: m.view, spec, stamp }),
       },
-      openOn: file.openOn || 'model',
+      openOn: openOnText ? 'model' : file.openOn || 'model',
+      openOnText,
+      // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's
+      // local copy (Fabric's is the model, and Refresh reads it again) nor an app's file (its model is in a zip).
+      saveText: !file.appFile && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+        ? async edited => {
+          // A text that doesn't open as a model is not written: the file stays one that opens.
+          await semantic.checkModel(file.name, edited);
+          await engine.saveFileText(fromOneLake ? { workspace: lakehouse.workspace, path: file.path, text: edited }
+            : { disk: file.path, text: edited });
+          // The model again, from what was saved, on its file.
+          await openModelView(file, edited, { fromOneLake, openOnText: true });
+          setStatus(`Saved ${file.name}.`, 'ok');
+        }
+        : undefined,
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
@@ -1547,6 +1562,15 @@ function enterQuery(title) {
 // The SQL box: written, run and saved here, so a query never opens a .sql file, and nothing else
 // in VS Code has a say in it. It holds one query: the saved one it came from, when it did.
 let activeQuery = null;
+// Or the .sql file it came from, from disk ({ disk }) or a lakehouse's Files/ ({ workspace, path }), with its
+// name: Save writes the box back over it, and it is no saved query.
+let boxFile = null;
+function setBoxFile(file) {
+  boxFile = file;
+  const b = $('saveQueryBtn');
+  b.textContent = file ? 'Save' : 'Save Query';
+  b.title = file ? `Write the box's SQL back to ${file.name} (Ctrl+S)` : "Keep the box's SQL under Queries in the OneLake sidebar (Ctrl+S)";
+}
 const sameName = (a, b) => a != null && String(a).toLowerCase() === String(b).toLowerCase();
 function nameBoxQuery(name) {
   activeQuery = name;
@@ -1579,6 +1603,7 @@ function putInBox(sql) {
   typeInBox(box, sql);
   clearTimeout(draftTimer);     // what was put here isn't a draft to keep
   nameBoxQuery(null);
+  setBoxFile(null);
   box.setSelectionRange(0, 0);
 }
 // What was clicked, as SQL to start from: a click isn't a request to type, so the cursor stays where
@@ -1589,10 +1614,13 @@ function offerInBox(sql) {
   if (box.value.trim() && box.value !== offered) return;
   box.value = offered = sql;
   activeQuery = null;
+  setBoxFile(null);
 }
-function openInBox(sql, name) {
+// `file`: the .sql file the text is, which Save writes back (setBoxFile).
+function openInBox(sql, name, file = null) {
   putInBox(sql);
-  nameBoxQuery(name);
+  nameBoxQuery(file ? null : name);
+  setBoxFile(file);
   $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
   setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.` : 'Run ▶ (Ctrl+Enter) runs the statement under the cursor.');
 }
@@ -1685,9 +1713,19 @@ async function runOne(span, { plan = false, text }) {
   }
 }
 // Save Query: over the query the box came from, else as the next free "Query N", with nothing
-// asked (Rename in the tree names it).
+// asked (Rename in the tree names it). Save, for a .sql file: back over that file.
 async function saveBox() {
   const sql = $('sqlEditor').value;
+  if (boxFile) {
+    const { name, ...where } = boxFile;
+    try {
+      await engine.saveFileText({ ...where, text: sql });
+      setStatus(`Saved ${name}.`, 'ok');
+    } catch (e) {
+      setStatus(`Could not save ${name}: ${e.message}`, 'error');
+    }
+    return;
+  }
   if (!sql.trim()) { setStatus('Nothing to save: write a query first.'); return; }
   try {
     const saved = await engine.saveQuery(activeQuery || '', sql);
@@ -1868,7 +1906,10 @@ window.addEventListener('message', async e => {
     }
     // SQL for the box, from the tree: a new query, a saved one, Select Top Rows (run at once).
     // A .sql file from disk too.
-    else if (m.type === 'query') openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null);
+    else if (m.type === 'query') {
+      openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null,
+                m.file ? { disk: String(m.file), name: String(m.file).split(/[\\/]/).pop() } : null);
+    }
     else if (m.type === 'run-sql') { openInBox(String(m.sql ?? ''), null); await runBox(); }
     // A lakehouse's Table Health: every table this machine holds, from the lake.
     else if (m.type === 'lakehouse-health') await showLakehouseHealth(m);

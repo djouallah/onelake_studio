@@ -53,6 +53,27 @@ test("Create Semantic Model: a page names a model file in OneLake, and hears how
   await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["fabric.createSemanticModel"]({ workspace: "ws", path: "p" }), /not available here/);
 });
 
+test("Save: a page names a .sql or model file on disk or in a lakehouse's Files/, and nothing else", async () => {
+  const asked = [];
+  const methods = createHostMethods({ onelake: {}, engine: {}, saveFileText: async x => { asked.push(x); } });
+  const save = x => methods["host.saveFileText"](x);
+  await save({ disk: "C:\\work\\q.sql", text: "select 1", extra: "dropped" });
+  await save({ workspace: "ws", path: "/lh.Lakehouse/Files/models/sales.yaml", text: "version: 1" });
+  await save({ workspace: "ws", path: "lh.Lakehouse/Files/sales.bim" });
+  assert.deepEqual(asked, [
+    { disk: "C:\\work\\q.sql", text: "select 1" },
+    { workspace: "ws", path: "lh.Lakehouse/Files/models/sales.yaml", text: "version: 1" },
+    { workspace: "ws", path: "lh.Lakehouse/Files/sales.bim", text: "" },
+  ]);
+  await assert.rejects(save({ disk: "C:\\Users\\me\\.ssh\\config", text: "x" }), /only a \.sql, \.bim or \.yaml file/);
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Tables/dbo/t/x.sql", text: "x" }), /in a lakehouse's Files\//);
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Files/../Tables/x.sql", text: "x" }), /in a lakehouse's Files\//);
+  await assert.rejects(save({ path: "lh.Lakehouse/Files/x.sql", text: "x" }), /in a lakehouse's Files\//, "no workspace");
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Files/x.csv", text: "x" }), /in a lakehouse's Files\//);
+  assert.equal(asked.length, 3, "nothing refused reached the host");
+  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["host.saveFileText"]({ disk: "q.sql" }), /not available here/);
+});
+
 test("a model's tables reach the host as the page names them: by GUIDs, or by lakehouse name in a workspace", async () => {
   const asked = [];
   const methods = createHostMethods({ onelake: {}, engine: {}, nameTables: async list => { asked.push(...list); return list.map(() => "x"); } });
