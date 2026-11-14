@@ -127,16 +127,16 @@ export function errorOffset(message, sql) {
 // Query variables. DuckDB keeps them: a tab's statements run on one DuckDB session of its own, so SET VARIABLE goes
 // to the engine as written, and getvariable('name') or $name in a later statement reads it there. The page only
 // keeps which names this tab has set, so one never set is asked for the first time a statement reads it.
-const SET_VARIABLE = /^\s*(set|reset)\s+variable\s+("(?:[^"]|"")+"|[A-Za-z_]\w*)/i;
+const SET_VARIABLE = /^\s*(set|reset)\s+variable\s+("(?:[^"]|"")+"|[A-Za-z_]\w*)(?:\s*(?:=|to)\s*([\s\S]+?))?\s*;?\s*$/i;
 const GET_VARIABLE = /getvariable\s*\(\s*'((?:[^']|'')*)'\s*\)/gi;
-/** The variable a statement sets or resets, { name, reset }, or null for any other (one statement only). */
+/** The variable a statement sets or resets, { name, reset, value }, or null for any other (one statement only). */
 export function setVariable(sql) {
   const text = String(sql);
   const list = statements(text);
   if (list.length !== 1) return null;
   const m = SET_VARIABLE.exec(withoutComments(text.slice(list[0].start, list[0].end)));
   if (!m) return null;
-  return { name: m[2].startsWith('"') ? m[2].slice(1, -1).replace(/""/g, '"') : m[2], reset: m[1].toLowerCase() === 'reset' };
+  return { name: m[2].startsWith('"') ? m[2].slice(1, -1).replace(/""/g, '"') : m[2], reset: m[1].toLowerCase() === 'reset', value: (m[3] || '').trim() };
 }
 // `sql` with its -- and /* */ comments removed, quotes kept as they are.
 function withoutComments(sql) {

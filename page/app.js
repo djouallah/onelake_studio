@@ -1714,7 +1714,7 @@ async function runOne(span, { plan = false, text }) {
     if (ok && set) {
       if (set.reset) variables.delete(set.name.toLowerCase());
       else variables.add(set.name.toLowerCase());
-      setStatus(`${set.reset ? 'Reset' : 'Set'} ${set.name}.`, 'ok');
+      setStatus(set.reset ? `${set.name} reset.` : `${set.name} = ${set.value}`, 'ok');
     }
     // The cursor goes where DuckDB says the error is, as the statement is written. Not a
     // selection: the next Ctrl+Enter runs the statement again, not one word of it.

@@ -35,9 +35,9 @@ test("DuckDB's LINE/caret is found in the statement as written, comments and all
 });
 
 test("query variables: SET VARIABLE names one, getvariable() and $name read one, a typed value is quoted", () => {
-  assert.deepEqual(q.setVariable("SET VARIABLE year = 2024;"), { name: "year", reset: false });
-  assert.deepEqual(q.setVariable("set variable \"my v\" TO DATE '2024-01-01'"), { name: "my v", reset: false });
-  assert.deepEqual(q.setVariable("/* why */ RESET VARIABLE year"), { name: "year", reset: true });
+  assert.deepEqual(q.setVariable("SET VARIABLE year = 2024;"), { name: "year", reset: false, value: "2024" });
+  assert.deepEqual(q.setVariable("set variable \"my v\" TO DATE '2024-01-01' -- why"), { name: "my v", reset: false, value: "DATE '2024-01-01'" });
+  assert.deepEqual(q.setVariable("/* why */ RESET VARIABLE year"), { name: "year", reset: true, value: "" });
   assert.equal(q.setVariable("SELECT 1"), null);
   // A selection of a SET and a query is not a SET.
   assert.equal(q.setVariable("SET VARIABLE x = 1;\nSELECT getvariable('x') AS v"), null);
