@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.24
 
+- **Write to OneLake, on the website.** A new page says what SQL can write to a lakehouse, what each setting allows,
+  and what DuckDB can't do with a Delta table.
+- **Save shows it saved.** Save and Save Query are off once the box is saved, and on again at the next edit.
 - **Writes to tables are off until you turn them on.** A new *Writes* section in Settings: **Allow Table Writes**,
   off by default, lets SQL write to a lakehouse's tables; until then each such write is refused and nothing is sent.
   **Allow Drop Table**, off by default too, lets `DROP TABLE` delete an Iceberg table and its files. **Allow Copy to
