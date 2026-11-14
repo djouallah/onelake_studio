@@ -306,17 +306,28 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
 // Lines from a stream's text, in time linear in its length: each chunk is searched once, and a line
 // is joined from its pieces once it ends. An answer of tens of MB (the Logs tab's) comes in thousands of
 // chunks, and searching all of it again at each one froze the extension host for seconds.
-function lineReader(onLine) {
-  let pieces = [];
+// `maxLine()` is the longest line taken, asked at each chunk since it can change (the server's is short until a
+// connection has said who it is). Past it nothing more is read and `onTooLong` is called once: what was held is
+// let go, so a line that never ends costs no more memory than the limit.
+function lineReader(onLine, { maxLine = () => Infinity, onTooLong = () => {} } = {}) {
+  let pieces = [], held = 0, over = false;
+  const tooLong = () => { over = true; pieces = []; held = 0; onTooLong(); };
   return chunk => {
+    if (over) return;
     let from = 0;
     for (let nl; (nl = chunk.indexOf('\n', from)) >= 0; from = nl + 1) {
+      if (held + (nl - from) > maxLine()) return tooLong();
       pieces.push(chunk.slice(from, nl));
       const line = pieces.length === 1 ? pieces[0] : pieces.join('');
-      pieces = [];
+      pieces = []; held = 0;
       onLine(line);
+      if (over) return;
     }
-    if (from < chunk.length) pieces.push(chunk.slice(from));
+    if (from < chunk.length) {
+      held += chunk.length - from;
+      if (held > maxLine()) return tooLong();
+      pieces.push(chunk.slice(from));
+    }
   };
 }
 

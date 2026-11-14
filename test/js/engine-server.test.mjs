@@ -570,3 +570,92 @@ test("the server says whether anyone is at work, from any window, a table being 
   stop.abort();
   assert.match(String((await kept).message), /interrupt/i, "the signal stops it");
 });
+
+test("a line reader with a limit stops at it, once, and holds nothing past it", () => {
+  const lines = [];
+  let over = 0, limit = 10;
+  const read = lineReader(l => lines.push(l), { maxLine: () => limit, onTooLong: () => over++ });
+  read("short\n1234567890\n");
+  assert.deepEqual(lines, ["short", "1234567890"], "a line of exactly the limit is taken");
+  // The limit can change between lines, as the server's does once a connection has said who it is.
+  limit = 100;
+  read("x".repeat(60));
+  read("x".repeat(40) + "\n");
+  assert.equal(lines.at(-1).length, 100);
+  limit = 10;
+  read("12345678901");
+  assert.equal(over, 1, "eleven with no end in sight");
+  read("\nmore\n");
+  read("x".repeat(1000));
+  assert.equal(over, 1, "said once");
+  assert.equal(lines.length, 3, "and nothing after it is a line");
+  // A whole line too long in one chunk, the line after it with it.
+  const again = [];
+  let stopped = 0;
+  lineReader(l => again.push(l), { maxLine: () => 3, onTooLong: () => stopped++ })("ok\ntoolong\nok\n");
+  assert.deepEqual([again, stopped], [["ok"], 1]);
+});
+
+// A connection to the control pipe that is no window's: what it is sent back, and whether the server hung up.
+function stranger(pipe) {
+  const sock = net.connect(pipe);
+  sock.setEncoding("utf8");
+  let text = "";
+  sock.on("data", c => { text += c; });
+  sock.on("error", () => {});
+  const closed = new Promise(resolve => sock.once("close", () => resolve(true)));
+  return {
+    sock, closed,
+    connected: new Promise((resolve, reject) => { sock.once("connect", resolve); sock.once("error", reject); }),
+    lines: () => text.split("\n").filter(Boolean).map(l => JSON.parse(l)),
+    hungUpWithin: ms => Promise.race([closed, sleep(ms).then(() => false)]),
+  };
+}
+
+test("the control pipe before the token: nothing is answered, nothing is held, and the server stays up", async t => {
+  const { open, pipe, secret, log } = await setup(t);
+  const window = open();
+  assert.deepEqual((await window.call("query", ["SELECT 1 AS a"])).rows, [{ a: 1 }]);
+  const alive = async why => assert.deepEqual((await window.call("query", ["SELECT 2 AS a"])).rows, [{ a: 2 }], why);
+
+  // Lines that are JSON and no object, a wrong token, and no JSON at all: each is hung up on, with no answer.
+  for (const first of ["null", "0", "\"text\"", "[]", "{\"token\":\"wrong\"}", "{\"token\":null}", "{\"token\":{\"length\":64}}", "not json", ""]) {
+    const s = stranger(pipe);
+    await s.connected;
+    s.sock.write(`${first}\n${JSON.stringify({ id: 1, stats: true })}\n${JSON.stringify({ stop: true })}\n`);
+    assert.equal(await s.hungUpWithin(5000), true, `${JSON.stringify(first)}: hung up on`);
+    assert.deepEqual(s.lines(), [], `${JSON.stringify(first)}: told nothing`);
+  }
+  await alive("after lines that were no window's");
+
+  // A megabyte with no end of line: hung up on well before it is all sent, not kept.
+  const flood = stranger(pipe);
+  await flood.connected;
+  const chunk = "x".repeat(64 * 1024);
+  let sent = 0;
+  for (let i = 0; i < 16 && !flood.sock.destroyed; i++) { flood.sock.write(chunk); sent += chunk.length; await sleep(20); }
+  assert.equal(await flood.hungUpWithin(5000), true, `a line of ${sent} bytes before the token: hung up on`);
+  await alive("after a line with no end");
+
+  // And one that says nothing at all: ten seconds, then it is closed.
+  const quiet = stranger(pipe);
+  await quiet.connected;
+  const started = Date.now();
+  assert.equal(await quiet.hungUpWithin(20_000), true, "a connection that never says who it is");
+  assert.ok(Date.now() - started >= 8000, "not before a slow window would have spoken");
+  await alive("after a silent connection");
+
+  // The right token is a window: it is answered, and what it asks that the server doesn't know is said, not fatal.
+  const friend = stranger(pipe);
+  await friend.connected;
+  friend.sock.write(`${JSON.stringify({ token: secret(), window: "stranger-test" })}\n`);
+  friend.sock.write(`not json\nnull\n${JSON.stringify({ id: 7, nothingTheServerKnows: true })}\n${JSON.stringify({ id: 8, stats: true })}\n`);
+  for (let i = 0; i < 100 && friend.lines().length < 3; i++) await sleep(50);
+  const said = friend.lines();
+  assert.equal(said[0].ok, true);
+  assert.match(said.find(l => l.id === 7).error, /does not know/);
+  assert.ok(said.find(l => l.id === 8).value, "and the next question is answered");
+  friend.sock.destroy();
+  await alive("after a window's own bad lines");
+  assert.equal(log().match(/starting: pid/g).length, 1, "the same server all along");
+});

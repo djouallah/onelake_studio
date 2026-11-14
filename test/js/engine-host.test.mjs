@@ -1046,3 +1046,62 @@ test("a table the lake holds is read as it is, with nothing asked of OneLake, af
   assert.equal((await engine.lakeTable({ deltaTable: local, check: true })).name, first.name);
   assert.equal((await engine.lakeTable({ deltaTable: `${FOLDER}_never`, check: true })).name, null, "never synced here");
 });
+
+// --- Probes: what DuckDB itself does, said in the log (# lines), so the engine can be built on the answer. ---
+
+// Can a community extension shipped as a file load with its signature checked, unsigned ones refused?
+test("probe: a bundled community extension, with unsigned extensions refused", { skip: !existsSync(join(BUNDLED, "h3.duckdb_extension")) }, async t => {
+  const { DuckDBInstance } = require("@duckdb/node-api");
+  const slash = p => p.replace(/\\/g, "/");
+  const file = slash(join(BUNDLED, "h3.duckdb_extension"));
+  const first = e => String(e && e.message).split("\n")[0];
+  const attempt = async (name, run) => {
+    const extDir = await mkdtemp(join(tmpdir(), "onelake-probe-"));
+    const duck = await DuckDBInstance.create(":memory:", { allow_unsigned_extensions: "false", extension_directory: extDir });
+    const c = await duck.connect();
+    try {
+      await run(c, extDir);
+      const r = await c.runAndReadAll("SELECT h3_latlng_to_cell(0, 0, 1) IS NOT NULL AS ok");
+      console.log(`PROBE ${name}: loaded, h3 answers ${JSON.stringify(r.getRowObjectsJson())}`);
+    } catch (e) { console.log(`PROBE ${name}: ${first(e)}`); }
+    finally { c.closeSync(); duck.closeSync(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); }
+  };
+  await attempt("LOAD by path", c => c.run(`LOAD '${file}'`));
+  await attempt("INSTALL from the file, then LOAD by name", async c => { await c.run(`INSTALL '${file}'`); await c.run("LOAD h3"); });
+  await attempt("INSTALL from the folder as a repository, then LOAD by name", async c => {
+    await c.run(`FORCE INSTALL h3 FROM '${slash(BUNDLED)}'`).catch(e => console.log(`PROBE   (install from a folder: ${first(e)})`));
+    await c.run("LOAD h3");
+  });
+  await attempt("what an installed one says of itself", async c => {
+    await c.run(`INSTALL '${file}'`);
+    const r = await c.runAndReadAll("SELECT extension_name, installed, install_mode, installed_from, install_path FROM duckdb_extensions() WHERE extension_name = 'h3'");
+    console.log(`PROBE   ${JSON.stringify(r.getRowObjectsJson())}`);
+    await c.run("LOAD h3");
+  });
+  // A file whose bytes were changed must never load, however it is offered.
+  const badDir = await mkdtemp(join(tmpdir(), "onelake-probe-"));
+  t.after(() => rm(badDir, { recursive: true, force: true }).catch(() => {}));
+  const bad = join(badDir, "h3.duckdb_extension");
+  const bytes = await readFile(join(BUNDLED, "h3.duckdb_extension"));
+  bytes[Math.floor(bytes.length / 2)] ^= 0xff;
+  await writeFile(bad, bytes);
+  await attempt("a tampered file, INSTALL then LOAD", async c => { await c.run(`INSTALL '${slash(bad)}'`); await c.run("LOAD h3"); });
+});
+
+// Can a statement read back the proxy's password the engine was given?
+test("probe: the proxy's password, asked for by a statement", { skip: !existsSync(BUNDLED) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: BUNDLED, httpProxy: "http://someone:hunter2secret@127.0.0.1:9" });
+  t.after(async () => { await engine.close(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); });
+  for (const sql of [
+    "SELECT current_setting('http_proxy_password') AS v",
+    "SELECT current_setting('azure_proxy_password') AS v",
+    "SELECT name, value FROM duckdb_settings() WHERE name LIKE '%proxy%'",
+  ]) {
+    try {
+      const r = await engine.call("query", [sql]);
+      const said = JSON.stringify(r.rows);
+      console.log(`PROBE ${sql} -> ${said}${said.includes("hunter2secret") ? "   <-- THE PASSWORD IS READ BACK" : ""}`);
+    } catch (e) { console.log(`PROBE ${sql} -> refused: ${String(e.message).split("\n")[0]}`); }
+  }
+});

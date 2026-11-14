@@ -24,7 +24,7 @@ const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { dirname, join } = require('node:path');
 const { createEngineHost } = require('./engine-host');
-const { openClient } = require('./engine-client');
+const { openClient, lineReader } = require('./engine-client');
 const { createLogFile } = require('../logfile');
 const { createLogKeeper } = require('./enginelog');
 
@@ -32,6 +32,12 @@ const sameToken = (a, b) => {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
+
+// What a connection may send before it has said who it is, and how long it has to say it: a window's first line is
+// its token and its name, a few hundred bytes, sent at once. And the longest line a window sends after.
+const MAX_HELLO = 64 * 1024;
+const HELLO_MS = 10_000;
+const MAX_LINE = 64 * 1024 * 1024;
 
 // State files and logs from when they were named after the install, each left behind by an update.
 const OLD_STATE_FILE = /^[0-9a-f]{16}\.(duckdb(\.wal)?|log)$/;
@@ -46,7 +52,7 @@ function trimLog(file) {
   } catch (_) {}
 }
 
-async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile = null, build = null }) {
+async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile = null, build = null, helloMs = HELLO_MS }) {
   trimLog(logFile);
   const log = line => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${line}\n`); } catch (_) {} };
   const say = o => process.stdout.write(`${JSON.stringify(o)}\n`);
@@ -154,39 +160,41 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
 
   let booted;
   const server = net.createServer(sock => {
-    let buf = '', who = null;
+    let who = null;
+    const tell = o => { if (!sock.destroyed) sock.write(`${JSON.stringify(o)}\n`); };
     sock.setEncoding('utf8');
     sock.on('error', () => {});
+    // A connection that says nothing holds a handle here for as long as it likes, unless it is closed.
+    const hello = setTimeout(() => { if (!who) sock.destroy(); }, helloMs);
     sock.on('close', () => {
+      clearTimeout(hello);
       if (!who) return;
       clients.delete(who);
       reap(who.window).catch(e => log(`could not cancel a window's queries: ${e.message}`));
       watchIdle();
     });
-    sock.on('data', async chunk => {
-      buf += chunk;
-      for (let nl; (nl = buf.indexOf('\n')) >= 0;) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        let msg = {};
-        try { msg = JSON.parse(line); } catch (_) {}
-        if (!who) {
-          if (!sameToken(msg.token, token)) { sock.destroy(); return; }
-          who = { window: String(msg.window || ''), sock };
-          clients.add(who);
-          watchIdle();
-          // A window that arrives during the boot waits for it.
-          try { await booted; sock.write(`${JSON.stringify({ ok: true, ...state })}\n`); }
-          catch (e) { sock.write(`${JSON.stringify({ ok: false, error: e.message })}\n`); }
-        } else if (msg.stop) {
-          shutdown('a window asked');
-        } else if (msg.id != null) {
-          // Answered by id: these finish in any order.
-          answer(msg).then(value => ({ value }), e => ({ error: (e && e.message) || String(e) }))
-            .then(reply => { if (!sock.destroyed) sock.write(`${JSON.stringify({ id: msg.id, ...reply })}\n`); });
-        }
+    sock.on('data', lineReader(line => {
+      if (sock.destroyed) return;
+      let msg = null;
+      try { msg = JSON.parse(line); } catch (_) {}
+      // Anything that isn't an object asks nothing: `null` is JSON too, and has no token to read.
+      if (!msg || typeof msg !== 'object') msg = {};
+      if (!who) {
+        if (!sameToken(msg.token, token)) { sock.destroy(); return; }
+        clearTimeout(hello);
+        who = { window: String(msg.window || ''), sock };
+        clients.add(who);
+        watchIdle();
+        // A window that arrives during the boot waits for it.
+        booted.then(() => tell({ ok: true, ...state }), e => tell({ ok: false, error: e.message }));
+      } else if (msg.stop) {
+        shutdown('a window asked');
+      } else if (msg.id != null) {
+        // Answered by id: these finish in any order.
+        answer(msg).then(value => ({ value }), e => ({ error: (e && e.message) || String(e) }))
+          .then(reply => tell({ id: msg.id, ...reply }));
       }
-    });
+    }, { maxLine: () => (who ? MAX_LINE : MAX_HELLO), onTooLong: () => sock.destroy() }));
   });
 
   // The pipe first: it is what says this is the one server for this key.
@@ -236,6 +244,12 @@ process.stdin.on('data', chunk => {
     try { process.stdout.write(`${JSON.stringify({ error: e.message })}\n`); } catch (_) {}
     process.exit(1);
   });
+});
+// A promise nobody was waiting on that failed: said in the log, and the server goes on. Every window's
+// statements are in this process, and Node's own answer to one stray rejection is to end it.
+process.on('unhandledRejection', e => {
+  if (!crashLog) return;
+  try { fs.appendFileSync(crashLog, `${new Date().toISOString()} a promise nobody waited for failed: ${(e && e.stack) || e}\n`); } catch (_) {}
 });
 process.on('uncaughtException', e => {
   sayWhy(e);

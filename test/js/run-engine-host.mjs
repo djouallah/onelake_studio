@@ -14,10 +14,9 @@
 //
 // Run: node test/js/run-engine-host.mjs
 import http from "node:http";
-import { readFile, stat, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, extname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 import { panelHost, servePanel } from "./panel-host.mjs";
@@ -25,8 +24,6 @@ import { panelHost, servePanel } from "./panel-host.mjs";
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../core/engine/engine-host.js");
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-const APP = join(root, "page");
 const PORT = 5207;
 const CHROME = process.env.CHROME_PATH ||
   (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome");

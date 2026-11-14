@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
-import { readFileSync, copyFileSync, existsSync, statSync, mkdirSync, cpSync } from "node:fs";
+import { readFileSync, copyFileSync, existsSync, statSync, mkdirSync, cpSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const FIXTURES = process.env.LAKE_FIXTURES;
@@ -200,7 +200,8 @@ test("column mapping: a rename after the files were registered keeps their value
 });
 
 // The service on a table the lake names by an abfss:// folder, whose files "download" from the local fixture.
-async function servedTable(lake, name, { maxBytes = 1e12 } = {}) {
+// `wrap` stands between the service and the download, for one that is slow or fails.
+async function servedTable(lake, name, { maxBytes = 1e12, wrap = d => d } = {}) {
   const local = fwd(join(FIXTURES, name));
   const remote = `abfss://ws@onelake.dfs.fabric.microsoft.com/item.Lakehouse/Tables/${name}`;
   const read = async () => ({ ...(await readDelta(lake.c, local)), root: remote });
@@ -209,18 +210,22 @@ async function servedTable(lake, name, { maxBytes = 1e12 } = {}) {
   const withConn = fn => (queue = queue.then(() => fn(lake.c), () => fn(lake.c)));
   const service = createTableService({
     withConn, filesDir, maxBytes, graceMs: 0,
-    download: async (url, dst) => {
+    download: wrap(async (url, dst) => {
       const src = join(local, decodeURIComponent(url.slice(remote.length + 1)));
       mkdirSync(dirname(dst), { recursive: true });
       copyFileSync(src, dst);
       return statSync(dst).size;
-    },
+    }),
   });
   const sync = async () => syncTable(lake.c, name, await read(), { dvDir: lake.dvDir, held: await service.held() });
   const urls = async () => (await H.rowsOf(lake.c, `SELECT t.path || f.path AS url FROM ${META}.ducklake_data_file f
     JOIN ${META}.ducklake_table t USING (table_id) WHERE t.table_name = ${H.q(name)} AND f.end_snapshot IS NULL AND f.path_is_relative`)).map(r => r.url);
-  return { local, remote, service, sync, urls };
+  return { local, remote, service, sync, urls, filesDir };
 }
+
+// Every file under `dir`, with its size: what the cache folder holds on disk, a download's .part included.
+const onDisk = dir => (existsSync(dir) ? readdirSync(dir, { recursive: true, withFileTypes: true }) : []).filter(e => e.isFile())
+  .map(e => ({ name: e.name, bytes: statSync(join(e.parentPath ?? e.path, e.name)).size }));
 
 test("the service brings a read file here, and only that file", { skip }, async () => {
   const lake = await H.openLake();
@@ -307,5 +312,61 @@ test("past its budget, the least recently read copy goes back to OneLake", { ski
     // The two held are the last two read.
     const remote = new Set(await t.urls());
     assert.ok(!remote.has(all.at(-1)) && !remote.has(all.at(-2)), "the most recently read stay here");
+  } finally { lake.close(); }
+});
+
+test("files opened together stay under the budget while they come down, not only once they are held", { skip }, async () => {
+  const lake = await H.openLake();
+  try {
+    const t0 = await servedTable(lake, "plain");
+    await t0.sync();
+    const all = await t0.urls();
+    assert.ok(all.length >= 4, "enough files to come down side by side");
+    const bytesOf = new Map((await H.rowsOf(lake.c, `SELECT t.path || f.path AS url, f.file_size_bytes AS b FROM ${META}.ducklake_data_file f
+      JOIN ${META}.ducklake_table t USING (table_id) WHERE f.end_snapshot IS NULL`)).map(r => [r.url, Number(r.b)]));
+    const maxBytes = Math.max(...bytesOf.values()) * 2 + 1;   // room for two
+    let flying = 0, most = 0;
+    // Each download takes a while, so every one the service starts is under way at the same time.
+    const wrap = d => async (url, dst) => {
+      assert.ok(bytesOf.has(url), `${url} is a file of the table`);
+      flying += bytesOf.get(url);
+      most = Math.max(most, flying);
+      await new Promise(r => setTimeout(r, 60));
+      try { return await d(url, dst); } finally { flying -= bytesOf.get(url); }
+    };
+    const t = await servedTable(lake, "plain", { maxBytes, wrap });
+    await t.service.noteOpened(all);
+    await t.service.idle();
+    assert.ok(most > 0 && most <= maxBytes, `${most} bytes were coming down at once, with a limit of ${maxBytes} for everything kept`);
+    const s = await t.service.stats();
+    assert.equal(s.downloaded, all.length, "and every file still came, in turn");
+    assert.ok(s.heldBytes <= maxBytes, JSON.stringify(s));
+  } finally { lake.close(); }
+});
+
+test("a download that fails leaves no .part, and one left by a process that died is deleted at the next start", { skip }, async () => {
+  const lake = await H.openLake();
+  try {
+    const t0 = await servedTable(lake, "plain");
+    await t0.sync();
+    const all = await t0.urls();
+    // Half a file arrives, and then the connection is gone.
+    const wrap = () => async (_url, dst) => {
+      mkdirSync(dirname(dst), { recursive: true });
+      writeFileSync(dst, "PAR1 half a file");
+      throw new Error("socket hang up");
+    };
+    const failing = await servedTable(lake, "plain", { wrap });
+    // What a process killed mid-download left, from before this one started.
+    const stale = join(failing.filesDir, "ws", "item.Lakehouse", "Tables", "plain", "left-behind.parquet.part");
+    mkdirSync(dirname(stale), { recursive: true });
+    writeFileSync(stale, "PAR1 from a process that died");
+    await failing.service.noteOpened(all);
+    await failing.service.idle();
+    const s = await failing.service.stats();
+    assert.equal(s.failed, all.length, JSON.stringify(s));
+    assert.equal(s.held, 0);
+    assert.deepEqual(onDisk(failing.filesDir), [], "nothing in the cache folder: not this run's halves, not the old one");
+    assert.equal((await failing.urls()).length, all.length, "and the table still reads every file from OneLake");
   } finally { lake.close(); }
 });

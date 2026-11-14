@@ -11,12 +11,10 @@ import { readFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
 import { panelHost, servePanel } from "./panel-host.mjs";
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const PORT = 5199;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 

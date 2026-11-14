@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Download CSV works again in a model's Visual.** Since 0.2.24 it failed on every model: the button called the
+  code that saves a model file back.
+- **An app's file from another computer asks before it publishes.** A `.fabricapp` names the app it is published
+  over. Export to Fabric now asks before it publishes one over an app this computer has not published before, and
+  shows the sign-in redirects the file would add. It asks once: after that the app is this computer's. An app you
+  exported with an earlier version is asked about once too.
+- **Create Semantic Model asks before it takes a model over.** A DirectQuery model someone else owns was taken over
+  without a word, so that its sign-in could be set. It now asks, and a No leaves the model with its owner.
+- **A download that stops arriving is given up on.** A table's file that sent no bytes for two minutes held its
+  place for good, and Keep offline waited on it. It is now dropped and tried once more, and no half file is left in
+  the cache. Files with `#`, `?` or `%` in their names are asked for by their real names.
+- **The disk cache's limit holds while files come down,** not only once they have: downloads wait their turn when
+  the ones under way would fill it.
+- **A damaged or oversized app file is refused,** with why, in place of using all the memory there is.
+- **Excel's endpoint** reads a request in time that grows with its size, not its square, asks for a hierarchy's
+  members four queries at a time, and starts listening again after an error.
+- **On Linux and macOS the command line's socket is in a folder of your own,** not in the shared temp folder.
 - **No package for macOS on Intel.** macOS is Apple silicon only from here on. A Mac with an Intel chip keeps the
   version it has.
 

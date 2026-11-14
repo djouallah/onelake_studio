@@ -95,7 +95,7 @@ function createHandler({ token, port, backend, log = () => {} }) {
  * closes, or by something else, which `onPortLost` is told about so a new port can be chosen.
  */
 function serveXmla({ port, token, backend, log = () => {}, onPortLost = () => {} }) {
-  let server = null, timer = null, disposed = false;
+  let server = null, timer = null, disposed = false, said = null;
 
   function ours() {
     return new Promise(resolve => {
@@ -115,7 +115,13 @@ function serveXmla({ port, token, backend, log = () => {}, onPortLost = () => {}
     server = http.createServer(createHandler({ token, port, backend, log }));
     server.on('error', async e => {
       server = null;
-      if (e.code !== 'EADDRINUSE') { log(`xmla: ${e.message}`); return; }
+      // Anything else that stopped it listening is tried again too, or Excel has no endpoint until the next start.
+      if (e.code !== 'EADDRINUSE') {
+        if (said !== e.message) log(`xmla: ${e.message}`);
+        said = e.message;
+        if (!disposed) timer = setTimeout(start, RETRY_MS);
+        return;
+      }
       if (await ours()) { if (!disposed) timer = setTimeout(start, RETRY_MS); return; }
       log(`xmla: port ${port} is taken by something else`);
       onPortLost();

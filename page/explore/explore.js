@@ -592,7 +592,7 @@ function pivotTable(s, piv, highlight, look, pick) {
     const tr = el('tr');
     rowNames.forEach(n => tr.append(lead(n)));
     if (!rowNames.length && s.cols.length) tr.append(lead(''));
-    for (const b of s.cols.length ? colKeys : [[]]) for (const m of measures) tr.append(el('th', { class: 'ex-num' }, nameOf(m)));
+    for (const _col of s.cols.length ? colKeys : [[]]) for (const m of measures) tr.append(el('th', { class: 'ex-num' }, nameOf(m)));
     head.append(tr);
   }
   const body = el('tbody');

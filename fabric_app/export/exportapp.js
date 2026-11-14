@@ -47,7 +47,7 @@ const { join, dirname } = require('node:path');
 const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
 const deflateRaw = require('node:util').promisify(zlib.deflateRaw);
-const { createHash } = require('node:crypto');
+const { createHash, randomBytes } = require('node:crypto');
 const { crc32 } = require('../../core/crc32');
 const { TABLE_ORIGIN } = require('../../core/onelake/catalog');
 const { dfsFileUrl, stripBom } = require('../../core/names');
@@ -375,26 +375,39 @@ function signs one. The page needs a browser with OPFS shared access handles (Ch
 // re-zips the app. Folders are left out, a backslash is a slash, and one top folder holding every
 // entry (a folder zipped whole) is taken off.
 const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
-function unzip(buf) {
+// All of them together, and how many: each entry's limit alone lets a directory of thousands, every one
+// pointing at the same few packed bytes, unpack to more memory than there is. An app is a few MB in a few
+// hundred files.
+const MAX_TOTAL_BYTES = 512 * 1024 * 1024;
+const MAX_ENTRIES = 20000;
+function unzip(buf, { maxTotal = MAX_TOTAL_BYTES, maxEntries = MAX_ENTRIES } = {}) {
   const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  if (end < 0) throw new Error('no zip directory');
+  if (end < 0 || end + 22 > buf.length) throw new Error('no zip directory');
   const count = buf.readUInt16LE(end + 10);
+  if (count > maxEntries) throw new Error(`${count} entries is more than an app holds`);
   let at = buf.readUInt32LE(end + 16);
   const out = new Map();
+  let total = 0;
   for (let i = 0; i < count; i++) {
-    if (buf.readUInt32LE(at) !== 0x02014b50) throw new Error('a broken zip directory');
+    if (at + 46 > buf.length || buf.readUInt32LE(at) !== 0x02014b50) throw new Error('a broken zip directory');
     const method = buf.readUInt16LE(at + 10), size = buf.readUInt32LE(at + 20), raw = buf.readUInt32LE(at + 24);
     const nameLen = buf.readUInt16LE(at + 28), extra = buf.readUInt16LE(at + 30), note = buf.readUInt16LE(at + 32);
     const local = buf.readUInt32LE(at + 42), crc = buf.readUInt32LE(at + 16);
     const name = buf.subarray(at + 46, at + 46 + nameLen).toString('utf8').split('\\').join('/');
     at += 46 + nameLen + extra + note;
     if (name.endsWith('/')) continue;
+    // An entry is a file of the app. One that names a place outside it is nothing an export wrote.
+    if (name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.split('/').includes('..')) throw new Error(`${name} is not a path inside an app`);
     if (method !== 0 && method !== 8) throw new Error(`${name} is compressed in a way this can't read (method ${method})`);
+    if (local + 30 > buf.length) throw new Error(`${name} is damaged`);
     const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    if (start + size > buf.length) throw new Error(`${name} is damaged`);
     const packed = buf.subarray(start, start + size);
     // No more than the entry says it holds, and no entry that says more than an app's file could: a few
     // kilobytes can otherwise unpack to all the memory there is.
     if (raw > MAX_ENTRY_BYTES) throw new Error(`${name} is too big to be an app's file`);
+    total += raw;
+    if (total > maxTotal) throw new Error('its files are too big together to be an app');
     let data;
     try { data = method === 8 ? zlib.inflateRawSync(packed, { maxOutputLength: Math.max(1, raw) }) : Buffer.from(packed); }
     catch { throw new Error(`${name} is damaged`); }
@@ -433,9 +446,16 @@ async function writeApp(zipPath, files, marker) {
   const all = byPath(files).filter(([p]) => p !== MARKER);
   all.push([MARKER, Buffer.from(JSON.stringify(marker, null, 2) + '\n', 'utf8')]);
   await fsp.mkdir(dirname(zipPath), { recursive: true });
-  const tmp = `${zipPath}.${process.pid}.tmp`;
-  await fsp.writeFile(tmp, await zip(all));
-  await fsp.rename(tmp, zipPath);
+  // A name of this write's own: two writes of one file at once (a publish, and a tile added meanwhile)
+  // would otherwise write into each other's.
+  const tmp = `${zipPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    await fsp.writeFile(tmp, await zip(all));
+    await fsp.rename(tmp, zipPath);
+  } catch (e) {
+    await fsp.rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
 }
 
 // A folder's files, under `to`: path -> bytes, but for those `skip` says.
@@ -623,4 +643,4 @@ async function zip(files) {
 
 module.exports = { planExport, planOnModel, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
                    vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT,
-                   APP_EXT, MODEL_COPIES, setModelCopy, modelCopyOf, tablesOf };
+                   APP_EXT, MODEL_COPIES, setModelCopy, modelCopyOf, tablesOf, MAX_TOTAL_BYTES, MAX_ENTRIES };

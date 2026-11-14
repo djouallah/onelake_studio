@@ -443,7 +443,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       openOnText,
       // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's
       // local copy (Fabric's is the model, and Refresh reads it again) nor an app's file (its model is in a zip).
-      saveText: !file.appFile && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+      saveFileText: !file.appFile && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
         ? async edited => {
           // A text that doesn't open as a model is not written: the file stays one that opens.
           await semantic.checkModel(file.name, edited);

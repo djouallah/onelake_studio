@@ -48,6 +48,7 @@ const REPORT_POLL_MS = 2000;
 //   echarts()        ECharts (a promise)
 //   worldMap()       (optional) the world's outline, a GeoJSON (a promise): what a map draws over
 //   saveText(name, text)  a CSV saved: answers where (or null: dismissed)
+//   saveFileText(text)    (optional) the model's own file written back, when it is one that can be: Save on YAML
 //   loadState(key), saveState(key, s)  the shelves, between visits
 //   setStatus(text, kind)  (optional) the host's status line
 //   profileSet       whether the profile's SQL sets its own metrics (profile.js): false for an
@@ -231,9 +232,9 @@ export function mountExplore(root, ctx) {
   const viewTab = (label, asText) => el('button', { type: 'button', class: 'subtab', role: 'tab', onclick: () => showText(asText) }, label);
   const diagramTab = viewTab('Diagram', false), fileTab = viewTab(/^bim$/i.test(ctx.ext || '') ? 'BIM' : 'YAML', true);
   const textPre = el('pre', { class: 'text-file', hidden: true });
-  // A file that can be saved (ctx.saveText) is written in: a box over the coloured <pre>, its own text clear, the
+  // A file that can be saved (ctx.saveFileText) is written in: a box over the coloured <pre>, its own text clear, the
   // <pre> coloured again as it is typed. Save writes it back.
-  const editable = ctx.text != null && !!ctx.saveText;
+  const editable = ctx.text != null && !!ctx.saveFileText;
   const textBox = editable ? el('textarea', { class: 'text-box', spellcheck: 'false', wrap: 'off', 'aria-label': `${ctx.name}'s file` }) : null;
   const textEdit = editable ? el('div', { class: 'text-edit', hidden: true }, el('div', { class: 'text-layer' }, textPre, textBox)) : null;
   if (editable) { textPre.hidden = false; textPre.setAttribute('aria-hidden', 'true'); }
@@ -1101,7 +1102,7 @@ export function mountExplore(root, ctx) {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      await ctx.saveText(crlf ? textBox.value.replace(/\n/g, '\r\n') : textBox.value);
+      await ctx.saveFileText(crlf ? textBox.value.replace(/\n/g, '\r\n') : textBox.value);
     } catch (e) {
       setStatus(`Not saved: ${e.message}`, 'error');
     } finally {

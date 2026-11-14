@@ -253,7 +253,7 @@ test("a table's metadata comes back the same, with its columns and history in ta
   const db = new DatabaseSync(file);
   t.after(() => db.close());
   assert.deepEqual(db.prepare("SELECT name, type FROM lake_column ORDER BY pos").all().map(r => [r.name, r.type]), [["id", "long"], ["ts", "timestamp"]]);
-  assert.equal(db.prepare("SELECT total_records AS n FROM lake_table").get().n, 9007199254740993, "past 2^53, it can still be read");
+  assert.equal(db.prepare("SELECT total_records AS n FROM lake_table").get().n, 2 ** 53, "past 2^53 it is still read, as the nearest number there is");
   assert.deepEqual(db.prepare("SELECT version FROM snapshot ORDER BY pos").all().map(r => r.version), ["2", "1"]);
 });
 

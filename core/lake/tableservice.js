@@ -19,8 +19,8 @@
 // No `vscode` import. The engine passes in its connection, the token and how to download.
 // =============================================================================
 
-const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, createWriteStream } = require('node:fs');
-const { Readable } = require('node:stream');
+const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, createWriteStream, readdirSync } = require('node:fs');
+const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { dirname, join } = require('node:path');
 const { sqlStr: q, assertOneLakeUrl } = require('../sql');
@@ -36,7 +36,9 @@ function httpsOf(url) {
   const m = /^abfss?:\/\/([^@/]+)@([^/]+)\/(.+)$/.exec(url);
   if (!m) throw new Error(`not a OneLake path: ${url}`);
   assertOneLakeUrl(url);
-  return `https://${m[2]}/${m[1]}/${m[3]}`;
+  // Each part of the path as a URL writes it. The lake holds a file's own name (onelaketable.js decodes a Delta
+  // log's), and a name with a # or a ? in it would otherwise end the path there, and one with %41 would ask for A.
+  return `https://${m[2]}/${encodeURIComponent(m[1])}/${m[3].split('/').map(encodeURIComponent).join('/')}`;
 }
 // Where a file's copy goes: its workspace, item and folders kept, so a Delta partition's col=value folder is in
 // the copy's path as DuckLake reads it.
@@ -65,19 +67,36 @@ function localOf(filesDir, url) {
 const PARALLEL = 6;
 // A download that failed where a second try can mend it waits this long, and is tried once more.
 const RETRY_MS = 1000;
+// How long a download may go with no bytes arriving before it is taken for dead.
+const DOWNLOAD_IDLE_MS = 2 * 60 * 1000;
 
 function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024 ** 3, parallel = PARALLEL,
                               graceMs = 15 * 60 * 1000, now = Date.now, log = () => {} }) {
   const queued = new Map();   // OneLake URL -> its expected size
   const busy = new Set();
   let ready = null, closed = false;
+  // The bytes of the downloads under way: not held yet, and on the disk already or about to be. Counted with
+  // what is held, or `parallel` downloads would each find the same room and take it.
+  let coming = 0;
   // When a copy was read, strictly increasing: two reads in one millisecond still have an order to evict by.
   let lastStamp = 0;
   const stamp = () => (lastStamp = Math.max(now(), lastStamp + 1));
   const counts = { downloaded: 0, bytes: 0, swapped: 0, missed: 0, evicted: 0, deleted: 0, failed: 0 };
 
   const init = () => ready || (ready = withConn(c => c.run(`CREATE TABLE IF NOT EXISTS ${HELD} (
-    local VARCHAR PRIMARY KEY, path VARCHAR, relative BOOLEAN, bytes BIGINT, last_read BIGINT, unread_since BIGINT)`)));
+    local VARCHAR PRIMARY KEY, path VARCHAR, relative BOOLEAN, bytes BIGINT, last_read BIGINT, unread_since BIGINT)`)).then(sweepParts));
+  // A download a process didn't live to finish left its .part: no table names it, so nothing would ever count it
+  // or delete it. Before this process's first download, when none of them can be one of its own.
+  function sweepParts() {
+    let names = [];
+    try { names = readdirSync(filesDir, { recursive: true }); } catch (_) { return; }
+    let gone = 0;
+    for (const name of names) {
+      if (!String(name).endsWith('.part')) continue;
+      try { rmSync(join(filesDir, String(name)), { force: true }); gone++; } catch (_) {}
+    }
+    if (gone) log(`table service: ${gone} unfinished download(s) from before deleted`);
+  }
 
   // What the lake reads from OneLake now, by full URL: of every table, or of lake table `name`.
   async function remoteFiles(c, name = null) {
@@ -107,19 +126,29 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
   function pump() {
     while (!closed && busy.size < parallel && queued.size) {
       const [url, size] = queued.entries().next().value;
+      // The downloads under way would fill the cache by themselves: this one waits for one of them to land.
+      if (busy.size && coming + size > maxBytes) break;
       queued.delete(url);
       busy.add(url);
-      fetchOne(url, size).catch(e => { counts.failed++; log(`table service: ${url} not kept: ${e.message}`); })
-        .finally(() => { busy.delete(url); pump(); });
+      // Its bytes are spoken for from here, before anything is asked: the next file in this loop counts them.
+      let mine = size > maxBytes ? 0 : size;
+      coming += mine;
+      const landed = () => { coming -= mine; mine = 0; };
+      fetchOne(url, size, landed).catch(e => { counts.failed++; log(`table service: ${url} not kept: ${e.message}`); })
+        .finally(() => { landed(); busy.delete(url); pump(); });
     }
   }
 
-  async function fetchOne(url, size) {
+  // `landed`: called once the file is held, in the same turn, so its bytes are never counted twice.
+  async function fetchOne(url, size, landed) {
     if (size > maxBytes) return;
-    await makeRoom(size);
     const local = localOf(filesDir, url), part = `${local}.part`;
+    await makeRoom();
     mkdirSync(dirname(local), { recursive: true });
-    const got = await download(url, part);
+    let got;
+    // Whatever stopped it, what came so far is not left here: nothing would ever name it.
+    try { got = await download(url, part); }
+    catch (e) { rmSync(part, { force: true }); throw e; }
     if (got !== size) { rmSync(part, { force: true }); throw new Error(`${got} bytes, the table says ${size}`); }
     renameSync(part, local);
     // Opened once, as DuckDB will, before anything reads it from here.
@@ -138,6 +167,7 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
           await c.run(`INSERT OR REPLACE INTO ${HELD} VALUES (${q(local)}, ${q(f[0].path)}, ${f[0].relative}, ${size}, ${stamp()}, NULL)`);
         }
         await c.run('COMMIT');
+        if (f.length) landed();
         return f.length > 0;
       } catch (e) { await c.run('ROLLBACK').catch(() => {}); throw e; }
     });
@@ -145,13 +175,14 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
     else { counts.missed++; rmSync(local, { force: true }); }   // a commit removed it while it came down
   }
 
-  // Under maxBytes with `size` more: the least recently read copies go back to their OneLake paths.
-  async function makeRoom(size) {
+  // Under maxBytes, with the downloads under way counted (this one among them): the least recently read copies
+  // go back to their OneLake paths.
+  async function makeRoom() {
     await withConn(async c => {
       const held = await rows(c, `SELECT local, path, relative, bytes FROM ${HELD} WHERE unread_since IS NULL ORDER BY last_read`);
-      let total = held.reduce((n, h) => n + Number(h.bytes), 0);
+      let total = held.reduce((n, h) => n + Number(h.bytes), 0) + coming;
       for (const h of held) {
-        if (total + size <= maxBytes) break;
+        if (total <= maxBytes) break;
         await evict(c, h);
         total -= Number(h.bytes);
       }
@@ -236,11 +267,28 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
  * never held whole in memory and the engine's process isn't stopped for one write. Tried once more when the
  * connection or the server failed; a refusal (a 4xx but 429) is final.
  */
-function httpsDownload({ getToken, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+function httpsDownload({ getToken, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), idleMs = DOWNLOAD_IDLE_MS }) {
   const once = async (url, dst) => {
-    const res = await fetchImpl(httpsOf(url), { headers: { Authorization: `Bearer ${await getToken()}`, 'x-ms-version': '2023-11-03' } });
+    // No answer, or no more bytes, for `idleMs`: the download is over. A file's size says nothing of how long it
+    // takes, so there is no limit on the whole; one that stopped arriving would otherwise hold its place for good.
+    const quiet = new AbortController();
+    const stalled = () => new Error(`no data came from OneLake for ${Math.round(idleMs / 1000)}s`);
+    const waiting = setTimeout(() => quiet.abort(stalled()), idleMs);
+    let res;
+    try {
+      const gaveUp = new Promise((_, reject) => quiet.signal.addEventListener('abort', () => reject(quiet.signal.reason), { once: true }));
+      gaveUp.catch(() => {});
+      res = await Promise.race([gaveUp,
+        fetchImpl(httpsOf(url), { headers: { Authorization: `Bearer ${await getToken()}`, 'x-ms-version': '2023-11-03' }, signal: quiet.signal })]);
+    } catch (e) { throw quiet.signal.aborted ? quiet.signal.reason : e; }
+    finally { clearTimeout(waiting); }
     if (!res.ok) throw Object.assign(new Error(`OneLake answered ${res.status}`), { status: res.status });
-    await pipeline(Readable.fromWeb(res.body), createWriteStream(dst));
+    try {
+      await pipeline(Readable.fromWeb(res.body), idleWatch(idleMs, () => { const e = stalled(); quiet.abort(e); return e; }), createWriteStream(dst));
+    } catch (e) {
+      rmSync(dst, { force: true });
+      throw e;
+    }
     return statSync(dst).size;
   };
   return async (url, dst) => {
@@ -253,6 +301,19 @@ function httpsDownload({ getToken, fetchImpl = fetch, sleep = ms => new Promise(
   };
 }
 
+// Bytes passed on as they come, and the stream ended with onIdle's error when none came for `ms`.
+function idleWatch(ms, onIdle) {
+  let timer = null;
+  const watch = new Transform({
+    transform(chunk, _enc, done) { arm(); done(null, chunk); },
+    flush(done) { clearTimeout(timer); done(); },
+    destroy(e, done) { clearTimeout(timer); done(e); },
+  });
+  const arm = () => { clearTimeout(timer); timer = setTimeout(() => watch.destroy(onIdle()), ms); };
+  arm();
+  return watch;
+}
+
 // The paths statements opened since `sinceUs`, from DuckDB's FileSystem log.
 async function openedSince(c, sinceUs) {
   const r = await rows(c, `SELECT epoch_us(timestamp) AS us, regexp_extract(message, '"path":"((?:[^"\\\\]|\\\\.)*)"', 1) AS path
@@ -260,4 +321,4 @@ async function openedSince(c, sinceUs) {
   return { paths: [...new Set(r.map(x => x.path.replace(/\\\\/g, '\\')))], lastUs: r.length ? Number(r[r.length - 1].us) : sinceUs };
 }
 
-module.exports = { createTableService, httpsDownload, openedSince, heldOn, httpsOf };
+module.exports = { createTableService, httpsDownload, openedSince, heldOn, httpsOf, localOf };

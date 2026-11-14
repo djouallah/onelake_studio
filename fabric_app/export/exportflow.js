@@ -5,7 +5,7 @@
 // Every question goes through `ui`, so whoever is showing this decides how it is asked.
 // =============================================================================
 
-const { join, dirname } = require('node:path');
+const { join, dirname, basename } = require('node:path');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -29,6 +29,9 @@ const oldMarker = dir => fsp.readFile(join(dir, OLD_MARKER), 'utf8')
 // The app's name in Fabric is plan.name, and stays so.
 const localName = s => String(s || '').split(/[\\/]/).pop()
   .replace(/(\.ossie)?\.(ya?ml|bim)$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'model';
+// The apps this computer published, by item id (memento): an app's file names the item it is published
+// over, so a file from elsewhere could otherwise name any app its reader may write, and replace it unasked.
+const PUBLISHED = 'exportedItems';
 // Which zip a model's Report tab reads: the model by its workspace and its name, as the page knows it.
 const reportKey = (workspace, model) => `exportReport:${String(workspace).toLowerCase()}/${String(model).toLowerCase()}`;
 // The file a model's Report is kept in before it has a zip, in `reportDir`: by the same names.
@@ -182,6 +185,21 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       // An app's file opened from disk (appFile) is published as it is, its own edits included.
       const asIs = !!appFile;
 
+      // The file says which app it is published over, and which sign-in redirects that app keeps. Both are
+      // taken at its word only for an app this computer published: a file from someone else is asked about,
+      // since it would replace an app of yours with its own pages. Asked once: published, it is this
+      // computer's.
+      const published = () => new Set((memento.get(PUBLISHED) || []).map(String));
+      if (before && before.itemId && !published().has(String(before.itemId))) {
+        const redirects = (Array.isArray(before.redirects) ? before.redirects : []).map(String);
+        const pick = await ui.warn(
+          `OneLake Studio has not published ${basename(outZip)} from this computer before. Publish it over the app ${plan.name}?`,
+          { modal: true, detail: `The app in ${pbi.workspace} is replaced by ${asIs ? 'the pages in this file' : 'this Explore'}.` +
+              (redirects.length ? `\nSign-in redirects in the file: ${redirects.join(', ')}` : '') }, 'Publish It');
+        if (pick !== 'Publish It') throw declined(`Not exported: ${basename(outZip)} was not published from this computer before.`);
+      }
+      const publishedHere = id => memento.update(PUBLISHED, [...published().add(String(id))]);
+
       // Deployed again since this zip published it (another machine, rayfin up)?
       // Asked before it is replaced.
       if (before && before.itemId) {
@@ -250,6 +268,13 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
                        report: { workspace: pbi.workspace, model: name },
                        ...(plan.semanticModel ? { semanticModel: plan.semanticModel } : {}) };
           }
+          // The Report as the file holds it now: a tile added while this publishes (reportSave) is in the
+          // file, not in `files`, and a write from `files` alone would take it out again.
+          const reportNow = async () => {
+            const now = await readApp(outZip).catch(() => null);
+            const report = now && now.files.get(REPORT);
+            if (report) files.set(REPORT, report);
+          };
           // Kept before anything is published: a failure from here leaves the zip as it is.
           await writeApp(outZip, files, marker);
           // The zip holds the Report now, and is where it is kept from here on.
@@ -274,7 +299,11 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
               itemId: marker.itemId || null, takeOver,
               // Kept as soon as there is one: if a later step fails, the next export must know this
               // item is its own rather than ask about an app it made.
-              onItem: id => writeApp(outZip, files, { ...marker, itemId: id }),
+              onItem: async id => {
+                await publishedHere(id);
+                await reportNow();
+                await writeApp(outZip, files, { ...marker, itemId: id });
+              },
             });
           } finally { appLog = quiet; }
           // The redirects in rayfin.yml: the template's, or (as is) the zip's own.
@@ -284,6 +313,8 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
           // What was published, to compare the next export with: the zip's entries, and the
           // deploy's time by Fabric's clock.
           const live = await fabricApp.deployStatus(plan.workspace, done.itemId).catch(() => null);
+          await publishedHere(done.itemId);
+          await reportNow();
           await writeApp(outZip, files, { ...marker, engine: plan.engine, itemId: done.itemId, hostingUrl: done.hostingUrl,
                                           redirects: done.redirects, exportedAt: new Date().toISOString(),
                                           deployedAt: (live && live.lastSuccessfulDeploymentAt) || new Date().toISOString(),
@@ -441,7 +472,15 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
           await fabricModel.frame(workspaceId, id);
         } else {
           say('setting its SQL endpoint sign-in (SSO)');
-          await fabricModel.bindSso(workspaceId, id);
+          // Only a model's owner sets its sign-in. Someone else's is taken over only on a yes: by then its
+          // definition is written, which the first question was about, and the sign-in is what is left.
+          await fabricModel.bindSso(workspaceId, id, { onTakeOver: async () => {
+            const pick = await ui.warn(`The semantic model ${modelName} is owned by someone else. Take it over?`,
+              { modal: true, detail: 'Only its owner can set how it signs in to the SQL endpoint. You become its owner.' }, 'Take It Over');
+            if (pick !== 'Take It Over') {
+              throw declined(`${modelName} is ${existing ? 'updated' : 'created'}, but its sign-in to the SQL endpoint is not set: it is someone else's, and was not taken over.`);
+            }
+          } });
         }
       });
       // The workspace's semantic models, listed again: it is there now.

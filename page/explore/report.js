@@ -157,7 +157,6 @@ export function arrange(items, fixed = -1) {
   return out;
 }
 // A chart's other bars and points, while one is picked.
-const DIM = 0.3;
 
 // `b` over `a`: objects key by key, arrays item by item, anything else replaced.
 export function merge(a, b) {

@@ -17,21 +17,58 @@ const unesc = s => String(s)
   .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
+// What is between <tag …> and the first </tag> after it, or undefined. By indexOf, so a request of any size is
+// read in time linear in its length: a pattern that looks for the closing tag from every opening one takes the
+// square of it, and a body of megabytes with nothing closed then holds the extension host for minutes.
+function inner(text, tag) {
+  const open = `<${tag}`;
+  for (let at = text.indexOf(open); at >= 0; at = text.indexOf(open, at + 1)) {
+    const next = text[at + open.length];
+    if (next !== '>' && !/\s/.test(next || '')) continue;
+    const gt = text.indexOf('>', at);
+    if (gt < 0) return undefined;
+    const close = text.indexOf(`</${tag}>`, gt);
+    return close < 0 ? undefined : text.slice(gt + 1, close);
+  }
+  return undefined;
+}
+
+// Excel's restriction lists are a few hundred bytes. One past this is not Excel's, and is not read.
+const MAX_RESTRICTIONS = 64 * 1024;
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
+
 // A restriction is <Name>one</Name>, or <Name><Value>one</Value><Value>two</Value></Name>.
 function restrictionsOf(text) {
-  const list = (/<RestrictionList>([\s\S]*?)<\/RestrictionList>/.exec(text) || [])[1] || '';
+  const list = inner(text, 'RestrictionList') || '';
+  if (list.length > MAX_RESTRICTIONS) throw new Error('the request\'s restriction list is too long to be Excel\'s');
   const out = {};
-  for (const m of list.matchAll(/<([A-Za-z_][A-Za-z0-9_]*)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g)) {
-    const values = [...m[2].matchAll(/<Value>([^<]*)<\/Value>/g)].map(v => unesc(v[1]));
-    out[m[1]] = values.length ? values : [unesc(m[2])];
+  // A name whose closing tag isn't anywhere ahead isn't looked for again.
+  const unclosed = new Set();
+  for (let at = 0; ;) {
+    const lt = list.indexOf('<', at);
+    if (lt < 0) break;
+    at = lt + 1;
+    const name = (NAME.exec(list.slice(lt + 1, lt + 257)) || [])[0];
+    if (!name || unclosed.has(name)) continue;
+    const next = list[lt + 1 + name.length];
+    if (next !== '>' && !/\s/.test(next || '')) continue;
+    const gt = list.indexOf('>', lt);
+    if (gt < 0) break;
+    const end = `</${name}>`;
+    const close = list.indexOf(end, gt);
+    if (close < 0) { unclosed.add(name); continue; }
+    const body = list.slice(gt + 1, close);
+    const values = [...body.matchAll(/<Value>([^<]*)<\/Value>/g)].map(v => unesc(v[1]));
+    out[name] = values.length ? values : [unesc(body)];
+    at = close + end.length;
   }
   return out;
 }
 
 /** One request: { begin, end, sessionId, requestType (a Discover's), restrictions, catalog, statement (an Execute's) }. */
 function parseRequest(text) {
-  const props = (/<PropertyList>([\s\S]*?)<\/PropertyList>/.exec(text) || [])[1] || '';
-  const statement = (/<Statement(?:\s[^>]*)?>([\s\S]*?)<\/Statement>/.exec(text) || [])[1];
+  const props = inner(text, 'PropertyList') || '';
+  const statement = inner(text, 'Statement');
   return {
     begin: /<BeginSession\b/.test(text),
     end: /<EndSession\b/.test(text),
@@ -90,4 +127,4 @@ const schemaRowsets = list => rootOf(SCHEMA_ROWSETS_TYPE, list.map(s =>
   s.restrictions.map(r => `<Restrictions><Name>${r.name}</Name><Type>${r.type}</Type></Restrictions>`).join('') +
   `<RestrictionsMask>${(2 ** s.restrictions.length) - 1}</RestrictionsMask></row>`).join(''));
 
-module.exports = { esc, unesc, parseRequest, envelope, discoverResponse, executeResponse, EMPTY_ROOT, fault, columns, rowset, schemaRowsets };
+module.exports = { esc, unesc, inner, parseRequest, envelope, discoverResponse, executeResponse, EMPTY_ROOT, fault, columns, rowset, schemaRowsets };

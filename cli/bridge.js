@@ -17,7 +17,7 @@
 const net = require('node:net');
 const os = require('node:os');
 const fs = require('node:fs');
-const { join } = require('node:path');
+const { join, dirname } = require('node:path');
 const { createHash } = require('node:crypto');
 
 const MAX_REQUEST = 1024 * 1024;
@@ -52,7 +52,10 @@ const COMMANDS = {
 const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', showSql: '--show-sql', downloaded: '--downloaded', workspace: '--workspace', name: '--name', open: '--open', mode: '--mode' };
 
 /** What is wrong with a request, or null: asked before the extension is, and by it. */
-function checkRequest({ args, opts = {} }) {
+function checkRequest(request) {
+  // Whatever arrived on the pipe: a request that is no object, or whose options are none, is an unknown command.
+  const { args, opts: given } = request && typeof request === 'object' ? request : {};
+  const opts = given && typeof given === 'object' ? given : {};
   const [name, ...rest] = Array.isArray(args) ? args.map(String) : [];
   if (!name || !Object.hasOwn(COMMANDS, name)) {
     return `unknown command: ${name || '(none)'} — ${Object.keys(COMMANDS).join(', ')}`;
@@ -79,9 +82,34 @@ function checkRequest({ args, opts = {} }) {
 function bridgePath() {
   if (process.env.ONELAKE_STUDIO_BRIDGE) return process.env.ONELAKE_STUDIO_BRIDGE;
   const user = createHash('sha256').update(os.userInfo().username).digest('hex').slice(0, 12);
-  return process.platform === 'win32'
-    ? `\\\\.\\pipe\\onelake-studio-${user}`
-    : join(os.tmpdir(), `onelake-studio-${user}.sock`);
+  if (process.platform === 'win32') return `\\\\.\\pipe\\onelake-studio-${user}`;
+  // In a folder of this user's own, not in the temp folder itself: on Linux that is /tmp, which everyone
+  // writes to, and whoever made a socket of this name first would be asked the questions and answer them.
+  return join(os.tmpdir(), `onelake-studio-${user}`, 'bridge.sock');
+}
+
+/**
+ * The folder a socket is in, made if it isn't there, or why it can't be used: it must be this user's, a real
+ * folder, and closed to everyone else. Nothing to check on Windows, where a pipe is in no folder, or for a path
+ * the caller named. Returns null when it is fine.
+ */
+function socketFolder(path, { make = false } = {}) {
+  if (process.platform === 'win32' || process.env.ONELAKE_STUDIO_BRIDGE === path) return null;
+  const dir = dirname(path);
+  if (dir === os.tmpdir()) return null;   // a path a test or a caller chose
+  try {
+    if (make) { try { fs.mkdirSync(dir, { mode: 0o700 }); } catch (e) { if (e.code !== 'EEXIST') throw e; } }
+    const st = fs.lstatSync(dir);
+    if (!st.isDirectory()) return `${dir} is not a folder`;
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return `${dir} belongs to another user`;
+    if (st.mode & 0o077) {
+      if (!make) return `${dir} is open to other users`;
+      fs.chmodSync(dir, 0o700);
+    }
+    return null;
+  } catch (e) {
+    return e.code === 'ENOENT' ? null : `${dir}: ${e.message}`;
+  }
 }
 
 /**
@@ -94,6 +122,8 @@ function serveBridge({ handle, log = () => {}, path = bridgePath() }) {
 
   function start() {
     if (disposed) return;
+    const unsafe = socketFolder(path, { make: true });
+    if (unsafe) { log(`bridge: not serving the command line — ${unsafe}`); return; }
     server = net.createServer(sock => {
       let buf = '';
       const gone = new AbortController();
@@ -149,8 +179,11 @@ function serveBridge({ handle, log = () => {}, path = bridgePath() }) {
  */
 function askBridge(request, path = bridgePath(), { timeoutMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
-    const sock = net.connect(path);
     const noExtension = message => Object.assign(new Error(message), { code: 'NO_EXTENSION' });
+    // A socket in a folder someone else made is someone else's: nothing is sent to it.
+    const unsafe = socketFolder(path);
+    if (unsafe) { reject(noExtension(`OneLake Studio's socket is not safe to use — ${unsafe}`)); return; }
+    const sock = net.connect(path);
     const timer = timeoutMs > 0 ? setTimeout(() => {
       reject(Object.assign(new Error(`no answer in ${timeoutMs / 1000}s — the query is stopped`), { code: 'TIMEOUT' }));
       sock.destroy();
@@ -176,4 +209,4 @@ function askBridge(request, path = bridgePath(), { timeoutMs = 0 } = {}) {
   });
 }
 
-module.exports = { serveBridge, askBridge, EXIT, exitName, failureJson, COMMANDS, checkRequest, MAX_REQUEST };
+module.exports = { serveBridge, askBridge, EXIT, exitName, failureJson, COMMANDS, checkRequest, MAX_REQUEST, bridgePath, socketFolder };

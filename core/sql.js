@@ -160,7 +160,7 @@ function topLevelWords(text) {
 
 function isRead(text) {
   // (SELECT 1) UNION ALL (SELECT 2) starts with a parenthesis.
-  const first = (/^[\s(]*([A-Za-z_]+)/.exec(text) || [, ''])[1].toLowerCase();
+  const first = (/^[\s(]*([A-Za-z_]+)/.exec(text) || [null, ''])[1].toLowerCase();
   if (first !== 'with') return READS.has(first);
   // The statement after the CTEs is the first top-level word that can start one, other than a
   // CTE's own name: `values` is a legal one, bare.

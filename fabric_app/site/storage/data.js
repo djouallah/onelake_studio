@@ -54,7 +54,7 @@
 
 import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/+esm.js";
 import { engineQueue } from "./queue.js";
-import { OPEN, SETTINGS, DIRECT_IO, openEngine } from "./session.js";
+import { SETTINGS, DIRECT_IO, openEngine } from "./session.js";
 import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
 import { createCatalog } from "./catalog.js";

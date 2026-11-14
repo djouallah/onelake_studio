@@ -8,9 +8,8 @@
 //
 // No editor, no credentials, no lakehouse. Run: node test/js/run-panel-semantic.mjs
 import http from "node:http";
-import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
@@ -20,7 +19,6 @@ import { panelHost, servePanel } from "./panel-host.mjs";
 const require = createRequire(import.meta.url);
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-const APP = join(root, "page");
 const VENDOR = join(root, "vendor");
 const PORT = 5209;
 const ORIGIN = `http://127.0.0.1:${PORT}`;

@@ -97,8 +97,9 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
   }
 
   // DirectQuery: each of the model's data sources takes OAuth2 with the caller's identity (SSO).
-  // A model someone else set up is taken over first: only its owner may set its credentials.
-  async function bindSso(ws, id) {
+  // A model someone else set up has to be taken over first: only its owner may set its credentials. That
+  // makes the caller its owner, so `onTakeOver` is asked before, and stops it by throwing.
+  async function bindSso(ws, id, { onTakeOver = async () => {} } = {}) {
     const sources = async () => ((await json(await pbi(`/groups/${ws}/datasets/${id}/datasources`, { what: 'Reading the model\'s data sources' }))) || {}).value || [];
     const token = await sqlToken();
     if (!token) throw new Error('not signed in to the SQL endpoint');
@@ -115,6 +116,7 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
       for (const s of list) await set(s);
     } catch (e) {
       if (e.status !== 401 && e.status !== 403) throw e;
+      await onTakeOver();
       await pbi(`/groups/${ws}/datasets/${id}/Default.TakeOver`, { method: 'POST', what: 'Taking over the semantic model' });
       list = await sources();
       for (const s of list) await set(s);

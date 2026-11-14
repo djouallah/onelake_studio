@@ -199,6 +199,20 @@ async function memberPaths(cube, h, depth, prefix, { query, literal, signal }) {
   return rows.map(r => r.path);
 }
 
+// How many member queries one request runs at once, as a cell set's grains do (cellset.js).
+const AT_ONCE = 4;
+// Runs what it is given `n` at a time, the rest waiting their turn in the order they came.
+function inTurns(n) {
+  let running = 0;
+  const waiting = [];
+  return async run => {
+    if (running >= n) await new Promise(resolve => waiting.push(resolve));
+    running++;
+    try { return await run(); }
+    finally { running--; const next = waiting.shift(); if (next) next(); }
+  };
+}
+
 async function memberRows(cube, r, ctx) {
   const rows = [];
   const add = (h, paths) => { for (const p of paths) rows.push(memberRow(cube, h, p, rows.length)); };
@@ -209,7 +223,10 @@ async function memberRows(cube, r, ctx) {
     if (!hit?.hierarchy || !hit.path) return [];
     const { hierarchy: h, path } = hit;
     const op = Number(r.TREE_OP?.[0] || 8);
-    const children = p => memberPaths(cube, h, p.length + 1, p, ctx);
+    // A few at a time: a hierarchy's every descendant is one query a member, and all of them at once would be
+    // thousands of statements on the engine for one request.
+    const turn = inTurns(AT_ONCE);
+    const children = p => turn(() => memberPaths(cube, h, p.length + 1, p, ctx));
     const descendants = async p => {
       if (!hasChildren(h, p.length)) return [];
       const kids = await children(p);
