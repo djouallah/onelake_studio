@@ -9,8 +9,9 @@
   runs as part of the statement that names it. A file whose view or macro calls one of the lake's own functions, or
   `query()`, is no longer opened, and the message names it. `json_execute_serialized_sql` is refused in a
   statement, as `query()` is.
-- **A community extension is the one that ships.** `h3`, `zipfs` and `nanoarrow` are never downloaded in place of a
-  bundled file, and every package now has all three.
+- **An extension is the one that ships.** A packaged build never downloads a DuckDB extension in place of a bundled
+  file: with `h3`, `zipfs` and `nanoarrow` loaded as unsigned, DuckDB would check none it fetched. Every package has
+  all of them.
 - **Download CSV works again in a model's Visual.** Since 0.2.24 it failed on every model: the button called the
   code that saves a model file back.
 - **An app's file from another computer asks before it publishes.** A `.fabricapp` names the app it is published

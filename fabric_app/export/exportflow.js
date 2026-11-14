@@ -29,9 +29,22 @@ const oldMarker = dir => fsp.readFile(join(dir, OLD_MARKER), 'utf8')
 // The app's name in Fabric is plan.name, and stays so.
 const localName = s => String(s || '').split(/[\\/]/).pop()
   .replace(/(\.ossie)?\.(ya?ml|bim)$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'model';
-// The apps this computer published, by item id (memento): an app's file names the item it is published
-// over, so a file from elsewhere could otherwise name any app its reader may write, and replace it unasked.
+// The apps this computer published, each with the file it was published from (memento, item id -> path): an
+// app's file names the item it is published over, so a file from elsewhere could otherwise name any app its
+// reader may write, and replace it unasked.
 const PUBLISHED = 'exportedItems';
+const samePath = (a, b) => String(a || '').replace(/\\/g, '/').toLowerCase() === String(b || '').replace(/\\/g, '/').toLowerCase();
+// One write of a zip at a time, by its path: a tile saved while an export writes its record would otherwise
+// be read before that write and written after it, and one of the two would be gone.
+const turns = new Map();
+function inTurn(path, run) {
+  const key = String(path).replace(/\\/g, '/').toLowerCase();
+  const next = (turns.get(key) || Promise.resolve()).then(run, run);
+  const settled = next.catch(() => {});
+  turns.set(key, settled);
+  settled.then(() => { if (turns.get(key) === settled) turns.delete(key); });
+  return next;
+}
 // Which zip a model's Report tab reads: the model by its workspace and its name, as the page knows it.
 const reportKey = (workspace, model) => `exportReport:${String(workspace).toLowerCase()}/${String(model).toLowerCase()}`;
 // The file a model's Report is kept in before it has a zip, in `reportDir`: by the same names.
@@ -189,16 +202,27 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       // taken at its word only for an app this computer published: a file from someone else is asked about,
       // since it would replace an app of yours with its own pages. Asked once: published, it is this
       // computer's.
-      const published = () => new Set((memento.get(PUBLISHED) || []).map(String));
-      if (before && before.itemId && !published().has(String(before.itemId))) {
-        const redirects = (Array.isArray(before.redirects) ? before.redirects : []).map(String);
+      // By the file too, not the item alone: a file someone sends can name an app this computer did publish.
+      // And a file that names no app yet can still carry redirects, which the app it makes would keep.
+      const published = () => {
+        const kept = memento.get(PUBLISHED);
+        // (An earlier build of this kept the ids alone.)
+        return Array.isArray(kept) ? Object.fromEntries(kept.map(id => [String(id), null])) : { ...(kept || {}) };
+      };
+      const redirects = (before && Array.isArray(before.redirects) ? before.redirects : []).map(String);
+      const id = before && before.itemId ? String(before.itemId) : null;
+      // Where this computer published that app from, when it did (null: by a build that kept no path).
+      const from = id && Object.hasOwn(published(), id) ? published()[id] : undefined;
+      const ours = id ? from !== undefined && (from === null || samePath(from, outZip)) : !redirects.length;
+      if (before && !ours) {
+        const over = before.itemId ? ` Publish it over the app it names (${before.name || plan.name})?` : ' Publish it?';
         const pick = await ui.warn(
-          `OneLake Studio has not published ${basename(outZip)} from this computer before. Publish it over the app ${plan.name}?`,
-          { modal: true, detail: `The app in ${pbi.workspace} is replaced by ${asIs ? 'the pages in this file' : 'this Explore'}.` +
+          `OneLake Studio has not published ${basename(outZip)} from this computer before.${over}`,
+          { modal: true, detail: (before.itemId ? `The app in ${pbi.workspace} is replaced by ${asIs ? 'the pages in this file' : 'this Explore'}.` : `A new app is made in ${pbi.workspace}.`) +
               (redirects.length ? `\nSign-in redirects in the file: ${redirects.join(', ')}` : '') }, 'Publish It');
         if (pick !== 'Publish It') throw declined(`Not exported: ${basename(outZip)} was not published from this computer before.`);
       }
-      const publishedHere = id => memento.update(PUBLISHED, [...published().add(String(id))]);
+      const publishedHere = id => memento.update(PUBLISHED, { ...published(), [String(id)]: outZip });
 
       // Deployed again since this zip published it (another machine, rayfin up)?
       // Asked before it is replaced.
@@ -301,8 +325,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
               // item is its own rather than ask about an app it made.
               onItem: async id => {
                 await publishedHere(id);
-                await reportNow();
-                await writeApp(outZip, files, { ...marker, itemId: id });
+                await inTurn(outZip, async () => { await reportNow(); await writeApp(outZip, files, { ...marker, itemId: id }); });
               },
             });
           } finally { appLog = quiet; }
@@ -314,11 +337,10 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
           // deploy's time by Fabric's clock.
           const live = await fabricApp.deployStatus(plan.workspace, done.itemId).catch(() => null);
           await publishedHere(done.itemId);
-          await reportNow();
-          await writeApp(outZip, files, { ...marker, engine: plan.engine, itemId: done.itemId, hostingUrl: done.hostingUrl,
+          await inTurn(outZip, async () => { await reportNow(); await writeApp(outZip, files, { ...marker, engine: plan.engine, itemId: done.itemId, hostingUrl: done.hostingUrl,
                                           redirects: done.redirects, exportedAt: new Date().toISOString(),
                                           deployedAt: (live && live.lastSuccessfulDeploymentAt) || new Date().toISOString(),
-                                          files: fingerprint(files) });
+                                          files: fingerprint(files) }); });
           return done;
         });
       // The Apps of the workspace the app was published to (the lakehouse's, not always the
@@ -386,10 +408,12 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
     }
     const bytes = Buffer.from(JSON.stringify(spec, null, 2) + '\n', 'utf8');
     if (home.zipPath) {
-      const app = await readApp(home.zipPath);
-      if (!app) throw new Error(`${home.zipPath} is gone`);
-      app.files.set(REPORT, bytes);
-      await writeApp(home.zipPath, app.files, app.marker);
+      await inTurn(home.zipPath, async () => {
+        const app = await readApp(home.zipPath);
+        if (!app) throw new Error(`${home.zipPath} is gone`);
+        app.files.set(REPORT, bytes);
+        await writeApp(home.zipPath, app.files, app.marker);
+      });
     } else {
       if (!home.file) throw new Error('the Report is not kept here');
       await fsp.mkdir(dirname(home.file), { recursive: true });

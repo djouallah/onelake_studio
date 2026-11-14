@@ -76,6 +76,9 @@ const FATAL = /database has been invalidated/i;
  */
 function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () => {} }) {
   let last = 0n, moved = 0, chain = Promise.resolve(), timers = [];
+  // Turns in a row the log file refused rows, and how many of those keep the rows for the next.
+  let refused = 0;
+  const KEEP_TRYING = 5;
   let asked = 0;              // statements someone asked for, since this process started
 
   // The rows past `last`, as the log file keeps them.
@@ -98,10 +101,15 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
     const rows = await engine.readLog(last);
     if (!rows.length) return;
     // Rows count as moved only once the log file has them: one that was busy gets them again next turn.
+    // A file that stays unwritable is not waited on for ever: after a few turns the rows are let go, or DuckDB's
+    // own log, which is emptied only as rows move, would grow for as long as the server lives.
     const was = { last, moved, asked };
     const fresh = take(rows);
-    try { if (maxBytes > 0) logs.add(fresh); }
-    catch (e) { ({ last, moved, asked } = was); throw e; }
+    try { if (maxBytes > 0) logs.add(fresh); refused = 0; }
+    catch (e) {
+      if (++refused <= KEEP_TRYING) ({ last, moved, asked } = was);
+      throw e;
+    }
     if (moved > EMPTY_PAST_ROWS) {
       // What was logged while the rows above were being kept, read just before the log is emptied:
       // emptying takes everything, and a statement in neither read would never be in the Logs tab.

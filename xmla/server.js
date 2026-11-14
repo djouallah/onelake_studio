@@ -122,6 +122,9 @@ function serveXmla({ port, token, backend, log = () => {}, onPortLost = () => {}
       if (e.code !== 'EADDRINUSE') {
         if (said !== e.message) log(`xmla: ${e.message}`);
         said = e.message;
+        // A port this machine won't give (Windows keeps ranges back for Hyper-V and WSL) is refused every time:
+        // lost, as one something else holds is.
+        if (e.code === 'EACCES' || e.code === 'EADDRNOTAVAIL') { onPortLost(); return; }
         if (!disposed) timer = setTimeout(start, RETRY_MS);
         return;
       }

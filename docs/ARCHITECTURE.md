@@ -189,8 +189,10 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive. Nothing loads after it: every extension is loaded before, and autoload is off. They load from the
   files that ship, `httpfs` and `avro` before `iceberg`, which asks for both as it starts, so a first start fetches
-  nothing. A community extension is never fetched: DuckDB 2.0 takes its signature only from its own repository, so
-  the shipped file loads as unsigned, held by its hash at build time, and one that isn't shipped is not there.
+  nothing. DuckDB 2.0 takes a community extension's signature only from its own repository, so the shipped `h3`,
+  `zipfs` and `nanoarrow` load as unsigned, each held to its hash at build time. With unsigned loading on DuckDB checks
+  no signature at all, so in a packaged build no extension is ever fetched, a core one included: one whose shipped
+  file is missing or won't load is not there, and the engine doesn't start without one it needs.
 - **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one, or one of
   [SQL's writes](#sql-writes) to a lakehouse. Never `EXPORT`, `PRAGMA`, `DROP`, anything that attaches, a Quack
   function, the log's own switches, a `ducklake_` function, `query()` or `json_execute_serialized_sql()`, a function
@@ -904,10 +906,10 @@ and the command line's `export` takes no `--mode`.
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
   local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
 - **A file from another computer asks first.** The local copy names the app it is published over, and the sign-in
-  redirects that app keeps. Both are taken at its word only for an app this computer published (their ids are kept
-  in the window's own state, `exportedItems`). Any other file is asked about before it is published, with the
-  redirects it would add shown: it would replace an app of yours with its own pages. Asked once: published, the app
-  is this computer's. An app exported by a version from before this is asked about once too.
+  redirects that app keeps. Both are taken at its word only for an app this computer published from that same file (each app's id
+  and its file's path are kept in the window's own state, `exportedItems`). Any other file is asked about before it is
+  published, with the redirects it would add shown: it would replace an app of yours with its own pages. So is a file
+  that names no app yet and carries redirects. Asked once: published, the app and the file are this computer's. An app exported by a version from before this is asked about once too.
 - **Saving over the file rewrites it**, from this Explore, its report kept: nothing is asked about what changed in it.
   An edit made in the file (by a person or an agent) is published by opening the `.fabricapp` and exporting there,
   which publishes it as it is.

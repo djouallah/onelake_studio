@@ -72,6 +72,10 @@ const FORBIDDEN_READS = [
   "SELECT * FROM ducklake_cleanup_old_files('lake', cleanup_all => true)",
   "SELECT * FROM \"ducklake_expire_snapshots\" ('lake')",
   "SELECT * FROM ducklake_delete_orphaned_files /* c */ ('lake')",
+  "SELECT * FROM lake.expire_snapshots(older_than => now())",
+  "SELECT * FROM \"lake\" . cleanup_old_files (cleanup_all => true)",
+  "SELECT * FROM lake.main.merge_adjacent_files()",
+  "SELECT * FROM system_internal.anything()",
   "SELECT write_blob('x', 'y')",
   "SELECT write_log('forged')",
   "SELECT * FROM truncate_duckdb_logs()",
@@ -106,6 +110,10 @@ const READS = [
   "EXPLAIN ANALYZE SELECT 1",
   "EXPLAIN (ANALYZE, FORMAT json) SELECT 1",
   "SELECT ducklake_mart.dbo.t.a FROM ducklake_mart.dbo.t",
+  "SELECT lake.a, snowflake.b(1) FROM t AS lake",
+  "SELECT * FROM system_internal.ducklake_snapshot",
+  "SELECT * FROM ws.lake.dbo.t",
+  "SELECT 'lake.expire_snapshots(' AS note",
   "SELECT update_time, delete_flag, copy_count FROM ws.lh.dbo.t",
   "SELECT * FROM read_parquet('abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.parquet')",
   "SELECT 1;",
@@ -246,4 +254,36 @@ test("a long statement is read in time linear in its length: no pattern here goe
     for (const check of [assertReads, tableRefs, oneLakeScopes]) { try { check(text); } catch (e) { assert.ok(e instanceof Error); } }
     assert.ok(Date.now() - started < 4000, `${what}: ${Date.now() - started} ms for ${text.length} characters`);
   }
+});
+
+// --- what a database file keeps ---
+
+test("a view, a macro or a column default kept in a file is held to what a statement may call, and the first that isn't is named", () => {
+  const { storedFault } = sql;
+  const of = (kind, body, name = "x") => storedFault([{ kind, schema: "main", name, body }]);
+  assert.equal(storedFault([]), null);
+  assert.equal(of("view", "CREATE VIEW x AS SELECT * FROM t;"), null);
+  assert.equal(of("macro", "(a + b)"), null);
+  assert.equal(of("column", "nextval('seq')"), null);
+  assert.equal(of("view", "CREATE VIEW x AS SELECT 'ducklake_snapshots(''lake'')' AS note, 'query(' AS q;"), null, "said in a string, not called");
+  for (const [kind, body] of [
+    ["view", "CREATE VIEW x AS SELECT * FROM ducklake_snapshots('lake');"],
+    ["view", "CREATE VIEW x AS SELECT * FROM DUCKLAKE_cleanup_old_files('lake', cleanup_all => true);"],
+    ["view", "CREATE VIEW x AS SELECT * FROM lake.expire_snapshots(older_than => now());"],
+    ["view", "CREATE VIEW x AS SELECT * FROM \"lake\".\"main\".cleanup_old_files();"],
+    ["view", "CREATE VIEW x AS SELECT * FROM query('SELECT 1');"],
+    ["view", "CREATE VIEW x AS SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1'));"],
+    ["view", "CREATE VIEW x AS SELECT * FROM quack_query('quack:127.0.0.1:1', 'SELECT 1');"],
+    ["view", "CREATE VIEW x AS SELECT * FROM read_parquet('abfss://ws@evil.example.com/f.parquet');"],
+    ["macro", "SELECT * FROM query(s)"],
+    ["macro", "write_blob(a, b)"],
+    ["column", "write_log('x')"],
+  ]) {
+    const said = of(kind, body, "thing");
+    assert.match(String(said), new RegExp(`^its ${kind} main\\.thing is not one a statement could be: `), `${body} -> ${said}`);
+  }
+  // One bad one among many good ones is found, wherever it is.
+  const many = Array.from({ length: 500 }, (_, i) => ({ kind: "view", schema: "s", name: `v${i}`, body: `CREATE VIEW v${i} AS SELECT ${i};` }));
+  many.splice(317, 0, { kind: "macro", schema: "s", name: "run", body: "SELECT * FROM query(s)" });
+  assert.match(storedFault(many), /^its macro s\.run /);
 });

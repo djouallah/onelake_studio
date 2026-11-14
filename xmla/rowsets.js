@@ -206,10 +206,11 @@ function inTurns(n) {
   let running = 0;
   const waiting = [];
   return async run => {
+    // A turn is handed on, never given back and taken again: nobody arriving in between gets in front.
     if (running >= n) await new Promise(resolve => waiting.push(resolve));
-    running++;
+    else running++;
     try { return await run(); }
-    finally { running--; const next = waiting.shift(); if (next) next(); }
+    finally { const next = waiting.shift(); if (next) next(); else running--; }
   };
 }
 

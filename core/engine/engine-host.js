@@ -540,13 +540,16 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         catch (e) { onWarn(`bundled '${ext}' would not load (${e.message}); trying the repository`); }
       }
       if (!loaded) try {
-        // With unsigned extensions allowed (for the ones this build ships), nothing would check one that came
-        // from anywhere else: a community extension is the shipped file or it is not there.
-        if (repo && unsignedAllowed) throw new Error('this build does not ship it, and nothing is downloaded in its place');
+        // With unsigned extensions allowed (for the community ones this build ships), DuckDB checks no
+        // signature at all, a core extension's included: so any extension is the shipped file or it is not
+        // there. One that came from the repository, or was left in the extension folder, would be taken as it is.
+        if (unsignedAllowed) throw new Error(shipped && fs.existsSync(shipped)
+          ? 'the file this build ships would not load, and nothing is downloaded in its place'
+          : 'this build does not ship it, and nothing is downloaded in its place');
         await conn.run(`LOAD ${ext};`);
       }
       catch (e) {
-        if (repo && unsignedAllowed) throw e;
+        if (unsignedAllowed) throw e;
         // INSTALL has no timeout, and every statement waits for the boot.
         if (offlineReason() === 'no internet') throw new Error('there is no internet to install it');
         await conn.run(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ''};`);
@@ -582,7 +585,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     // One engine holds the lake: its metadata file can be open in one process only. Without it no OneLake
     // table can be read, so the engine doesn't start.
     try { await attachLake(conn, duckdbPath(lakeDirs.meta)); }
-    catch (e) { throw new Error(`the lake could not be opened, so no OneLake table can be read: ${e.message}`); }
+    catch (e) {
+      // The usual reason: an engine from before an update still holds it, for a window that was not reloaded.
+      const held = /\block\b|being used by another process|already open|\bin use\b/i.test(String(e.message))
+        ? ' Another OneLake Studio engine holds it: after an update, reload or close the other windows, then try again.' : '';
+      throw new Error(`the lake could not be opened, so no OneLake table can be read: ${e.message}${held}`);
+    }
     capabilities.lake = true;
     // The places its tables were synced from in an earlier run: their files are read with no sync to say so.
     try {
@@ -1550,16 +1558,25 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           }, undefined, { signal }));
           // A DuckDB file's views and macros run as part of whatever statement names them, and the file is
           // someone else's: one that calls what no statement may is not attached at all.
-          if (!sqlite) {
+          // A SQLite file's views are read by DuckDB too, so they are held to it as well. A column's default or
+          // generated expression is text of the file's that runs the same way. If the check itself can't be
+          // made (a Stop in the middle of it), the file is not left attached and unchecked.
+          try {
+            const db = `database_name = ${sqlStr(as)}`;
             const stored = await runAll(`SELECT 'view' AS kind, schema_name AS "schema", view_name AS name, sql AS body
-                FROM duckdb_views() WHERE database_name = ${sqlStr(as)} AND NOT internal
+                FROM duckdb_views() WHERE ${db} AND NOT internal
               UNION ALL SELECT 'macro', schema_name, function_name, macro_definition
-                FROM duckdb_functions() WHERE database_name = ${sqlStr(as)} AND NOT internal AND macro_definition IS NOT NULL`, owner);
-            const fault = storedFault(stored.rows);
-            if (fault) {
-              await runAll(`DETACH ${quoteIdent(as)}`, owner).catch(() => {});
-              throw new Error(`${as} is not opened: ${fault}`);
-            }
+                FROM duckdb_functions() WHERE ${db} AND NOT internal AND macro_definition IS NOT NULL
+              UNION ALL SELECT 'column', schema_name, table_name || '.' || column_name, column_default
+                FROM duckdb_columns() WHERE ${db} AND NOT internal AND column_default IS NOT NULL`, owner);
+            // Every one of them is read, or none is trusted: a result is cut at the tab's row limit.
+            const fault = stored.numRows > stored.rows.length
+              ? `it holds ${stored.numRows.toLocaleString()} views, macros and column defaults, more than are checked`
+              : storedFault(stored.rows);
+            if (fault) throw new Error(`${as} is not opened: ${fault}`);
+          } catch (e) {
+            await runAll(`DETACH ${quoteIdent(as)}`, owner).catch(x => onWarn(`${as} could not be detached after it was refused — ${x.message}`));
+            throw e;
           }
           attached.add(as);
           attachedFiles.add(as.toLowerCase());

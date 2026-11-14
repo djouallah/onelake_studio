@@ -102,7 +102,7 @@ test("on a yes it is published, and is this computer's from then on: the next ex
   const { flow, asked, published, kept, done } = await setup({ answers: ["Publish It"] });
   await flow.exportExplore({ ...REQUEST, appFile: file });
   assert.deepEqual(published, [{ itemId: "victim-item", redirects: [EVIL] }]);
-  assert.deepEqual(kept.get("exportedItems"), ["victim-item"]);
+  assert.deepEqual(kept.get("exportedItems"), { "victim-item": file }, "with the file it was published from");
   const questions = () => asked.filter(a => /has not published/.test(a.message)).length;
   assert.equal(questions(), 1);
   await flow.exportExplore({ ...REQUEST, appFile: file });
@@ -119,7 +119,7 @@ test("a file that names no app yet is not asked about: its app is made here, and
   await flow.exportExplore({ ...REQUEST, appFile: file });
   assert.equal(asked.filter(a => /has not published/.test(a.message)).length, 0);
   assert.deepEqual(published, [{ itemId: null, redirects: [] }]);
-  assert.deepEqual(kept.get("exportedItems"), ["new-item"]);
+  assert.deepEqual(kept.get("exportedItems"), { "new-item": file });
   assert.equal((await readApp(file)).marker.itemId, "new-item");
   await rm(dir, { recursive: true, force: true });
   await done();
@@ -213,4 +213,69 @@ test("Create Semantic Model asks before it takes a model over, and a No leaves i
   await b.flow.createSemanticModel(CREATE);
   assert.equal(yes.taken(), true);
   await b.done();
+});
+
+test("a file that names an app this computer did publish, but is another file, is asked about too", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "provenance-app-"));
+  const mine = await appFile(dir, { itemId: "my-item" });
+  const { flow, asked, published, kept, done } = await setup({ answers: [undefined] });
+  kept.set("exportedItems", { "my-item": mine });
+  await flow.exportExplore({ ...REQUEST, appFile: mine });
+  assert.equal(asked.filter(a => /has not published/.test(a.message)).length, 0, "its own file asks nothing");
+  // The same app named by a file that came from somewhere else: its pages are not this computer's.
+  const theirs = join(dir, "from-a-colleague", "sales.fabricapp");
+  await mkdir(join(dir, "from-a-colleague"));
+  await writeApp(theirs, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// theirs")], ["rayfin/rayfin.yml", Buffer.from(RAYFIN)]]),
+    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", itemId: "my-item" });
+  const e = await flow.exportExplore({ ...REQUEST, appFile: theirs }).then(() => null, x => x);
+  assert.equal(e && e.declined, true);
+  assert.equal(published.length, 1, "only the first reached Fabric");
+  assert.match(asked.at(-1).message, /Publish it over the app it names \(sales-model-explore\)\?/);
+  // A record from a build that kept the ids alone still counts, for any file: it had no path to hold a file to.
+  kept.set("exportedItems", ["my-item"]);
+  await flow.exportExplore({ ...REQUEST, appFile: mine });
+  assert.equal(published.length, 2);
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("a file that names no app yet but carries sign-in redirects is asked about: the app it makes would keep them", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "provenance-app-"));
+  const file = await appFile(dir, { redirects: [EVIL] });
+  const { flow, asked, published, done } = await setup({ answers: [undefined] });
+  const e = await flow.exportExplore({ ...REQUEST, appFile: file }).then(() => null, x => x);
+  assert.equal(e && e.declined, true);
+  assert.equal(published.length, 0);
+  assert.match(asked[0].message, /from this computer before\. Publish it\?$/);
+  assert.ok(asked[0].rest[0].detail.includes(EVIL));
+  assert.match(asked[0].rest[0].detail, /^A new app is made in power bi\./);
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("a tile saved and an export's own record written at the same moment: both are in the file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "provenance-app-"));
+  const file = await appFile(dir);
+  const TILES = { tiles: [{ title: "at the same moment", kind: "text", text: "hi" }] };
+  let a, saving;
+  // Not waited for: the save is under way while the publish goes on to write its record.
+  const onPublish = async () => {
+    const { stamp } = await a.flow.reportOf({ workspace: "power bi", model: "sales" });
+    saving = a.flow.reportSave({ workspace: "power bi", model: "sales", spec: TILES, stamp }).then(() => null, e => e);
+  };
+  a = await setup({ onPublish });
+  await a.flow.exportExplore({ ...REQUEST, appFile: file });
+  const refused = await saving;
+  // A save that found the file changed since it was drawn is refused, by design, and the page saves again.
+  if (refused) {
+    assert.match(refused.message, /changed since it was drawn/);
+    const { stamp } = await a.flow.reportOf({ workspace: "power bi", model: "sales" });
+    await a.flow.reportSave({ workspace: "power bi", model: "sales", spec: TILES, stamp });
+  }
+  const after = await readApp(file);
+  assert.deepEqual(JSON.parse(after.files.get("site/report.json").toString("utf8")), TILES);
+  assert.equal(after.marker.itemId, "new-item", "the save did not write an older record back over the export's");
+  assert.ok(after.marker.exportedAt, "nor lose that it was published");
+  await rm(dir, { recursive: true, force: true });
+  await a.done();
 });

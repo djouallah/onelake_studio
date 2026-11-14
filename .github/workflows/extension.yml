@@ -116,10 +116,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      # npm test's own list of files, with what they cover of the product printed after them.
+      # npm test's own list of files, with what they cover of the product printed after them. The floors are a
+      # few points under what it was on 2026-11-14 (81% of lines, 86% of branches, 82% of functions): a change
+      # that drops under them took tests away, or added code with none. It counts only the files a test loads,
+      # so the extension's own files, which need VS Code, are not in it.
       - name: npm test, with its coverage
         run: >-
           node --test --experimental-test-coverage --test-coverage-exclude='test/**' --test-coverage-exclude='scripts/**'
+          --test-coverage-lines=78 --test-coverage-branches=83 --test-coverage-functions=78
           $(node -p "require('./package.json').scripts.test.replace(/^node --test /, '')")
 
   # What reads the tree and runs nothing of the product. Each of these has failed for a real reason
@@ -629,8 +633,12 @@ jobs:
         run: |
           Remove-Item -Recurse -Force src-tauri/target/release/bundle -ErrorAction SilentlyContinue
           npx --yes @tauri-apps/cli@2.12.4 icon ../media/icon.png
-          # --locked: the crates Cargo.lock names, which the "Refresh extension lockfile" workflow wrote.
-          npx --yes @tauri-apps/cli@2.12.4 build -- --locked
+          npx --yes @tauri-apps/cli@2.12.4 build
+          # The crates Cargo.lock names, which the "Refresh extension lockfile" workflow wrote, and no others:
+          # a build that had to change the file used something it doesn't name. (Said this way, not with
+          # cargo's --locked: PowerShell and npx each have their own idea of what a bare -- is.)
+          git diff --exit-code -- src-tauri/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { throw 'the build changed Cargo.lock: run the "Refresh extension lockfile" workflow' }
       - if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

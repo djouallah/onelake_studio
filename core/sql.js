@@ -238,6 +238,8 @@ function refuseCalls(sql) {
   // The lake's own functions write, and one deletes files from a SELECT: here those files are OneLake's. Its
   // metadata, system_internal, is read like any table. Called, not named: ducklake_mart can be a schema.
   if (/\bducklake_\w+"?\s*\(/i.test(called)) refuse('the lake is kept by the engine, not by statements');
+  // The same functions by their other names: DuckLake has each as <catalog>.fn() too, and the catalog is `lake`.
+  if (/(?:^|[^\w$."])"?(?:lake|system_internal)"?(?:\s*\.\s*"?[\w$]+"?)+\s*\(/i.test(called)) refuse('the lake is kept by the engine, not by statements');
   if (/\b(?:write_blob|write_log)"?\s*\(/i.test(called)) refuse('this function writes');
   // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
   // json_execute_serialized_sql runs a statement handed to it as JSON, which is the same thing.

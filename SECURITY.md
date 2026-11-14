@@ -26,7 +26,8 @@ out of the port.
 - **A web page in your browser.** Excel's endpoint and the desktop app's server listen on `127.0.0.1`, need a
   token, and refuse a request with an `Origin` or another `Host`.
 - **A file someone sends you.** A `.fabricapp`, `.bim`, `.yaml` or `.sql` file is read as data. Publishing a
-  `.fabricapp` that was not exported from this computer asks first.
+  `.fabricapp` asks first unless this computer published that app from that same file. The question shows the
+  sign-in redirects the file would add. It is a question to read, not a proof of where a file came from.
 - **What the build downloads.** Libraries and DuckDB's extensions are held to a recorded hash, and the native
   binding to the lockfile.
 

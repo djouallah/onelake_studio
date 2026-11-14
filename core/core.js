@@ -540,12 +540,12 @@ function createCore({
         },
       });
       xmlaServer = server;
-      server.listening.then(() => resolve(address));
+      // Whichever port answers last is the address: one lost later, after this was first given out, moves it.
+      server.listening.then(() => { xmlaAddress = address; resolve(address); });
     });
     const up = serve(port);
-    const late = new Promise(resolve => { const t = setTimeout(() => resolve({ port, token }), XMLA_UP_MS); if (t.unref) t.unref(); });
-    xmlaAddress = await Promise.race([up, late]);
-    return xmlaAddress;
+    const late = new Promise(resolve => { const t = setTimeout(() => resolve(null), XMLA_UP_MS); if (t.unref) t.unref(); });
+    return (await Promise.race([up, late])) || xmlaAddress || { port, token };
   }
   subscribe({ dispose: () => { if (xmlaServer) xmlaServer.dispose(); } });
   if (servesExcel) startXmla().catch(e => log(`xmla: ${e.message}`));

@@ -28,7 +28,7 @@ test("a body that stops arriving ends the download, and what came is not left be
     fetchImpl: async () => { asked++; return new Response(stalledBody("PAR1 half a f", () => cancelled++)); } });
   const dst = join(dir, "a.parquet.part");
   const started = Date.now();
-  await assert.rejects(download(URL_, dst), /no data came from OneLake for/);
+  await assert.rejects(download(URL_, dst), /no data moved for/);
   assert.ok(Date.now() - started < 5000, "in about two idle waits, not never");
   assert.equal(asked, 2, "tried once more, as a failed connection is");
   assert.equal(cancelled, 2, "and each stalled answer was let go of");
@@ -39,7 +39,7 @@ test("an answer that never comes ends the download too, even from a request that
   const signals = [];
   const download = httpsDownload({ getToken: async () => "tok", sleep: async () => {}, idleMs: 40,
     fetchImpl: (_u, o) => { signals.push(o.signal); return new Promise(() => {}); } });
-  await assert.rejects(download(URL_, join(dir, "a.part")), /no data came from OneLake for/);
+  await assert.rejects(download(URL_, join(dir, "a.part")), /no data moved for/);
   assert.equal(signals.length, 2);
   assert.ok(signals.every(s => s.aborted), "the request was told to stop");
   assert.deepEqual(await readdir(dir), []);
@@ -50,12 +50,12 @@ test("a slow body that keeps arriving is not a stalled one", t => inTemp(t, asyn
   const body = new ReadableStream({
     async pull(c) {
       if (!parts.length) return c.close();
-      await new Promise(r => setTimeout(r, 25));
+      await new Promise(r => setTimeout(r, 150));
       c.enqueue(new TextEncoder().encode(parts.shift()));
     },
   });
   // Longer in all than the idle limit, and never that long between two pieces.
-  const download = httpsDownload({ getToken: async () => "tok", idleMs: 100, fetchImpl: async () => new Response(body) });
+  const download = httpsDownload({ getToken: async () => "tok", idleMs: 700, fetchImpl: async () => new Response(body) });
   assert.equal(await download(URL_, join(dir, "a.part")), "PAR1 slow but coming PAR1".length);
 }));
 
@@ -109,3 +109,12 @@ test("only OneLake is asked, and a copy's place is never outside the cache folde
   }
   assert.equal(localOf("/cache/files", `${base}/col=1/x.parquet`), "/cache/files/ws/i.Lakehouse/Tables/t/col=1/x.parquet");
 });
+
+test("an answer that is a refusal is let go of, not left open", t => inTemp(t, async dir => {
+  let cancelled = 0;
+  const download = httpsDownload({ getToken: async () => "tok", sleep: async () => {},
+    fetchImpl: async () => new Response(stalledBody("no", () => cancelled++), { status: 403 }) });
+  await assert.rejects(download(URL_, join(dir, "a.part")), /OneLake answered 403/);
+  assert.equal(cancelled, 1);
+  assert.deepEqual(await readdir(dir), []);
+}));

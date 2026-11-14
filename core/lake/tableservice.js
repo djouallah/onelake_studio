@@ -19,8 +19,9 @@
 // No `vscode` import. The engine passes in its connection, the token and how to download.
 // =============================================================================
 
-const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, createWriteStream, readdirSync } = require('node:fs');
+const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, createWriteStream } = require('node:fs');
 const { Readable, Transform } = require('node:stream');
+const { readdir } = require('node:fs/promises');
 const { pipeline } = require('node:stream/promises');
 const { dirname, join } = require('node:path');
 const { sqlStr: q, assertOneLakeUrl } = require('../sql');
@@ -86,14 +87,19 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
   const init = () => ready || (ready = withConn(c => c.run(`CREATE TABLE IF NOT EXISTS ${HELD} (
     local VARCHAR PRIMARY KEY, path VARCHAR, relative BOOLEAN, bytes BIGINT, last_read BIGINT, unread_since BIGINT)`)).then(sweepParts));
   // A download a process didn't live to finish left its .part: no table names it, so nothing would ever count it
-  // or delete it. Before this process's first download, when none of them can be one of its own.
-  function sweepParts() {
+  // or delete it. Before this process's first download, when none of them can be one of its own. Not a copy that
+  // is held, whatever its name ends in. Listed off the event loop: the folder can hold a great many files.
+  async function sweepParts() {
     let names = [];
-    try { names = readdirSync(filesDir, { recursive: true }); } catch (_) { return; }
+    try { names = await readdir(filesDir, { recursive: true }); } catch (_) { return; }
+    const parts = names.map(String).filter(n => n.endsWith('.part'));
+    if (!parts.length) return;
+    const held = new Set((await withConn(c => rows(c, `SELECT local FROM ${HELD}`))).map(r => String(r.local).toLowerCase()));
     let gone = 0;
-    for (const name of names) {
-      if (!String(name).endsWith('.part')) continue;
-      try { rmSync(join(filesDir, String(name)), { force: true }); gone++; } catch (_) {}
+    for (const name of parts) {
+      const file = join(filesDir, name).replace(/\\/g, '/');
+      if (held.has(file.toLowerCase())) continue;
+      try { rmSync(file, { force: true }); gone++; } catch (_) {}
     }
     if (gone) log(`table service: ${gone} unfinished download(s) from before deleted`);
   }
@@ -126,6 +132,8 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
   function pump() {
     while (!closed && busy.size < parallel && queued.size) {
       const [url, size] = queued.entries().next().value;
+      // One too big to keep at all is never fetched: out of the queue, so it holds nothing up behind it.
+      if (size > maxBytes) { queued.delete(url); continue; }
       // The downloads under way would fill the cache by themselves: this one waits for one of them to land.
       if (busy.size && coming + size > maxBytes) break;
       queued.delete(url);
@@ -147,9 +155,11 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
     mkdirSync(dirname(local), { recursive: true });
     let got;
     // Whatever stopped it, what came so far is not left here: nothing would ever name it.
+    // (A file Windows still holds can't be deleted yet: the error that stopped the download is the one to say.)
+    const drop = () => { try { rmSync(part, { force: true }); } catch (_) {} };
     try { got = await download(url, part); }
-    catch (e) { rmSync(part, { force: true }); throw e; }
-    if (got !== size) { rmSync(part, { force: true }); throw new Error(`${got} bytes, the table says ${size}`); }
+    catch (e) { drop(); throw e; }
+    if (got !== size) { drop(); throw new Error(`${got} bytes, the table says ${size}`); }
     renameSync(part, local);
     // Opened once, as DuckDB will, before anything reads it from here.
     const fd = openSync(local, 'r');
@@ -272,7 +282,7 @@ function httpsDownload({ getToken, fetchImpl = fetch, sleep = ms => new Promise(
     // No answer, or no more bytes, for `idleMs`: the download is over. A file's size says nothing of how long it
     // takes, so there is no limit on the whole; one that stopped arriving would otherwise hold its place for good.
     const quiet = new AbortController();
-    const stalled = () => new Error(`no data came from OneLake for ${Math.round(idleMs / 1000)}s`);
+    const stalled = () => new Error(`no data moved for ${Math.round(idleMs / 1000)}s while a file came from OneLake`);
     const waiting = setTimeout(() => quiet.abort(stalled()), idleMs);
     let res;
     try {
@@ -282,11 +292,15 @@ function httpsDownload({ getToken, fetchImpl = fetch, sleep = ms => new Promise(
         fetchImpl(httpsOf(url), { headers: { Authorization: `Bearer ${await getToken()}`, 'x-ms-version': '2023-11-03' }, signal: quiet.signal })]);
     } catch (e) { throw quiet.signal.aborted ? quiet.signal.reason : e; }
     finally { clearTimeout(waiting); }
-    if (!res.ok) throw Object.assign(new Error(`OneLake answered ${res.status}`), { status: res.status });
+    if (!res.ok) {
+      // Its body is not read: let go of, so the connection is.
+      if (res.body) res.body.cancel().catch(() => {});
+      throw Object.assign(new Error(`OneLake answered ${res.status}`), { status: res.status });
+    }
     try {
       await pipeline(Readable.fromWeb(res.body), idleWatch(idleMs, () => { const e = stalled(); quiet.abort(e); return e; }), createWriteStream(dst));
     } catch (e) {
-      rmSync(dst, { force: true });
+      try { rmSync(dst, { force: true }); } catch (_) {}
       throw e;
     }
     return statSync(dst).size;

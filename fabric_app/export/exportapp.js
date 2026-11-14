@@ -396,8 +396,6 @@ function unzip(buf, { maxTotal = MAX_TOTAL_BYTES, maxEntries = MAX_ENTRIES } = {
     const name = buf.subarray(at + 46, at + 46 + nameLen).toString('utf8').split('\\').join('/');
     at += 46 + nameLen + extra + note;
     if (name.endsWith('/')) continue;
-    // An entry is a file of the app. One that names a place outside it is nothing an export wrote.
-    if (name.startsWith('/') || /^[A-Za-z]:/.test(name) || name.split('/').includes('..')) throw new Error(`${name} is not a path inside an app`);
     if (method !== 0 && method !== 8) throw new Error(`${name} is compressed in a way this can't read (method ${method})`);
     if (local + 30 > buf.length) throw new Error(`${name} is damaged`);
     const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
@@ -415,11 +413,19 @@ function unzip(buf, { maxTotal = MAX_TOTAL_BYTES, maxEntries = MAX_ENTRIES } = {
     out.set(name, data);
   }
   const tops = new Set([...out.keys()].map(p => (p.includes('/') ? p.slice(0, p.indexOf('/') + 1) : '')));
+  let files = out;
   if (tops.size === 1 && ![...tops][0].match(/^(|site\/|rayfin\/)$/)) {
     const [top] = tops;
-    return new Map([...out].map(([p, b]) => [p.slice(top.length), b]));
+    files = new Map([...out].map(([p, b]) => [p.slice(top.length), b]));
   }
-  return out;
+  // An entry is a file of the app. One that names a place outside it is nothing an export wrote: checked as it
+  // is kept, with any top folder gone, so that no part is empty, a dot, two dots or a drive.
+  for (const name of files.keys()) {
+    if (/^[A-Za-z]:/.test(name) || name.split('/').some(part => part === '' || part === '.' || part === '..')) {
+      throw new Error(`${name || '(no name)'} is not a path inside an app`);
+    }
+  }
+  return files;
 }
 
 /**

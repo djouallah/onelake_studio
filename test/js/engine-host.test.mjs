@@ -1180,3 +1180,26 @@ test("known gap: DuckDB gives a proxy's password to any statement that asks", { 
     assert.ok(said.includes("hunter2secret"), said);
   } finally { c.closeSync(); duck.closeSync(); }
 });
+
+// A SQLite file's views are text too, and SQLite never checks the functions one names. Whichever way DuckDB reads
+// them, the outcome is held: nothing a view of the file names runs what a statement may not.
+test("a SQLite file's view can't run what a statement may not either", { skip: !existsSync(join(BUNDLED, "sqlite_scanner.duckdb_extension")) }, async t => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const outside = await mkdtemp(join(tmpdir(), "onelake-crafted-"));
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: BUNDLED });
+  t.after(async () => { await engine.close(); for (const d of [extDir, outside]) await rm(d, { recursive: true, force: true }).catch(() => {}); });
+  const file = join(outside, "evil.sqlite");
+  const db = new DatabaseSync(file);
+  let made = true;
+  try { db.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1); CREATE VIEW fine AS SELECT a FROM t; CREATE VIEW asked AS SELECT * FROM query('SELECT 42 AS a')"); }
+  catch (e) { made = false; console.log(`SQLite itself refuses such a view: ${first(e)}`); }
+  finally { db.close(); }
+  if (!made) return;
+  const attached = await engine.call("attachFile", [{ path: await engine.copyToTemp("ws/lh/Files/evil.sqlite", await readFile(file)), alias: "evilsqlite", sqlite: true }])
+    .then(() => true, e => { assert.match(e.message, /is not opened: its view/, "refused for its view, not for something else"); return false; });
+  if (!attached) return;
+  // Attached: then the view is SQLite's own to run, and SQLite has no such function.
+  const ran = await engine.call("query", ["SELECT * FROM evilsqlite.main.asked"]).then(r => r.rows, () => null);
+  assert.equal(ran, null, `the view ran what no statement may: ${JSON.stringify(ran)}`);
+});

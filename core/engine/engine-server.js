@@ -248,7 +248,7 @@ process.stdin.on('data', chunk => {
 // A promise nobody was waiting on that failed: said in the log, and the server goes on. Every window's
 // statements are in this process, and Node's own answer to one stray rejection is to end it.
 process.on('unhandledRejection', e => {
-  if (!crashLog) return;
+  if (!crashLog) { try { process.stderr.write(`a promise nobody waited for failed: ${(e && e.stack) || e}\n`); } catch (_) {} return; }
   try { fs.appendFileSync(crashLog, `${new Date().toISOString()} a promise nobody waited for failed: ${(e && e.stack) || e}\n`); } catch (_) {}
 });
 process.on('uncaughtException', e => {

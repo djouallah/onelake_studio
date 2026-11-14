@@ -84,9 +84,16 @@ test("an entry that says it is smaller than it is, or bigger, or has another che
 
 test("an entry that names a place outside the app is refused", () => {
   const data = Buffer.from("x");
-  for (const name of ["../outside.js", "site/../../outside.js", "/etc/passwd", "C:/Windows/x", "site\\..\\..\\x"]) {
-    assert.throws(() => unzip(craft([{ name, data }])), /is not a path inside an app/, name);
+  // Beside a real file of the app's, so nothing is taken for a top folder the whole app was zipped in.
+  const beside = { name: "rayfin/rayfin.yml", data };
+  for (const name of ["../outside.js", "site/../../outside.js", "/etc/passwd", "C:/Windows/x", "site\\..\\..\\x", "site//x.js", "site/./x.js"]) {
+    assert.throws(() => unzip(craft([beside, { name, data }])), /is not a path inside an app/, name);
   }
+  // A folder zipped whole loses its top folder: what is left is checked, not what was written.
+  for (const names of [["top//abs.js", "top/site/a.js"], ["top/C:/x.js", "top/site/a.js"], ["top/../x.js", "top/site/a.js"]]) {
+    assert.throws(() => unzip(craft(names.map(name => ({ name, data })))), /is not a path inside an app/, names[0]);
+  }
+  assert.deepEqual([...unzip(craft([{ name: "top/site/a.js", data }, { name: "top/export.json", data }])).keys()], ["site/a.js", "export.json"]);
   // Dots in a name are not a way out.
   assert.equal(unzip(craft([{ name: "site/a..b/..c.js", data }])).size, 1);
 });
