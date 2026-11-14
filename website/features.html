@@ -14,6 +14,7 @@
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
         <a href="features.html" aria-current="page">Features</a>
+        <a href="write-to-onelake.html">Write to OneLake</a>
         <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html">Architecture</a>
         <a href="design.html">Design</a>
@@ -27,7 +28,7 @@
   <main class="wrap wide">
     <section class="intro">
       <h1>Features</h1>
-      <p class="lead">Browse OneLake and query any table, file or semantic model with SQL, on your machine, read only and offline. The same in the app and in the VS Code extension.</p>
+      <p class="lead">Browse OneLake and query any table, file or semantic model with SQL, on your machine and offline. The same in the app and in the VS Code extension.</p>
     </section>
 
     <section class="feature">
@@ -95,7 +96,7 @@ FROM demo.DL_semanticmodel GROUP BY ALL;</code></pre>
       <p>It works offline. Anything you have read can be browsed, queried and pivoted without internet.</p>
     </section>
 
-    <p class="more read-only">Read only. The two exceptions are Export to Fabric, which is experimental, and Upload Files. Both ask you first.</p>
+    <p class="more read-only">SQL writes to a lakehouse's tables only once you turn on Allow Table Writes: see <a href="write-to-onelake.html">Write to OneLake</a>. Export to Fabric, which is experimental, and Upload Files both ask you first.</p>
   </main>
 
   <footer class="site-footer">

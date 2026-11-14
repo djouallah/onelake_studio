@@ -108,6 +108,7 @@ function page(doc) {
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
         <a href="features.html">Features</a>
+        <a href="write-to-onelake.html">Write to OneLake</a>
         <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html">Architecture</a>
         <a href="design.html">Design</a>

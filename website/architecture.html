@@ -14,6 +14,7 @@
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
         <a href="features.html">Features</a>
+        <a href="write-to-onelake.html">Write to OneLake</a>
         <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html" aria-current="page">Architecture</a>
         <a href="design.html">Design</a>
@@ -64,7 +65,7 @@
 
           <rect class="node" x="15" y="140" width="650" height="80" rx="5"/>
           <text class="title" x="340" y="170" text-anchor="middle">Node process: the extension</text>
-          <text class="note" x="340" y="194" text-anchor="middle">sign-in · read-only check · names · sync worker</text>
+          <text class="note" x="340" y="194" text-anchor="middle">sign-in · statement check · names · sync worker</text>
           <text class="note" x="340" y="210" text-anchor="middle">Excel's XMLA endpoint · Export to Fabric</text>
 
           <path class="edge" d="M125 220V289" marker-end="url(#head)"/>
@@ -127,7 +128,7 @@
           <tbody>
             <tr><td>Shell</td><td>Starts the Node process and opens the window. Remembers the window's size and position. If you start the app twice, it shows the window that is already open.</td><td><code>onelake-studio.exe</code>, Tauri</td><td>None</td></tr>
             <tr><td>Window</td><td>Draws the tree, tabs, menus, dialogs and status bar. Each tab is the extension's page inside an iframe. It does not have the OneLake token.</td><td>WebView2, which is Edge</td><td>127.0.0.1 only</td></tr>
-            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, blocks anything that writes, turns names into tables, keeps the local catalog up to date, serves Excel, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
+            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, checks every statement and lets a write run only when its setting is on, turns names into tables, keeps the local catalog up to date, serves Excel, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
             <tr><td>Local catalog</td><td>A SQLite file on your machine. It stores all metadata: lists of workspaces, items and tables, table metadata, Delta history, opened models, and what was read. The tree reads it, even before you sign in.</td><td>A SQLite file, read with <code>node:sqlite</code></td><td>None</td></tr>
             <tr><td>Query server</td><td>Runs the SQL from every tab, the command line and Keep offline. Tabs connect to it with DuckDB's Quack protocol, and share one memory limit and the data already read. It is the one process that holds the local lake.</td><td>DuckDB 2.0, in a separate process</td><td>OneLake: table logs, and files not copied yet</td></tr>
             <tr><td>Local lake</td><td>A DuckLake catalog of every OneLake table read on this machine, made from the table's own Delta log or Iceberg metadata, and copies of its files. A query on a table it holds reads it at once and asks OneLake nothing. One per Microsoft account.</td><td><code>lake\meta.ducklake</code>, a DuckDB file, and <code>lake\files\</code>, in the account's cache folder</td><td>None</td></tr>
@@ -202,7 +203,7 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
       <p>Excel talks to a semantic model using XMLA over HTTP, and the Node process answers. Excel sees the model as one cube: each table is a dimension, each column a hierarchy, and each measure is in <code>[Measures]</code>.</p>
 <pre><code>Excel (MSOLAP) --XMLA over http://127.0.0.1--> Node process
   Discover -> the model's tables, columns and measures, as a cube
-  Execute  -> MDX -> model SQL -> dax-sql -> read-only check -> query server</code></pre>
+  Execute  -> MDX -> model SQL -> dax-sql -> statement check -> query server</code></pre>
       <ul>
         <li>It understands only the MDX that Excel PivotTables send. Anything else gets an error that says what isn't supported.</li>
         <li>Subtotals and totals are calculated, not summed, so distinct counts and ratios are correct on every row.</li>

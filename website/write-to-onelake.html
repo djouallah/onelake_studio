@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Write to OneLake: OneLake Studio</title>
+  <meta name="description" content="SQL in OneLake Studio can write a lakehouse's tables as Iceberg, add rows to a Delta table, and write files to Files/. Writing to tables is off until you turn it on.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="features.html">Features</a>
+        <a href="write-to-onelake.html" aria-current="page">Write to OneLake</a>
+        <a href="export-to-fabric.html">Export to Fabric</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="design.html">Design</a>
+        <a href="dax-sql.html">dax-sql</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <h1>Write to OneLake</h1>
+      <p class="lead">SQL in OneLake Studio can write to a lakehouse. It makes and changes tables as Iceberg, adds rows to a Delta table, and writes files to Files/. The data goes straight from DuckDB on your machine to OneLake.</p>
+    </section>
+
+    <section>
+      <h2 id="settings">Off until you turn it on</h2>
+      <p>Three settings, under Settings › OneLake Studio › Writes, say what SQL may write. Each is read when a statement runs, so a change applies at once, in the SQL box and on the command line. When the setting a statement needs is off, the statement is refused and nothing is sent to OneLake.</p>
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr><th>Setting</th><th>Default</th><th>What it allows</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Allow Table Writes</td><td>Off</td><td>Every write to a lakehouse's tables and schemas.</td></tr>
+            <tr><td>Allow Drop Table</td><td>Off</td><td><code>DROP TABLE</code> on an Iceberg table. It also needs Allow Table Writes. It can't be undone.</td></tr>
+            <tr><td>Allow Copy to Files</td><td>On</td><td><code>COPY</code> to a lakehouse's Files/. It needs no other setting.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>There is no dialog. Running a statement is the consent, once its setting is on.</p>
+    </section>
+
+    <section>
+      <h2 id="what">What you can write</h2>
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr><th>Statement</th><th>What it writes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>CREATE TABLE … (…)</code>, <code>CREATE TABLE … AS …</code></td><td>A new table, always as Iceberg.</td></tr>
+            <tr><td><code>INSERT INTO</code>, <code>UPDATE</code>, <code>DELETE</code>, <code>MERGE INTO</code>, <code>ALTER TABLE</code></td><td>An Iceberg table.</td></tr>
+            <tr><td><code>INSERT INTO</code></td><td>A Delta table: its rows are added to the table's Delta log.</td></tr>
+            <tr><td><code>DROP TABLE [IF EXISTS]</code></td><td>An Iceberg table: the table and its files are deleted.</td></tr>
+            <tr><td><code>CREATE SCHEMA</code></td><td>A schema in a lakehouse with schemas.</td></tr>
+            <tr><td><code>COPY (…) TO '&lt;ws&gt;.&lt;lh&gt;/Files/&lt;path&gt;'</code></td><td>A Parquet, CSV or JSON file in Files/. A file already at that path is replaced.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A table is named <code>&lt;workspace&gt;.&lt;lakehouse&gt;.&lt;schema&gt;.&lt;table&gt;</code>, as it is when you read it.</p>
+      <pre><code>CREATE TABLE aemo.data.dbo.daily AS
+SELECT settlementdate::DATE AS day, duid, sum(mw) AS mw
+FROM aemo.data.dbo.scada
+GROUP BY ALL
+ORDER BY day;
+
+INSERT INTO aemo.data.dbo.daily SELECT * FROM aemo.data.dbo.daily_staging;
+
+COPY (SELECT * FROM aemo.data.dbo.daily) TO 'aemo.data/Files/export/daily.parquet' (FORMAT parquet);</code></pre>
+    </section>
+
+    <section>
+      <h2 id="layout">New tables are laid out for Direct Lake</h2>
+      <p>Every <code>CREATE TABLE</code> gets the Parquet layout that Direct Lake reads fastest, with nothing for you to write:</p>
+      <ul>
+        <li>row groups of up to 4 million rows or 1 GiB;</li>
+        <li>files of up to 1 GiB;</li>
+        <li>pages of 1 MB.</li>
+      </ul>
+      <p>These are Iceberg table properties, so every later write to the table uses them too. A property you set yourself in the statement's <code>WITH (…)</code> is kept. Sorting is up to you: add an <code>ORDER BY</code> to the query.</p>
+    </section>
+
+    <section>
+      <h2 id="delta">Delta tables</h2>
+      <p>DuckDB's Delta writing is very limited, and OneLake Studio supports only what it can do on OneLake.</p>
+      <ul>
+        <li><code>INSERT</code> into an existing Delta table works.</li>
+        <li><code>UPDATE</code>, <code>DELETE</code>, <code>MERGE</code>, <code>ALTER TABLE</code> and <code>DROP TABLE</code> on a Delta table are refused.</li>
+        <li>A Delta table that uses a feature DuckDB can't write is refused, and nothing is written. A table with column mapping, as Fabric writes it, is one of them.</li>
+        <li>A new table is never made as Delta. DuckDB can create a Delta table on your computer, but not yet on OneLake (<a href="https://github.com/duckdb/duckdb-delta/issues/432">duckdb-delta issue 432</a>).</li>
+      </ul>
+      <p>OneLake shows a Delta table as Iceberg too, but that Iceberg copy is read only: OneLake refuses any write to it.</p>
+    </section>
+
+    <section>
+      <h2 id="refused">What is refused</h2>
+      <p>These are refused before anything is sent:</p>
+      <ul>
+        <li>any <code>DROP</code> other than <code>DROP TABLE</code>, such as <code>DROP SCHEMA</code> or <code>DROP VIEW</code>;</li>
+        <li><code>CREATE OR REPLACE</code>, <code>INSERT OR REPLACE</code>, <code>ON CONFLICT</code>, <code>TRUNCATE</code> and <code>COPY … FROM</code>;</li>
+        <li>a view, a macro, a secret or any other <code>CREATE</code>;</li>
+        <li>a write to a warehouse, a SQL database or a mirrored database;</li>
+        <li>a <code>COPY</code> to anywhere but a lakehouse's Files/;</li>
+        <li>any write while you are offline.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="how">How a write runs</h2>
+      <ul>
+        <li>One statement runs at a time. Several statements separated by <code>;</code> run in turn, and the first one that fails stops the rest.</li>
+        <li>Before it runs, DuckDB's own plan of the statement is checked: it must write what its text says, and only there.</li>
+        <li>An Iceberg write goes through the lakehouse's Iceberg catalog, attached for that one statement and detached after.</li>
+        <li>A write is never sent twice. If it fails, you see why, and it is not tried again.</li>
+        <li>After a write, the lakehouse's tables are listed again, so the tree and the next query see what was written.</li>
+      </ul>
+      <p class="more"><a href="reference.html#sql-writes">SQL writes in detail</a></p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html">Naming</a>
+        <a href="reference.html">Reference</a>
+        <a href="catalog.html">Catalog</a>
+      </nav>
+      <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
+    </div>
+  </footer>
+</body>
+</html>

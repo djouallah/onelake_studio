@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Design decisions: OneLake Studio</title>
-  <meta name="description" content="The decisions behind OneLake Studio: one SQL name for every object, SQL only, read only, running on your machine, and working offline.">
+  <meta name="description" content="The decisions behind OneLake Studio: one SQL name for every object, SQL only, reads unless you turn writes on, running on your machine, and working offline.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -14,6 +14,7 @@
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
         <a href="features.html">Features</a>
+        <a href="write-to-onelake.html">Write to OneLake</a>
         <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html">Architecture</a>
         <a href="design.html" aria-current="page">Design</a>
@@ -61,9 +62,9 @@ GROUP BY ALL;</code></pre>
     </section>
 
     <section>
-      <h2 id="read-only">Read only</h2>
-      <p>OneLake Studio never changes your data. Every statement is checked before it runs: only one statement at a time, and only one that reads. Only two features write, Export to Fabric and Upload Files, and both ask you first.</p>
-      <p>Why: you can point it at production data without risk, and so can an agent.</p>
+      <h2 id="read-only">Reads, unless you turn writes on</h2>
+      <p>OneLake Studio doesn't change a table unless you turn on Allow Table Writes in its settings, which is off by default. Every statement is checked before it runs: one statement at a time, and a write only to a lakehouse, only where its text says, and only when its setting is on. <code>COPY</code> to a lakehouse's Files/ is on by default. Export to Fabric and Upload Files write too, and both ask you first. See <a href="write-to-onelake.html">Write to OneLake</a>.</p>
+      <p>Why: you can point it at production data without risk, and so can an agent, until you choose to write.</p>
     </section>
 
     <section>
