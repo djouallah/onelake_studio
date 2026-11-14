@@ -244,6 +244,68 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
       /lakeci_plain is a Delta table, and SQL here writes Iceberg tables only/);
   });
 
+  // lakeci_deltawrite: the plain case again, uploaded for this test alone (lake-tables.yml), so a write that got
+  // through damages no table another test reads. Its Iceberg face is OneLake's conversion, read once it is there.
+  const DW = "lakeci_deltawrite";
+  const deltaLog = async () => {
+    const r = await fetch(`https://${DFS}/${encodeURIComponent(WS)}?resource=filesystem&recursive=false&directory=${encodeURIComponent(`${ITEM}/Tables/test/${DW}/_delta_log`)}`,
+      { headers: { ...auth, "x-ms-version": "2023-11-03" } });
+    assert.ok(r.ok, `${DW}'s _delta_log listing: ${r.status}`);
+    return (await r.json()).paths.map(p => `${p.name} ${p.contentLength}`).sort();
+  };
+  // What a write would change: its Delta log's files, the Iceberg face's metadata, and its rows.
+  const deltaState = async () => {
+    const meta = await (await loadTable(prefix, "test", DW)).json();
+    const rows = String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(DW)}`))[0].n);
+    return { log: await deltaLog(), metadata: meta["metadata-location"], rows };
+  };
+  let deltaBefore = null;
+  await t.test("lakeci_deltawrite is a Delta table with an Iceberg face", async () => {
+    const until = Date.now() + 5 * 60_000;
+    for (;;) {
+      const r = await loadTable(prefix, "test", DW);
+      if (r.ok && sourceFormat((await r.json()).metadata).format === "delta") break;
+      assert.ok(Date.now() < until, `${DW} has no Iceberg face after 5 minutes: ${r.status}`);
+      await new Promise(res => setTimeout(res, 10_000));
+    }
+    deltaBefore = await deltaState();
+    assert.ok(deltaBefore.log.some(l => /\.json /.test(l)), `${DW} has a Delta log: ${deltaBefore.log.join(", ")}`);
+    assert.notEqual(deltaBefore.rows, "0", `${DW} has rows`);
+  });
+
+  await t.test("no write to a Delta table is sent: each is refused before OneLake is asked", async () => {
+    assert.ok(deltaBefore, "the Delta table was read");
+    const cols = (await back(`DESCRIBE back.test.${q(DW)}`)).map(r => r.column_name);
+    const first = q(cols[0]);
+    for (const text of [
+      `INSERT INTO ${tbl(DW)} SELECT * FROM ${tbl(DW)} LIMIT 1`,
+      `UPDATE ${tbl(DW)} SET ${first} = ${first}`,
+      `DELETE FROM ${tbl(DW)} WHERE true`,
+      `MERGE INTO ${tbl(DW)} AS t USING (SELECT * FROM ${tbl(DW)} LIMIT 1) AS s ON t.${first} = s.${first} WHEN MATCHED THEN DELETE`,
+      `ALTER TABLE ${tbl(DW)} ADD COLUMN lakeci_extra INTEGER`,
+      `CREATE TABLE ${tbl(DW)} AS SELECT 1 AS id`,
+    ]) await assert.rejects(engine.agentQuery(text), new RegExp(`${DW} is a Delta table, and SQL here writes Iceberg tables only`), text);
+    assert.deepEqual(await deltaState(), deltaBefore, "the Delta table is as it was");
+    assert.deepEqual(await sql("SELECT database_name FROM duckdb_databases() WHERE starts_with(database_name, 'ice_')"), [],
+      "no write's catalog was attached for any of them");
+  });
+
+  // Past the engine's refusal: the test's own DuckDB, on the lakehouse's Iceberg catalog, writes to the Delta table's
+  // Iceberg face, as any Iceberg client could. OneLake's face of a Delta table is read only, so it must refuse.
+  await t.test("OneLake refuses an Iceberg write to a Delta table's Iceberg face", async () => {
+    assert.ok(deltaBefore, "the Delta table was read");
+    for (const text of [
+      `INSERT INTO back.test.${q(DW)} SELECT * FROM back.test.${q(DW)} LIMIT 1`,
+      `DELETE FROM back.test.${q(DW)} WHERE true`,
+    ]) {
+      let said = null;
+      try { await c.run(text); } catch (e) { said = e.message; }
+      console.log(`OneLake on ${text}: ${said ?? "ACCEPTED"}`);
+      assert.ok(said, `OneLake accepted ${text}`);
+    }
+    assert.deepEqual(await deltaState(), deltaBefore, "the Delta table is as it was: no commit, no new metadata, the same rows");
+  });
+
   await t.test("what is refused writes nothing, and leaves nothing attached", async () => {
     const count = async () => String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(a)}`))[0].n);
     const before = await count();

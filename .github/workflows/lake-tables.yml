@@ -120,6 +120,8 @@ jobs:
           for c in $(python -c "import json,sys; print(' '.join(k for k,v in json.load(open(sys.argv[1])).items() if v['made']))" "$FIXTURES_DIR/cases.json"); do
             python test/fixtures/lake/upload.py "$FIXTURES_DIR/$c" "$https/lakeci_$c"
           done
+          # The plain case again, for the writes test to try writing to: a Delta table no other test reads.
+          python test/fixtures/lake/upload.py "$FIXTURES_DIR/plain" "$https/lakeci_deltawrite"
       - run: node --test test/js/onelake-tables.test.mjs
         env:
           LAKE_FIXTURES: ${{ env.FIXTURES_DIR }}
