@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed: a write that read a file was refused.** `CREATE TABLE … AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` or
+  `COPY` from a CSV, Parquet or JSON file, in `Files/` or at a URL, said `CSVReaderSerialize not implemented` or
+  `Operator 'LOGICAL_GET' does not support serialization`, and didn't run. They run now, held to DuckDB's plan as
+  every write is.
 - **A first start with no internet works.** The bundled `iceberg` extension was loaded before `avro`, which it
   needs, so it failed and was downloaded in its place: with no connection, or behind a proxy DuckDB can't use, the
   engine did not start the first time. They load in the right order now, and nothing is fetched.

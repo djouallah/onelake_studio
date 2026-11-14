@@ -484,11 +484,12 @@ function writeOf(sql) {
     notRun(`CREATE ${(tk[k + 1] && tk[k + 1].v || '').toUpperCase()} isn't a write to a lakehouse: only CREATE TABLE and CREATE SCHEMA are`);
   }
   // COPY (query) TO 'file', or COPY table TO 'file'. COPY … FROM loads a table, which DuckDB-Iceberg doesn't.
-  let j = k + 1;
+  let j = k + 1, query = null;
   if (tk[j] && tk[j].t === '(') {
-    const depth = tk[j].depth;
+    const depth = tk[j].depth, open = tk[j];
     j = tk.findIndex((t, x) => x > j && t.t === ')' && t.depth === depth) + 1;
     if (j <= 0) notRun(FILE_SHAPE);
+    query = { start: open.end, end: tk[j - 1].start };
   } else {
     const n = nameAt(j);
     if (!n) notRun(FILE_SHAPE);
@@ -506,7 +507,8 @@ function writeOf(sql) {
   try { file = fileName(to.v); }
   catch (e) { notRun(e.message); }
   if (!file || file.zip) notRun(FILE_SHAPE);
-  return as('copy', { target: 'file', ref: file, start: to.start, end: to.end });
+  // `query`: where the query of COPY (query) TO is, inside its parentheses; null for COPY table TO.
+  return as('copy', { target: 'file', ref: file, start: to.start, end: to.end, query });
 }
 
 // A lakehouse table's Parquet, as Direct Lake reads it fastest: a row group closes at 4M rows or 1 GiB uncompressed,
@@ -588,44 +590,77 @@ function checkPlan(parsed, { plan, catalog = null, file = null }) {
   }
 }
 
-// DuckDB can't write the bound plan of an UPDATE, a DELETE or a MERGE on an Iceberg table as JSON: the scan of the
-// table it changes has no serialization. Their physical plan says it as well, by DuckDB-Iceberg's own operators: a
-// write to an Iceberg table is ICEBERG_INSERT, ICEBERG_UPDATE or ICEBERG_DELETE, and to nothing else. Which Iceberg
-// table it is, the statement's text alone can say: no statement may name a write's catalog (oneStatement), so the
-// only one it binds is the one engine-host.js named in it.
-const UNSERIALIZED = /serialization not implemented/i;
+// DuckDB can't write every bound plan as JSON. The scan of an Iceberg table an UPDATE, a DELETE or a MERGE changes has
+// no serialization, and nor do most file reads: read_csv says `CSVReaderSerialize not implemented`, read_parquet,
+// read_json, read_text and read_blob `Operator 'LOGICAL_GET' does not support serialization` (DuckDB 2.0). Such a
+// write is held to its physical plan instead, by the operators that write: DuckDB-Iceberg's ICEBERG_INSERT,
+// ICEBERG_UPDATE and ICEBERG_DELETE, the delta extension's DELTA_INSERT, and a COPY's own COPY_TO_FILE. Which table
+// it is, the statement's text alone can say: no statement may name a write's catalog (oneStatement), so the only one
+// it binds is the one engine-host.js named in it. Which file a COPY writes, its physical plan doesn't say: that is
+// the bound plan of the same COPY of SELECT 1 (copyStandIn).
+const UNSERIALIZED = /serialization not implemented|serialize not implemented|does not support serialization/i;
 const ICEBERG_WRITES = new Set(['ICEBERG_INSERT', 'ICEBERG_UPDATE', 'ICEBERG_DELETE']);
-// A write that is not an Iceberg one: to a DuckDB table, a file, another database.
-const OTHER_WRITES = /^(?:BATCH_)?(?:INSERT|UPDATE|DELETE|COPY_TO_FILE|CREATE_TABLE_AS|CREATE_TABLE|CREATE_INDEX|DROP|ALTER|ATTACH|DETACH|EXPORT|MERGE_INTO)$/;
+const DELTA_WRITES = new Set(['DELTA_INSERT']);
+const COPIES = new Set(['COPY_TO_FILE', 'BATCH_COPY_TO_FILE']);
+// A write that is not the lake's: to a DuckDB table, a file, another database. DuckDB-Iceberg's own copy under a
+// CTAS is `CREATE TABLE & COPY TO FILE`.
+const OTHER_WRITES = /^(?:BATCH_)?(?:INSERT|UPDATE|DELETE|COPY_TO_FILE|CREATE_TABLE_AS|CREATE_TABLE|CREATE_INDEX|DROP|ALTER|ATTACH|DETACH|EXPORT|MERGE_INTO)$|^DELTA_|^ICEBERG_(?:INSERT|UPDATE|DELETE)$|COPY TO FILE/;
 
 /**
- * Holds DuckDB's physical plan of an UPDATE, a DELETE or a MERGE (EXPLAIN (FORMAT json), parsed) to what writeOf
- * read in its text, when its bound plan can't be had (checkPlan's `unserialized`).
+ * Holds DuckDB's physical plan of a write (EXPLAIN (FORMAT json), parsed) to what writeOf read in its text, when its
+ * bound plan can't be had (checkPlan's `unserialized`). `delta`: the write goes to a Delta table, through the delta
+ * extension, not to an Iceberg one.
  */
-function checkPhysical(tree, what) {
+function checkPhysical(tree, what, { delta = false } = {}) {
   const roots = Array.isArray(tree) ? tree : [tree];
   if (roots.length !== 1 || !roots[0]) notRun('DuckDB plans this as more than one statement');
+  const root = String(roots[0].name || '');
+  // A COPY writes its one file, and nothing under it writes.
+  if (what === 'copy') {
+    if (!COPIES.has(root)) notRun(`DuckDB plans this as ${root}, not COPY_TO_FILE`);
+    const below = n => (n.children || []).forEach(c => {
+      const name = String(c.name || '');
+      if (OTHER_WRITES.test(name)) notRun(`DuckDB plans a ${name} in this, which isn't the COPY it names`);
+      below(c);
+    });
+    below(roots[0]);
+    return;
+  }
+  // An UPDATE writes its rows anew (ICEBERG_INSERT, over the ICEBERG_UPDATE that marks the old ones deleted), or
+  // marks them alone; a DELETE marks them; a MERGE does any of those under its MERGE_INTO. An INSERT and a CTAS
+  // add rows: a CTAS's ICEBERG_INSERT is over the copy that makes the table (IcebergCatalog::PlanCreateTableAs).
+  const shape = delta
+    ? { insert: { roots: ['DELTA_INSERT'], has: 'DELTA_INSERT' } }[what]
+    : { update: { roots: ['ICEBERG_INSERT', 'ICEBERG_UPDATE'], has: 'ICEBERG_UPDATE' },
+        delete: { roots: ['ICEBERG_DELETE'], has: 'ICEBERG_DELETE' },
+        merge: { roots: ['MERGE_INTO'], has: null },
+        insert: { roots: ['ICEBERG_INSERT'], has: 'ICEBERG_INSERT' },
+        'create table': { roots: ['ICEBERG_INSERT'], has: 'ICEBERG_INSERT' } }[what];
+  if (!shape) notRun(`DuckDB's plan of ${what}${delta ? ' on a Delta table' : ''} is checked by its bound plan only`);
+  const lake = delta ? DELTA_WRITES : ICEBERG_WRITES;
   const writes = [];
   const walk = (n, under) => {
     const name = String(n.name || '');
-    if (ICEBERG_WRITES.has(name)) writes.push(name);
-    // An Iceberg write writes its files with a COPY of its own, under it.
-    else if (OTHER_WRITES.test(name) && !(under && name === 'COPY_TO_FILE') && !(name === 'MERGE_INTO' && n === roots[0] && what === 'merge')) {
+    if (lake.has(name)) writes.push(name);
+    // A lake write writes its files with a COPY of its own, under it.
+    else if (OTHER_WRITES.test(name) && !(under && (COPIES.has(name) || name === 'CREATE TABLE & COPY TO FILE')) && !(name === 'MERGE_INTO' && n === roots[0] && what === 'merge')) {
       notRun(`DuckDB plans a ${name} in this, which isn't a write to the lakehouse it names`);
     }
-    for (const c of n.children || []) walk(c, under || ICEBERG_WRITES.has(name));
+    for (const c of n.children || []) walk(c, under || lake.has(name));
   };
   walk(roots[0], false);
-  const root = String(roots[0].name || '');
-  // An UPDATE writes its rows anew (ICEBERG_INSERT, over the ICEBERG_UPDATE that marks the old ones deleted), or
-  // marks them alone; a DELETE marks them; a MERGE does any of those under its MERGE_INTO.
-  const shape = { update: { roots: ['ICEBERG_INSERT', 'ICEBERG_UPDATE'], has: 'ICEBERG_UPDATE' },
-                  delete: { roots: ['ICEBERG_DELETE'], has: 'ICEBERG_DELETE' },
-                  merge: { roots: ['MERGE_INTO'], has: null } }[what];
-  if (!shape) notRun(`DuckDB's plan of ${what} is checked by its bound plan only`);
   if (!shape.roots.includes(root)) notRun(`DuckDB plans this as ${root}, not ${shape.has || shape.roots[0]}`);
-  if (!writes.length) notRun("DuckDB's plan of this writes no Iceberg table");
+  if (!writes.length) notRun(`DuckDB's plan of this writes no ${delta ? 'Delta' : 'Iceberg'} table`);
   if (shape.has && !writes.includes(shape.has)) notRun(`DuckDB's plan of this has no ${shape.has}`);
+}
+
+/**
+ * The COPY whose bound plan says which file `sql` writes, when DuckDB can't write the plan of its query: SELECT 1,
+ * to `target` (what runs in place of the target writeOf found, `w`), with the statement's own options after it.
+ */
+function copyStandIn(sql, w, target) {
+  if (w.what !== 'copy') throw new Error('copyStandIn is for a COPY');
+  return `COPY (SELECT 1) TO ${target}${String(sql).slice(w.end)}`;
 }
 
 /** The statements of `sql`, as their text, in order: split where DuckDB would split them, empty ones left out. */
@@ -1247,5 +1282,5 @@ async function writeWithNamespace(sql, ns, serialize, duck, listed) {
 }
 
 module.exports = { sqlStr, quoteIdent, storedFault, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
-                   writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
+                   writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, checkPhysical, copyStandIn, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
                    useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf };

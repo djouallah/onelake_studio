@@ -568,6 +568,87 @@ test("DuckDB's plan has the last word: the kind of statement, and the catalog or
     /Not run: DuckDB could not show its plan/);
 });
 
+// DuckDB 2.0 has no serialization for most file reads: read_csv says it one way, read_parquet, read_json, read_text
+// and read_blob another, each with its own error type. A write that reads a file was refused for it.
+test("a write that reads a file is held to its physical plan: every write, from every reader", () => {
+  const { checkPhysical, copyStandIn, isUnserialized } = require("../../core/sql.js");
+  const op = (name, ...children) => ({ name, children, extra_info: {} });
+  const unplanned = [
+    { error: true, error_type: "not implemented", error_message: "CSVReaderSerialize not implemented" },
+    { error: true, error_type: "invalid input", error_message: "Operator 'LOGICAL_GET' does not support serialization" },
+    { error: true, error_type: "not implemented", error_message: "IcebergScan serialization not implemented." },
+  ];
+  const ice = "ice_0123456789abcdef", delta = "delta_0123456789abcdef";
+  const expects = [{ plan: "LOGICAL_CREATE_TABLE", catalog: ice }, { plan: "LOGICAL_INSERT", catalog: ice },
+                   { plan: "LOGICAL_INSERT", catalog: delta, delta: true }, { plan: "LOGICAL_UPDATE", catalog: ice },
+                   { plan: "LOGICAL_DELETE", catalog: ice }, { plan: "LOGICAL_MERGE_INTO", catalog: ice },
+                   { plan: "LOGICAL_COPY_TO_FILE", file: "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.parquet" }];
+  for (const parsed of unplanned) for (const expect of expects) {
+    assert.throws(() => checkPlan(parsed, expect), err => isUnserialized(err), `${parsed.error_message} on ${expect.plan}`);
+  }
+  // DuckDB's other errors are still its own, an invalid input that isn't about serialization among them.
+  assert.throws(() => checkPlan({ error: true, error_type: "invalid input", error_message: "Could not convert string 'x' to INT32" }, expects[1]),
+    err => !isUnserialized(err) && /Could not convert/.test(err.message));
+  assert.throws(() => checkPlan({ error: true, error_type: "catalog", error_message: "Table with name t does not exist!" }, expects[1]),
+    err => !isUnserialized(err) && /does not exist/.test(err.message));
+
+  const readers = ["READ_CSV", "READ_CSV_AUTO", "READ_PARQUET", "READ_JSON", "READ_TEXT", "READ_BLOB", "TABLE_SCAN", "HASH_JOIN"];
+  for (const r of readers) {
+    // A CTAS as DuckDB-Iceberg plans one: its ICEBERG_INSERT over the copy that makes the table.
+    assert.doesNotThrow(() => checkPhysical([op("ICEBERG_INSERT", op("CREATE TABLE & COPY TO FILE", op("PROJECTION", op(r))))], "create table"), r);
+    assert.doesNotThrow(() => checkPhysical([op("ICEBERG_INSERT", op("COPY_TO_FILE", op("PROJECTION", op(r))))], "insert"), r);
+    assert.doesNotThrow(() => checkPhysical([op("DELTA_INSERT", op("COPY_TO_FILE", op("PROJECTION", op(r))))], "insert", { delta: true }), r);
+    assert.doesNotThrow(() => checkPhysical([op("ICEBERG_INSERT", op("COPY_TO_FILE", op("ICEBERG_UPDATE", op("HASH_JOIN", op("ICEBERG_SCAN"), op(r)))))], "update"), r);
+    assert.doesNotThrow(() => checkPhysical([op("ICEBERG_DELETE", op("HASH_JOIN", op("ICEBERG_SCAN"), op(r)))], "delete"), r);
+    assert.doesNotThrow(() => checkPhysical([op("MERGE_INTO", op("ICEBERG_INSERT", op("COPY_TO_FILE")), op("HASH_JOIN", op(r)))], "merge"), r);
+    assert.doesNotThrow(() => checkPhysical([op("BATCH_COPY_TO_FILE", op(r))], "copy"), r);
+    assert.doesNotThrow(() => checkPhysical([op("COPY_TO_FILE", op("PROJECTION", op(r)))], "copy"), r);
+  }
+
+  // DuckDB's own writes, to a table of its own or one attached, are no write to the lakehouse.
+  for (const name of ["INSERT", "BATCH_INSERT", "CREATE_TABLE_AS", "BATCH_CREATE_TABLE_AS", "CREATE_TABLE", "UPDATE", "DELETE", "DROP", "ATTACH"]) {
+    assert.throws(() => checkPhysical([op(name, op("READ_CSV"))], "create table"), /DuckDB plans a/, name);
+    assert.throws(() => checkPhysical([op(name, op("READ_CSV"))], "insert"), /DuckDB plans a/, name);
+    assert.throws(() => checkPhysical([op(name, op("READ_CSV"))], "insert", { delta: true }), /DuckDB plans a/, name);
+    assert.throws(() => checkPhysical([op(name, op("READ_CSV"))], "copy"), /not COPY_TO_FILE/, name);
+    assert.throws(() => checkPhysical([op("COPY_TO_FILE", op(name, op("READ_CSV")))], "copy"), /isn't the COPY it names/, name);
+  }
+  // One extension's write where the other's was expected.
+  assert.throws(() => checkPhysical([op("ICEBERG_INSERT", op("COPY_TO_FILE"))], "insert", { delta: true }), /plans a ICEBERG_INSERT/);
+  assert.throws(() => checkPhysical([op("DELTA_INSERT", op("COPY_TO_FILE"))], "insert"), /plans a DELTA_INSERT/);
+  assert.throws(() => checkPhysical([op("DELTA_CREATE_TABLE_AS", op("COPY_TO_FILE"))], "create table"), /plans a DELTA_CREATE_TABLE_AS/);
+  assert.throws(() => checkPhysical([op("ICEBERG_INSERT", op("COPY_TO_FILE"))], "update", { delta: true }), /checked by its bound plan only/);
+  // A CTAS's or an INSERT's root is the lake's insert, and its own copy is under it, never on its own.
+  assert.throws(() => checkPhysical([op("PROJECTION", op("ICEBERG_INSERT", op("COPY_TO_FILE")))], "insert"), /plans this as PROJECTION/);
+  assert.throws(() => checkPhysical([op("ICEBERG_DELETE", op("ICEBERG_SCAN"))], "insert"), /plans this as ICEBERG_DELETE/);
+  assert.throws(() => checkPhysical([op("ICEBERG_INSERT", op("PROJECTION")), op("COPY_TO_FILE")], "create table"), /more than one statement/);
+  assert.doesNotThrow(() => checkPhysical([op("ICEBERG_INSERT", op("PROJECTION", op("CREATE TABLE & COPY TO FILE")))], "create table"));
+  assert.throws(() => checkPhysical([op("CREATE TABLE & COPY TO FILE", op("READ_CSV"))], "create table"), /plans a CREATE TABLE & COPY TO FILE/);
+  assert.throws(() => checkPhysical([op("PROJECTION", op("COPY_TO_FILE", op("READ_CSV")))], "insert"), /plans a COPY_TO_FILE/);
+  // A COPY's own write is its one file; a second COPY, or a lake write, under it is another.
+  assert.throws(() => checkPhysical([op("COPY_TO_FILE", op("COPY_TO_FILE", op("READ_CSV")))], "copy"), /isn't the COPY it names/);
+  assert.throws(() => checkPhysical([op("COPY_TO_FILE", op("ICEBERG_INSERT"))], "copy"), /isn't the COPY it names/);
+  assert.throws(() => checkPhysical([op("COPY_TO_FILE", op("DELTA_INSERT"))], "copy"), /isn't the COPY it names/);
+  assert.throws(() => checkPhysical([op("COPY_TO_FILE"), op("COPY_TO_FILE")], "copy"), /more than one statement/);
+
+  // A COPY's file, from the same COPY of SELECT 1: its target as it runs, its options as written.
+  const url = "'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/out/x.parquet'";
+  for (const [sql, rest] of [
+    ["COPY (SELECT * FROM read_csv('https://example.com/a.csv')) TO 'ws.lh/Files/out/x.parquet' (FORMAT parquet)", " (FORMAT parquet)"],
+    ["COPY (SELECT ')' AS p, 'TO' AS q FROM 'ws.lh/Files/a.json') TO 'ws.lh/Files/out/x.parquet'", ""],
+    ["copy (select (1)) to 'ws.lh/Files/out/x.parquet' (format csv, header true) -- done", " (format csv, header true) -- done"],
+    ["COPY ws.lh.dbo.t TO 'ws.lh/Files/out/x.parquet' (FORMAT json)", " (FORMAT json)"],
+  ]) {
+    assert.equal(copyStandIn(sql, writeOf(sql), url), `COPY (SELECT 1) TO ${url}${rest}`, sql);
+  }
+  // Where its query is, inside the parentheses, for DuckDB's parser to read it as one read.
+  const q = "COPY ( SELECT ')' FROM read_csv('a.csv') /* ) */ ) TO 'ws.lh/Files/x.csv'";
+  const w = writeOf(q);
+  assert.equal(q.slice(w.query.start, w.query.end).trim(), "SELECT ')' FROM read_csv('a.csv') /* ) */");
+  assert.equal(writeOf("COPY ws.lh.dbo.t TO 'ws.lh/Files/x.csv'").query, null);
+  assert.throws(() => copyStandIn("INSERT INTO ws.lh.dbo.t SELECT 1", writeOf("INSERT INTO ws.lh.dbo.t SELECT 1"), url), /for a COPY/);
+});
+
 test("several statements are split where DuckDB splits them", () => {
   assert.deepEqual(statementsOf("SELECT 1; SELECT 2;"), ["SELECT 1", "SELECT 2"]);
   assert.deepEqual(statementsOf("SELECT ';'; -- a ; comment\nSELECT $$;$$ /* ; */"), ["SELECT ';'", "-- a ; comment\nSELECT $$;$$ /* ; */"]);
@@ -593,7 +674,7 @@ test("an UPDATE, DELETE or MERGE whose bound plan DuckDB can't write is held to 
   assert.throws(() => checkPhysical([op("ICEBERG_DELETE")], "update"), /plans this as ICEBERG_DELETE, not ICEBERG_UPDATE/);
   assert.throws(() => checkPhysical([op("MERGE_INTO", op("MERGE_ACTION_SOURCE"))], "merge"), /writes no Iceberg table/);
   assert.throws(() => checkPhysical([op("ICEBERG_UPDATE", op("COPY_TO_FILE")), op("ICEBERG_UPDATE")], "update"), /more than one statement/);
-  assert.throws(() => checkPhysical([op("ICEBERG_INSERT")], "insert"), /checked by its bound plan only/);
+  assert.throws(() => checkPhysical([op("ICEBERG_INSERT")], "alter"), /checked by its bound plan only/);
   assert.doesNotThrow(() => checkPhysical([op("ICEBERG_UPDATE", op("PROJECTION", op("COPY_TO_FILE")))], "update"), "an Iceberg write's own files");
   assert.throws(() => checkPhysical([op("PROJECTION", op("COPY_TO_FILE"))], "update"), /plans a COPY_TO_FILE in this/, "a COPY under no Iceberg write is a write elsewhere");
 });

@@ -33,7 +33,7 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, storedFault, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPlan, checkPhysical,
+const { sqlStr, quoteIdent, storedFault, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPlan, checkPhysical, copyStandIn,
         isUnserialized, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog,
         tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ,
         useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf } = require('../sql');
@@ -1306,7 +1306,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (w.target === 'file') {
         const url = abfssUrl(lh.workspace, `${lh.item}/Files`) + w.ref.path.slice('/Files'.length);
         statement = place(sqlStr(url));
-        expect = { plan: w.plan, file: url };
+        expect = { plan: w.plan, file: url, standIn: copyStandIn(sql, w, sqlStr(url)) };
       } else {
         const target = w.target === 'table' ? await deltaTarget(w) : null;
         const folder = target && target.folder;
@@ -1315,7 +1315,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           delta = await deltaAttach(folder);
           // The table is the attached folder's own, as the delta extension names it: <alias>.main.<alias>.
           statement = place([delta, 'main', delta].map(quoteIdent).join('.'));
-          expect = { plan: w.plan, catalog: delta };
+          expect = { plan: w.plan, catalog: delta, delta: true };
         } else {
           attached = await iceAttach(lh.warehouse);
           statement = place([attached, w.ref.schema, ...(w.target === 'table' ? [w.ref.table] : [])].map(quoteIdent).join('.'));
@@ -1324,13 +1324,18 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       }
       const never = () => false;
       const res = await withAuthRetry(() => withTables(statement, async run => {
-        // DuckDB's bound plan; an UPDATE, DELETE or MERGE on an Iceberg table has none it can write as JSON, and is
-        // held to its physical plan instead (sql.js checkPhysical).
+        // DuckDB's bound plan. One it can't write as JSON (an UPDATE, DELETE or MERGE on an Iceberg table, a read of
+        // a file) is held to its physical plan instead (sql.js checkPhysical). A COPY's file is then the bound plan of
+        // the same COPY of SELECT 1, and its query must be one read, as DuckDB's parser reads it.
         const bound = await planOf(run, owner);
         try { checkPlan(bound, expect); }
         catch (e) {
-          if (!isUnserialized(e) || !['update', 'delete', 'merge'].includes(w.what)) throw e;
-          checkPhysical(await physicalOf(run, owner), w.what);
+          if (!isUnserialized(e)) throw e;
+          if (w.what === 'copy') {
+            if (w.query) await checkedRead(sql.slice(w.query.start, w.query.end), serialize, { strict: true });
+            checkPlan(await planOf(expect.standIn, owner), expect);
+          }
+          checkPhysical(await physicalOf(run, owner), w.what, { delta: !!expect.delta });
         }
         begin();
         sent = true;

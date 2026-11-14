@@ -771,12 +771,17 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 - **Checked by DuckDB, then run.** The statement's text says what it writes and where (`writeOf`). Then DuckDB's own
   plan of it, as it will run (`json_serialize_plan`, bound in the server against the real catalogs), must agree: the
   kind of statement (`LOGICAL_INSERT`, `LOGICAL_CREATE_TABLE`, …), and the catalog it writes, which must be the one
-  attached for it, or for a `COPY` the file's URL (`checkPlan`). An `UPDATE`, a `DELETE` or a `MERGE` on an Iceberg
-  table has no bound plan DuckDB can write as JSON (its scan of the table has no serialization), and is held to its
-  physical plan instead (`EXPLAIN (FORMAT json)`, `checkPhysical`): DuckDB-Iceberg's own `ICEBERG_UPDATE` or
-  `ICEBERG_DELETE`, or a `MERGE_INTO` whose every write is one of those or `ICEBERG_INSERT`, and no other write
-  anywhere in it. Which Iceberg table it is, the text alone says: no statement may name a write's catalog, so the only
-  one it binds is the one named in it here. Being wrong about the text writes nowhere else.
+  attached for it, or for a `COPY` the file's URL (`checkPlan`). Some bound plans DuckDB can't write as JSON: an
+  `UPDATE`, a `DELETE` or a `MERGE` on an Iceberg table (its scan of the table has no serialization), and any write
+  that reads a file, a CSV, Parquet or JSON in `Files/` or at a URL (DuckDB 2.0 has none for `read_csv`,
+  `read_parquet`, `read_json`, `read_text` or `read_blob`). Such a write is held to its physical plan instead
+  (`EXPLAIN (FORMAT json)`, `checkPhysical`): DuckDB-Iceberg's own `ICEBERG_INSERT` (an `INSERT`, and a
+  `CREATE TABLE … AS` over the copy that makes the table), `ICEBERG_UPDATE` or `ICEBERG_DELETE`, a `MERGE_INTO` whose
+  every write is one of those, or the delta extension's `DELTA_INSERT`, and no other write anywhere in it. Which table
+  it is, the text alone says: no statement may name a write's catalog, so the only one it binds is the one named in it
+  here. A `COPY`'s physical plan doesn't name its file, so its file is the bound plan of the same `COPY` of `SELECT 1`
+  (`copyStandIn`), its query must be one read as DuckDB's parser reads it, and its physical plan one `COPY_TO_FILE`
+  with no write under it. Being wrong about the text writes nowhere else.
 - **Each statement is its own commit.** A write is never sent twice: a failure is said, not retried.
 - **Afterwards:** the lakehouse's table listing is read again, and a table's new snapshot is synced into the lake, so
   the tree and the next read show it. After a `COPY`, its folder is listed again.
