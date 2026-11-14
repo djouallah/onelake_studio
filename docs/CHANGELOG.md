@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A table SQL makes is laid out for Direct Lake.** `CREATE TABLE` gives it row groups of up to 4M rows, 1 GiB files
+  and 1 MB pages, with nothing to write for it. DuckDB's own defaults made row groups of about 800K rows on a wide
+  table, and one page per column chunk. A setting the statement gives itself is kept.
+
 - **Edit and save a file you open.** A `.sql` file opened from disk or from a lakehouse's `Files/` has **Save** in place
   of Save Query, which writes the box back over that file; Save Query made a copy under *Queries*, over any query of
   the same name. A `.bim` or Ossie `.yaml` model file is written in on Model's YAML (or BIM), still coloured, and

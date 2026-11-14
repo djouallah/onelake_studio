@@ -33,7 +33,7 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, checkPlan, checkPhysical,
+const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPlan, checkPhysical,
         isUnserialized, ICE_PREFIX,
         tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ,
         useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf } = require('../sql');
@@ -1217,6 +1217,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
    * says, where it says. Never sent twice: a failure is said, not tried again. `emit` streams its answer in batches.
    */
   async function runWrite(sql, { owner, begin = () => {}, signal, emit = null }) {
+    // A new table's Parquet, as Direct Lake reads it best, with nothing asked of whoever wrote it (sql.js TABLE_PROPERTIES).
+    sql = withTableProperties(sql);
     const w = writeOf(sql);
     const why = offlineReason();
     if (why) {

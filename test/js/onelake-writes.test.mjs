@@ -25,6 +25,7 @@ const require = createRequire(import.meta.url);
 const { createEngineHost } = skip ? {} : require("../../core/engine/engine-host.js");
 const { DuckDBInstance } = skip ? {} : require("@duckdb/node-api");
 const { sourceFormat } = require("../../core/names.js");
+const { TABLE_PROPERTIES } = require("../../core/sql.js");
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
 const ICEBERG = "https://onelake.table.fabric.microsoft.com/iceberg";
 const DFS = "onelake.dfs.fabric.microsoft.com";
@@ -204,6 +205,26 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     const mine = norm(await sql(`SELECT count(*)::BIGINT AS n, sum(i)::BIGINT AS total FROM ${tbl(big)}`));
     assert.deepEqual(mine, [{ n: "500000", total: "124999750000" }]);
     assert.deepEqual(norm(await back(`SELECT count(*)::BIGINT AS n, sum(i)::BIGINT AS total FROM back.test.${q(big)}`)), mine);
+  });
+
+  // The engine gives every table it makes the properties of sql.js TABLE_PROPERTIES. A writer that ignores one looks
+  // the same as one that keeps it, so what it wrote is read from the files' footers.
+  await t.test("a new table is written as Direct Lake reads it best: its properties kept, its row groups in the millions", async () => {
+    const lay = `${run}_layout`;
+    made.push(["test", lay]);
+    await sql(`CREATE TABLE ${tbl(lay)} AS SELECT i::BIGINT AS i, (i % 1000)::INTEGER AS k, 'row ' || (i % 100) AS s FROM range(5000000) r(i)`);
+    const props = (await (await loadTable(prefix, "test", lay)).json()).metadata.properties || {};
+    for (const [k, v] of Object.entries(TABLE_PROPERTIES)) assert.equal(props[k], v, `the table keeps ${k}`);
+    const files = (await back(`SELECT DISTINCT file_path FROM iceberg_metadata(back.test.${q(lay)}) WHERE file_path ILIKE '%.parquet'`))
+      .map(r => r.file_path);
+    assert.ok(files.length, "it has data files");
+    const groups = await back(`SELECT file_name, row_group_id, any_value(row_group_num_rows)::BIGINT AS n
+      FROM parquet_metadata([${files.map(lit).join(", ")}]) GROUP BY ALL ORDER BY ALL`);
+    const rows = groups.map(g => Number(g.n));
+    console.log(`${lay}: ${files.length} file(s), row groups of ${rows.join(", ")} rows`);
+    assert.equal(rows.reduce((a, b) => a + b, 0), 5_000_000, "every row is in a row group");
+    assert.ok(files.length === 1, `one file, under its 1 GiB target: ${files.length}`);
+    assert.ok(groups.length <= 2 && Math.max(...rows) >= 4_000_000, `row groups of up to 4M rows, not DuckDB's default: ${rows.join(", ")}`);
   });
 
   await t.test("a partitioned table", async () => {

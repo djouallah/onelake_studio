@@ -396,7 +396,7 @@ test("a download is written whole, tried again once after a failure, and a refus
 // -----------------------------------------------------------------------------
 // Writes: to a lakehouse, and nothing else
 // -----------------------------------------------------------------------------
-const { writeOf, checkPlan, statementsOf, readsOnly } = require("../../core/sql.js");
+const { writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, statementsOf, readsOnly } = require("../../core/sql.js");
 
 test("a write is found with what it writes, and where", () => {
   const table = (sql, what, ref) => {
@@ -422,6 +422,33 @@ test("a write is found with what it writes, and where", () => {
   const s = writeOf("CREATE SCHEMA aemo.data.raw");
   assert.deepEqual([s.what, s.target, s.ref], ["create schema", "schema", { workspace: "aemo", item: "data", schema: "raw" }]);
   assert.deepEqual(writeOf("CREATE SCHEMA IF NOT EXISTS aemo.data.raw").ref, { workspace: "aemo", item: "data", schema: "raw" });
+});
+
+test("a new table gets Direct Lake's Parquet properties, with nothing written for them", () => {
+  const all = Object.entries(TABLE_PROPERTIES).map(([k, v]) => `'${k}' = '${v}'`).join(", ");
+  assert.equal(Object.keys(TABLE_PROPERTIES).length, 4);
+  assert.equal(TABLE_PROPERTIES["write.parquet.row-group-size-bytes"], TABLE_PROPERTIES["write.target-file-size-bytes"],
+    "a file target under the row group's budget would shrink row groups to it");
+  const t = "aemo.data.dbo.monthly";
+  assert.equal(withTableProperties(`CREATE TABLE ${t} AS SELECT 1 AS a`), `CREATE TABLE ${t} WITH (${all}) AS SELECT 1 AS a`);
+  assert.equal(withTableProperties(`CREATE TABLE ${t} (a INT, b VARCHAR)`), `CREATE TABLE ${t} (a INT, b VARCHAR) WITH (${all})`);
+  assert.equal(withTableProperties(`CREATE TABLE IF NOT EXISTS ${t}(a INT);`), `CREATE TABLE IF NOT EXISTS ${t}(a INT) WITH (${all}) ;`);
+  // A CTE after AS is the query's, not the table's.
+  assert.equal(withTableProperties(`CREATE TABLE ${t} AS WITH s AS (SELECT 1 AS a) SELECT * FROM s`),
+    `CREATE TABLE ${t} WITH (${all}) AS WITH s AS (SELECT 1 AS a) SELECT * FROM s`);
+  // What a statement sets itself is kept, and only the others are added.
+  const own = withTableProperties(`CREATE TABLE ${t} WITH ('WRITE.PARQUET.ROW-GROUP-SIZE' = '100', 'x' = 'y') AS SELECT 1 AS a`);
+  assert.match(own, /'WRITE\.PARQUET\.ROW-GROUP-SIZE' = '100', 'x' = 'y', 'write\.parquet\.row-group-size-bytes'/);
+  assert.doesNotMatch(own, /'4000000'/);
+  assert.equal(withTableProperties(`CREATE TABLE ${t} WITH () AS SELECT 1`), `CREATE TABLE ${t} WITH (${all}) AS SELECT 1`);
+  const full = `CREATE TABLE ${t} WITH (${all}) AS SELECT 1`;
+  assert.equal(withTableProperties(full), full);
+  // Nothing else is touched.
+  for (const sql of [`INSERT INTO ${t} SELECT 1`, `ALTER TABLE ${t} ADD COLUMN b INT`, "CREATE SCHEMA aemo.data.raw",
+                     "COPY (SELECT 1) TO 'aemo.data/Files/x.parquet'"]) assert.equal(withTableProperties(sql), sql);
+  // What it makes is the same write, to the same table.
+  const w = writeOf(withTableProperties(`CREATE TABLE ${t} (a INT)`));
+  assert.deepEqual([w.what, w.ref.table], ["create table", "monthly"]);
 });
 
 test("where the target is written is where it is named again", () => {

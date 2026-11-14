@@ -478,6 +478,55 @@ function writeOf(sql) {
   return as('copy', { target: 'file', ref: file, start: to.start, end: to.end });
 }
 
+// A lakehouse table's Parquet, as Direct Lake reads it fastest: a row group closes at 4M rows or 1 GiB uncompressed,
+// whichever comes first (DuckDB's own cap is 128 MB, about 800K rows of a 17-column table), a file at the first row
+// group past 1 GiB (never under the row group's budget, or row groups shrink to it), and 1 MB pages, not one page a
+// column chunk. Iceberg table properties, read when the table's files are written: so given at CREATE, a CTAS's rows
+// included. https://djouallah.github.io/direct-lake-parquet-layout/writers.html#duckdb
+const TABLE_PROPERTIES = Object.freeze({
+  'write.parquet.row-group-size': '4000000',
+  'write.parquet.row-group-size-bytes': '1073741824',
+  'write.target-file-size-bytes': '1073741824',
+  'write.parquet.page-size-bytes': '1048576',
+});
+
+/**
+ * A CREATE TABLE's text with TABLE_PROPERTIES in its WITH (…): one after its name and its column list, or in the
+ * WITH it has, each it doesn't set itself. Every other statement as it is.
+ * @param {string} sql
+ */
+function withTableProperties(sql, props = TABLE_PROPERTIES) {
+  const w = writeOf(sql);
+  if (w.what !== 'create table') return sql;
+  const tk = tokens(sql);
+  const closing = at => tk.findIndex((t, x) => x > at && t.t === ')' && t.depth === tk[at].depth);
+  let j = tk.findIndex(t => t.start >= w.end);
+  if (j < 0) j = tk.length;
+  // Its column list, CREATE TABLE t (i INTEGER, …).
+  if (tk[j] && tk[j].t === '(') {
+    const close = closing(j);
+    if (close < 0) return sql;
+    j = close + 1;
+  }
+  const entry = ([k, v]) => `${sqlStr(k)} = ${sqlStr(v)}`;
+  if (tk[j] && tk[j].t === 'word' && tk[j].w === 'with' && tk[j + 1] && tk[j + 1].t === '(') {
+    const close = closing(j + 1);
+    if (close < 0) return sql;
+    // What it sets itself: each key, a string or a name before its '='.
+    const set = new Set();
+    for (let x = j + 2; x < close; x++) {
+      if (tk[x].depth === tk[j + 1].depth + 1 && tk[x + 1] && tk[x + 1].t === '=' && tk[x].v != null) set.add(String(tk[x].v).toLowerCase());
+    }
+    const add = Object.entries(props).filter(([k]) => !set.has(k));
+    if (!add.length) return sql;
+    const at = tk[close].start;
+    return sql.slice(0, at) + (close === j + 2 ? '' : ', ') + add.map(entry).join(', ') + sql.slice(at);
+  }
+  const at = j < tk.length ? tk[j].start : sql.length;
+  const clause = `WITH (${Object.entries(props).map(entry).join(', ')})`;
+  return `${sql.slice(0, at).replace(/\s+$/, '')} ${clause}${j < tk.length ? ' ' : ''}${sql.slice(at)}`;
+}
+
 /**
  * Holds DuckDB's plan of a write (json_serialize_plan, parsed) to what writeOf read in its text: the kind of
  * statement, and the catalog it writes (`catalog`) or the file (`file`). DuckDB's own error on it, a table that
@@ -1165,5 +1214,5 @@ async function writeWithNamespace(sql, ns, serialize, duck, listed) {
 }
 
 module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
-                   writeOf, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
+                   writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
                    useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf };

@@ -717,6 +717,12 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 | `CREATE SCHEMA` | A lakehouse with schemas |
 | `COPY (…) TO '<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
 
+- **A new table's Parquet** is laid out as Direct Lake reads it best, with nothing written for it: every
+  `CREATE TABLE` gets four Iceberg table properties in its `WITH (…)` (`TABLE_PROPERTIES` and `withTableProperties` in
+  [`core/sql.js`](../core/sql.js)). Row groups close at 4M rows or 1 GiB uncompressed, files at 1 GiB, and pages at 1 MB.
+  A property the statement sets itself is kept as it is. They are read when files are written, so a CTAS's rows have
+  them too, and every later write to the table. Sorting is the statement's own (`ORDER BY`).
+
 - **The names:** a table is `<ws>.<lh>.<schema>.<table>` ([NAMING.md](NAMING.md#a-writes-target)), and a
   schema is `<ws>.<lh>.<schema>`.
 - **What is refused, before anything runs:** `DROP` of anything, for now; what DuckDB's Iceberg writer doesn't have
