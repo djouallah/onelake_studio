@@ -117,9 +117,19 @@ jobs:
       - name: The cases, uploaded to Tables/test/lakeci_*
         run: |
           https="https://onelake.dfs.fabric.microsoft.com/${{ vars.ONELAKE_CI_WORKSPACE }}/${{ vars.ONELAKE_CI_LAKEHOUSE }}.Lakehouse/Tables/test"
-          for c in $(python -c "import json,sys; print(' '.join(k for k,v in json.load(open(sys.argv[1])).items() if v['made']))" "$FIXTURES_DIR/cases.json"); do
-            python test/fixtures/lake/upload.py "$FIXTURES_DIR/$c" "$https/lakeci_$c"
-          done
+          # The read-only cases are tested against themselves on OneLake (its rows against delta_scan of the same
+          # table), so they go up again only when what makes them changed: a marker in Files/ names that.
+          key=$( (cat test/fixtures/lake/make_tables.py test/fixtures/lake/upload.py; grep -m1 'pip install deltalake' .github/workflows/lake-tables.yml) | sha256sum | cut -c1-16)
+          marker="https://onelake.dfs.fabric.microsoft.com/${{ vars.ONELAKE_CI_WORKSPACE }}/${{ vars.ONELAKE_CI_LAKEHOUSE }}.Lakehouse/Files/lakeci/fixtures-$key"
+          auth=(-H "Authorization: Bearer $ONELAKE_TOKEN" -H "x-ms-version: 2023-11-03")
+          if curl -sf -o /dev/null -I "${auth[@]}" "$marker"; then
+            echo "the read-only cases are on OneLake already, as fixtures-$key made them"
+          else
+            for c in $(python -c "import json,sys; print(' '.join(k for k,v in json.load(open(sys.argv[1])).items() if v['made']))" "$FIXTURES_DIR/cases.json"); do
+              python test/fixtures/lake/upload.py "$FIXTURES_DIR/$c" "$https/lakeci_$c"
+            done
+            curl -sf -X PUT "${auth[@]}" -H "Content-Length: 0" "$marker?resource=file" > /dev/null
+          fi
           # Delta tables for the writes test to INSERT into, which no other test reads: the plain case again, and
           # one of each Delta feature.
           python test/fixtures/lake/upload.py "$FIXTURES_DIR/plain" "$https/lakeci_deltawrite"
