@@ -41,7 +41,7 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
    `code --install-extension djouallah.onelake-studio`.
 2. Click the OneLake Studio icon in the activity bar and sign in.
 
-Needs desktop VS Code 1.101+ on Windows x64, or macOS or Linux (x64 or arm64).
+Needs desktop VS Code 1.101+ on Windows x64, macOS on Apple silicon, or Linux (x64 or arm64).
 
 **Read only.** There are three exceptions, and each asks first. *Export to Fabric* publishes an app. *Create Semantic
 Model* makes a Power BI semantic model of a model file. *Upload Files…* writes files from your computer into a lakehouse's `Files/`. Opening a semantic model keeps it on your machine only.

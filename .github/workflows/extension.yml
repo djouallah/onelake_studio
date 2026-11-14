@@ -33,8 +33,8 @@
 # when the require fails, so `!node_modules/detect-libc/**` would have to join .vscodeignore
 # or an Alpine install would load a binding that is not in the package.
 #
-# The fan-in matters. Publishing from each leg would make five independent Marketplace calls,
-# and leg five failing would leave a version half-published — four platforms live, two
+# The fan-in matters. Publishing from each leg would make four independent Marketplace calls,
+# and the last leg failing would leave a version half-published — three platforms live, one
 # missing, and the version number already spent. Here, one failing leg means the run is not
 # green, and release.yml publishes only from a green run.
 #
@@ -116,7 +116,50 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - run: npm test
+      # npm test's own list of files, with what they cover of the product printed after them.
+      - name: npm test, with its coverage
+        run: >-
+          node --test --experimental-test-coverage --test-coverage-exclude='test/**' --test-coverage-exclude='scripts/**'
+          $(node -p "require('./package.json').scripts.test.replace(/^node --test /, '')")
+
+  # What reads the tree and runs nothing of the product. Each of these has failed for a real reason
+  # before it was here: a lockfile made behind a mirror, a dependency with a known hole.
+  checks:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      # A lockfile made behind a mirror names the mirror, and what ships then comes from there. The
+      # "Refresh extension lockfile" workflow makes both again from the public registry.
+      - name: Both lockfiles resolve from the public registry
+        run: |
+          set -euo pipefail
+          for f in package-lock.json fabric_app/rayfin/functions/package-lock.json; do
+            bad=$(grep -n '"resolved":' "$f" | grep -v '"resolved": "https://registry.npmjs.org/' || true)
+            [ -z "$bad" ] || { echo "$f resolves outside registry.npmjs.org:"; echo "$bad" | head -20; exit 1; }
+          done
+      - name: No known hole in what ships
+        run: npm audit --omit=dev --audit-level=high
+      - name: The Fabric app's function typechecks
+        working-directory: fabric_app/rayfin/functions
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx tsc --noEmit
+
+  # Mistakes a reader misses: a name that is nothing, a key written twice, code no path reaches. Not
+  # style, and nothing here formats. ESLint is installed beside the tree, not into it: the product has
+  # no use for it. Not one of the package job's needs until the tree is clean of what it finds.
+  lint:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - run: npm install --prefix "$RUNNER_TEMP/lint" --ignore-scripts --no-audit --no-fund eslint@9.17.0 globals@15.14.0
+      - run: NODE_PATH="$RUNNER_TEMP/lint/node_modules" "$RUNNER_TEMP/lint/node_modules/.bin/eslint" .
 
   # The native engine itself, on the DuckDB that ships: real @duckdb/node-api, its linux
   # binding, and the extensions DuckDB installs on first use. npm test cannot cover this —
@@ -201,12 +244,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
+        node: [24]
+        # Node 22 is the oldest the command line says it runs on with VS Code closed (cli.mjs).
+        include:
+          - { os: windows-latest, node: 22 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
       - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/cli-docs.test.mjs test/js/standalone.test.mjs
 
   # The page itself, in headless Chrome on the real engine, with no VS Code: the palette and the
@@ -249,8 +296,8 @@ jobs:
         run: node test/js/run-split.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
-  # five package legs, which then restore it rather than build it five times: the webview's and
-  # the web app's libraries (vendor/, from jsDelivr: one CDN hiccup here instead of five chances
+  # package legs, which then restore it rather than build it once each: the webview's and
+  # the web app's libraries (vendor/, from jsDelivr: one CDN hiccup here instead of four chances
   # to fail a leg), and Export to Fabric's function package.
   prepare:
     runs-on: ubuntu-26.04
@@ -271,7 +318,7 @@ jobs:
       - run: node scripts/function-bundle.mjs
 
   package:
-    needs: [test, engine, cli-os, page, prepare]
+    needs: [test, checks, engine, cli-os, page, prepare]
     runs-on: ubuntu-26.04
     strategy:
       # Every leg's failure is worth seeing in the same run; a release needs ALL of them green
@@ -279,7 +326,7 @@ jobs:
       fail-fast: false
       matrix:
         # A push: what is tried here and what the browser test runs. The full build (workflow_dispatch): every platform.
-        target: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["win32-x64","darwin-x64","darwin-arm64","linux-x64","linux-arm64"]' || '["win32-x64","linux-x64"]') }}
+        target: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["win32-x64","darwin-arm64","linux-x64","linux-arm64"]' || '["win32-x64","linux-x64"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -548,7 +595,7 @@ jobs:
           path: |
             ~/.cargo/registry
             desktop/src-tauri/target
-          key: desktop-tauri-${{ hashFiles('desktop/src-tauri/Cargo.toml') }}
+          key: desktop-tauri-${{ hashFiles('desktop/src-tauri/Cargo.toml', 'desktop/src-tauri/Cargo.lock') }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: vsix-win32-x64
@@ -581,7 +628,8 @@ jobs:
         run: |
           Remove-Item -Recurse -Force src-tauri/target/release/bundle -ErrorAction SilentlyContinue
           npx --yes @tauri-apps/cli@2.12.4 icon ../media/icon.png
-          npx --yes @tauri-apps/cli@2.12.4 build
+          # --locked: the crates Cargo.lock names, which the "Refresh extension lockfile" workflow wrote.
+          npx --yes @tauri-apps/cli@2.12.4 build -- --locked
       - if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

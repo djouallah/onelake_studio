@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **No package for macOS on Intel.** macOS is Apple silicon only from here on. A Mac with an Intel chip keeps the
+  version it has.
+
 ## 0.2.24
 
 - **Write to OneLake, on the website.** A new page says what SQL can write to a lakehouse, what each setting allows,

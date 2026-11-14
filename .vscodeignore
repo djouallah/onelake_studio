@@ -56,3 +56,7 @@ docs/**
 website/**
 # fetch-extensions.mjs's record of what it fetched, for a cached tree.
 duckdb-extensions/.stamp.json
+
+# The lint's rules and how to report a hole: the repository's, not the extension's.
+eslint.config.cjs
+SECURITY.md

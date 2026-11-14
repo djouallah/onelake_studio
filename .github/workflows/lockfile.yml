@@ -1,4 +1,5 @@
-# Regenerates package-lock.json against the PUBLIC npm registry and commits it.
+# Regenerates package-lock.json (the extension's and the Fabric function's) against the PUBLIC npm
+# registry, writes the desktop app's Cargo.lock if it has none, and commits them.
 #
 # Exists because the lockfile cannot always be made where the code is written: a machine
 # behind a corporate npm mirror resolves whatever that mirror happens to have (which lagged
@@ -33,19 +34,28 @@ jobs:
       # its old `resolved` URL. --package-lock-only resolves without installing anything.
       - name: Resolve
         run: |
-          rm -f package-lock.json
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund \
-            --registry https://registry.npmjs.org
-          grep -q '"resolved": "https://registry.npmjs.org/' package-lock.json
-          ! grep -q 'pkgs.visualstudio.com\|packagefeedproxy' package-lock.json
+          set -euo pipefail
+          for dir in . fabric_app/rayfin/functions; do
+            ( cd "$dir"
+              rm -f package-lock.json
+              npm install --package-lock-only --ignore-scripts --no-audit --no-fund                 --registry https://registry.npmjs.org
+              grep -q '"resolved": "https://registry.npmjs.org/' package-lock.json
+              ! grep -q 'pkgs.visualstudio.com\|packagefeedproxy' package-lock.json )
+          done
+
+      # The desktop app's crates, by version and checksum: its build takes these and no others (--locked).
+      # Written once and then kept: a crate moves when someone deletes the file and runs this again.
+      - name: The desktop app's Cargo.lock, if there is none
+        run: |
+          [ -f desktop/src-tauri/Cargo.lock ] || cargo generate-lockfile --manifest-path desktop/src-tauri/Cargo.toml
 
       - name: Commit, if anything changed
         run: |
-          if git diff --quiet -- package-lock.json; then
-            echo "lockfile already current"; exit 0
+          git add package-lock.json fabric_app/rayfin/functions/package-lock.json desktop/src-tauri/Cargo.lock
+          if git diff --cached --quiet; then
+            echo "lockfiles already current"; exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "Lockfile resolved against the public registry"
+          git commit -m "Lockfiles resolved against the public registries"
           git push

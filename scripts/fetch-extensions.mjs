@@ -27,7 +27,8 @@ const OUT = join(here, "duckdb-extensions");
 
 const PLATFORM = {
   "win32-x64": "windows_amd64",
-  "darwin-x64": "osx_amd64", "darwin-arm64": "osx_arm64",
+  // No darwin-x64: macOS on Intel has no package.
+  "darwin-arm64": "osx_arm64",
   "linux-x64": "linux_amd64", "linux-arm64": "linux_arm64",
 };
 const EXTENSIONS = [
@@ -50,10 +51,10 @@ const EXTENSIONS = [
   // start. A LOAD by path verifies against the core signing keys only, so these load as unsigned, and
   // their hash here is what holds them. Without them in the bundle the engine doesn't allow unsigned
   // ones, and it installs them from the community repository.
-  { name: "h3", repo: "https://community-extensions.duckdb.org", required: false },
-  { name: "zipfs", repo: "https://community-extensions.duckdb.org", required: false },
+  { name: "h3", repo: "https://community-extensions.duckdb.org", required: true },
+  { name: "zipfs", repo: "https://community-extensions.duckdb.org", required: true },
   // read_arrow, for a table with OneLake security: what OneLake's table read API answers (tableread.js).
-  { name: "nanoarrow", repo: "https://community-extensions.duckdb.org", required: false },
+  { name: "nanoarrow", repo: "https://community-extensions.duckdb.org", required: true },
 ];
 
 const target = process.argv[2];

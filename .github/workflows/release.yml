@@ -46,6 +46,9 @@ jobs:
           version=$(gh api "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$GITHUB_SHA" -H "Accept: application/vnd.github.raw" | jq -r .version)
           # --skip-duplicate would make a mismatched tag a silent no-op: re-sending the old version and saying it worked.
           [ "$GITHUB_REF_NAME" = "ext-v$version" ] || { echo "tag $GITHUB_REF_NAME, but package.json says $version"; exit 1; }
+          # A release is a commit of main: a tag on any other branch's commit, however green, publishes nothing.
+          where=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...main" -q .status)
+          case "$where" in ahead|identical) ;; *) echo "$GITHUB_SHA is not on main (main is $where of it)"; exit 1 ;; esac
           run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow extension.yml --commit "$GITHUB_SHA" --event workflow_dispatch --status success \
                   --json databaseId -q '.[0].databaseId // empty')
           [ -n "$run" ] || { echo "no green full Extension run for $GITHUB_SHA: gh workflow run extension.yml --ref main, let it pass, then tag"; exit 1; }
@@ -79,7 +82,7 @@ jobs:
       - name: What is about to go out
         run: |
           ls -l vsix
-          [ "$(ls vsix/*.vsix | wc -l)" -eq 5 ] || { echo "expected the five platforms' packages"; exit 1; }
+          [ "$(ls vsix/*.vsix | wc -l)" -eq 4 ] || { echo "expected the four platforms' packages"; exit 1; }
 
       - name: Sign in to Azure
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3

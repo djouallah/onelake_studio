@@ -1217,7 +1217,7 @@ every window. The rest apply at once.
 - **A Visual's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
 - **OneLake's table read API is in preview,** so how a table with OneLake security is read may change. It doesn't
   serve a table behind a shortcut to another region, and a very large table can fail with *Stream was too long*.
-- **Requires desktop VS Code 1.101+** on Windows x64, or macOS or Linux on x64 or arm64, for its built-in SQLite. Windows on arm64 has no build of DuckDB's `delta`, so no package.
+- **Requires desktop VS Code 1.101+** on Windows x64, macOS on Apple silicon, or Linux on x64 or arm64, for its built-in SQLite. Windows on arm64 has no build of DuckDB's `delta`, so no package, and macOS on Intel has none either.
 
 ## Where the code is
 

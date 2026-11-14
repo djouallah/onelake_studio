@@ -8,7 +8,7 @@
 // A download whose hash differs stops the build. So does one the file doesn't list: a new pin is
 // added on purpose, by the "Refresh download hashes" workflow, which sets RECORD_DOWNLOAD_HASHES.
 // That workflow adds to the file and never changes a line of it: what was seen once stays what is
-// expected. With no file at all, nothing is checked yet, and the build says so.
+// expected. The build's own file missing stops the build: only a file a caller names may not exist yet.
 // =============================================================================
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -36,6 +36,8 @@ export function createPins({ file = MANIFEST, record = !!process.env.RECORD_DOWN
       if (want) return bytes;
       if (record) { added[url] = hash; return bytes; }
       if (!known) {
+        // The build's own list is in the repository: without it nothing would be checked at all.
+        if (file === MANIFEST) throw new Error(`${file} is missing, so no download can be checked.`);
         if (!said) log(`no ${file} yet, so downloads are not checked: run the "Refresh download hashes" workflow`);
         said = true;
         return bytes;
