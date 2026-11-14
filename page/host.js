@@ -33,6 +33,7 @@ export function connectHost() {
       pending.delete(m.id);
       const e = new Error(m.message || "the host call failed");
       if (m.cancelled) e.cancelled = true;
+      if (m.sessionCleared) e.sessionCleared = true;
       if (m.notValid) e.notValid = true;
       p.reject(e);
     }

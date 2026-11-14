@@ -25,7 +25,7 @@ import { PINS, npmFile } from './cdn.js';
 import { tmslOf } from './explore/model.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './explore/profile.js';
 import { vscodeApi } from './vscode-api.js';
-import { statements, statementAt, errorOffset, setVariable, variablesIn, bindVariables, literal } from './querytext.js';
+import { statements, statementAt, errorOffset, setVariable, variablesIn, literal } from './querytext.js';
 
 const $ = id => document.getElementById(id);
 
@@ -873,7 +873,7 @@ async function showPlan(text) {
           return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
         } catch (e) {
           // Past the EXPLAIN, the box has its answer: the view and this line say it.
-          if (my === selSeq) setStatus(e.cancelled ? 'Stopped.' : 'Plan failed: ' + e.message, e.cancelled ? undefined : 'error');
+          if (my === selSeq) setStatus(e.cancelled ? stoppedNote(e) : 'Plan failed: ' + e.message, e.cancelled ? undefined : 'error');
           throw e;
         }
       }, my),
@@ -986,7 +986,7 @@ async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
     // The pane is not a scratchpad of whatever last worked.
     if (e.cancelled) {
       clearResults('(no result — query stopped)');
-      setStatus('Stopped.');
+      setStatus(stoppedNote(e));
       return false;
     }
     // The whole message, where it can wrap: the status line holds one line of it.
@@ -1658,17 +1658,26 @@ function boxStatement() {
   }
   return statementAt(statements(text), box.selectionStart);
 }
-// Query variables for this session, by lower-cased name: SET VARIABLE in the box sets one,
-// getvariable('name') reads it, and one never set is asked for the first time it is read.
-const variables = new Map();
-async function bindBoxVariables(sql) {
+// The query variables this tab has set, by lower-cased name. DuckDB holds their values, in the tab's session: SET
+// VARIABLE goes to it as written, and getvariable('name') or $name reads it there. One never set is asked for the
+// first time a statement reads it, and set in the session first.
+const variables = new Set();
+const quoteName = n => `"${String(n).replace(/"/g, '""')}"`;
+async function askUnsetVariables(sql) {
   for (const name of variablesIn(sql)) {
     if (variables.has(name.toLowerCase())) continue;
     const typed = await engine.askVariable(name);
-    if (typed == null) return null;
-    variables.set(name.toLowerCase(), literal(typed));
+    if (typed == null) return false;
+    await engine.runSql(`SET VARIABLE ${quoteName(name)} = ${literal(typed)}`);
+    variables.add(name.toLowerCase());
   }
-  return bindVariables(sql, variables);
+  return true;
+}
+// A Stop ends the tab's session when it held anything (engine-host.js tabSession), and its variables with it.
+function stoppedNote(e) {
+  if (!e.sessionCleared) return 'Stopped.';
+  variables.clear();
+  return "Stopped. This tab's temp tables and variables were cleared.";
 }
 async function runBox({ plan = false } = {}) {
   const box = $('sqlEditor'), text = box.value;
@@ -1691,18 +1700,10 @@ async function runOne(span, { plan = false, text }) {
   const box = $('sqlEditor');
   const written = text.slice(span.start, span.end);
   try {
-    // SET VARIABLE is the page's, not the engine's: kept here and answered at once. Bound now:
-    // DuckDB never holds the variables, so getvariable('a') in b's value would be NULL.
+    if (!await askUnsetVariables(written)) { setStatus('Cancelled: the query needs that variable.'); return false; }
+    const sql = written;
+    // SET VARIABLE and RESET VARIABLE run in the tab's session like any statement; the page notes the name.
     const set = setVariable(written);
-    if (set) {
-      const value = await bindBoxVariables(set.value);
-      if (value == null) { setStatus('Cancelled: the variable has no value.'); return false; }
-      variables.set(set.name.toLowerCase(), value);
-      setStatus(`${set.name} = ${value}`, 'ok');
-      return true;
-    }
-    const sql = await bindBoxVariables(written);
-    if (sql == null) { setStatus('Cancelled: the query needs that variable.'); return false; }
     // Before anything is cancelled: this Plan would be refused, and would have stopped the one under way.
     if (plan && planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return false; }
     enterQuery(activeQuery);
@@ -1710,6 +1711,11 @@ async function runOne(span, { plan = false, text }) {
     // One with options, EXPLAIN (FORMAT json) …, runs as written: its text is what was asked for.
     const explain = /^\s*EXPLAIN(?:\s+ANALY[SZ]E)?\s+(?!\()/i.exec(sql);
     const ok = plan || explain ? await showPlan(explain ? sql.slice(explain[0].length) : sql) : await runQuery({ sql });
+    if (ok && set) {
+      if (set.reset) variables.delete(set.name.toLowerCase());
+      else variables.add(set.name.toLowerCase());
+      setStatus(`${set.reset ? 'Reset' : 'Set'} ${set.name}.`, 'ok');
+    }
     // The cursor goes where DuckDB says the error is, as the statement is written. Not a
     // selection: the next Ctrl+Enter runs the statement again, not one word of it.
     // One of several with no place in it said: the statement's start.
@@ -1937,8 +1943,10 @@ window.addEventListener('message', async e => {
     else if (m.type === 'query-renamed') { if (sameName(activeQuery, m.from)) nameBoxQuery(String(m.to)); }
     else if (m.type === 'query-deleted') { if (sameName(activeQuery, m.name)) nameBoxQuery(null); }
     else if (m.type === 'clear-variables') {
-      setStatus(`${variables.size} query variable(s) cleared.`, 'ok');
+      const names = [...variables];
       variables.clear();
+      for (const n of names) await engine.runSql(`RESET VARIABLE ${quoteName(n)}`).catch(() => {});
+      setStatus(`${names.length} query variable(s) cleared.`, 'ok');
     }
     else if (m.type === 'reset') {
       await engineReady;

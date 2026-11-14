@@ -133,8 +133,7 @@ SELECT * FROM mart.sales;   -- aemo.data.mart.sales
 - The tree, Copy name, listings and errors give the whole name.
 
 **Why the engine does it, not DuckDB.** DuckDB 2.0 can't put a nested schema in its search path (*nested schemas
-cannot be used in the search path*), and each statement here runs on a connection of its own, which a USE
-would not outlive.
+cannot be used in the search path*).
 
 ## Semantic models: two parts
 

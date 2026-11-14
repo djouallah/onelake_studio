@@ -30,7 +30,8 @@ const isOwnCatalog = s => OWN_CATALOGS.has(String(s).toLowerCase()) || isWriteCa
 // What passes as a read: one statement that reads. Nothing else: no COPY, INSERT, UPDATE, DELETE, EXPORT,
 // INSTALL, LOAD, SET, CREATE, DROP, ATTACH or DETACH. What a tab sets up to read a file is a host
 // method (engine-host.js fileView, attachFile), so no statement can reach another tab's. A statement that
-// isn't a read can only be a write to a lakehouse, which has walls of its own (writeOf, checkPlan).
+// isn't a read can only be a write to a lakehouse, which has walls of its own (writeOf, checkPhysical), or one of a
+// tab's own session (sessionStatementOf).
 //
 // There are two walls. assertReads reads the text with this file's own scanner, which refuses at
 // once. checkedRead then asks DuckDB's parser, in a DuckDB that holds nothing, what the statement is,
@@ -348,9 +349,9 @@ function readsOnly(sql) {
 // statements are DuckDB-Iceberg's own, less DROP, which is blocked for now.
 //
 // There are two walls here too. writeOf reads the text, to find what the statement writes and where,
-// and refuses everything else at once. checkPlan then holds DuckDB's own plan of the statement as it
-// will run (json_serialize_plan, bound on the engine that runs it) to the same: the kind of statement,
-// and the catalog or the file it writes. So being wrong about the text writes nowhere else.
+// and refuses everything else at once. checkPhysical then holds DuckDB's own plan of the statement as it
+// will run (EXPLAIN (FORMAT json), on the connection that runs it) to the same kind of write, with no
+// other write anywhere in it.
 
 // Every token of `sql` with where it is, comments gone: a word, a quoted name, a string, a punctuation
 // mark, each at the depth of the parentheses it is in.
@@ -387,11 +388,6 @@ const notRun = refuse;
 const TABLE_SHAPE = 'a write goes to a lakehouse table: <workspace>.<lakehouse>.<schema>.<table>';
 const SCHEMA_SHAPE = 'a schema is made in a lakehouse: <workspace>.<lakehouse>.<schema>';
 const FILE_SHAPE = "COPY writes to a lakehouse's Files/: TO '<workspace>.<lakehouse>/Files/<path>'";
-// What DuckDB's plan of each is (checkPlan).
-const PLANS = { insert: 'LOGICAL_INSERT', update: 'LOGICAL_UPDATE', delete: 'LOGICAL_DELETE', merge: 'LOGICAL_MERGE_INTO',
-                'create table': 'LOGICAL_CREATE_TABLE', 'create schema': 'LOGICAL_CREATE_SCHEMA', alter: 'LOGICAL_ALTER',
-                'drop table': 'LOGICAL_DROP',
-                copy: 'LOGICAL_COPY_TO_FILE' };
 
 /**
  * What one statement writes, and where, by its text: { what, plan, target: 'table' | 'schema' | 'file', ref, start,
@@ -454,7 +450,7 @@ function writeOf(sql) {
     if (splitItem(p[1])) notRun(`a schema is made in a lakehouse only, and ${p[1]} is read only here`);
     return { target: 'schema', ref: { workspace: p[0], item: p[1], schema: p[2] }, start: n.start, end: n.end };
   };
-  const as = (what, found) => ({ what, plan: PLANS[what], ...found });
+  const as = (what, found) => ({ what, ...found });
 
   if (verb === 'insert') {
     if (w(k + 1) === 'or') notRun(`INSERT OR ${(tk[k + 2] && tk[k + 2].v || '').toUpperCase()} isn't one of DuckDB's Iceberg writes`);
@@ -484,12 +480,11 @@ function writeOf(sql) {
     notRun(`CREATE ${(tk[k + 1] && tk[k + 1].v || '').toUpperCase()} isn't a write to a lakehouse: only CREATE TABLE and CREATE SCHEMA are`);
   }
   // COPY (query) TO 'file', or COPY table TO 'file'. COPY … FROM loads a table, which DuckDB-Iceberg doesn't.
-  let j = k + 1, query = null;
+  let j = k + 1;
   if (tk[j] && tk[j].t === '(') {
-    const depth = tk[j].depth, open = tk[j];
+    const depth = tk[j].depth;
     j = tk.findIndex((t, x) => x > j && t.t === ')' && t.depth === depth) + 1;
     if (j <= 0) notRun(FILE_SHAPE);
-    query = { start: open.end, end: tk[j - 1].start };
   } else {
     const n = nameAt(j);
     if (!n) notRun(FILE_SHAPE);
@@ -507,8 +502,7 @@ function writeOf(sql) {
   try { file = fileName(to.v); }
   catch (e) { notRun(e.message); }
   if (!file || file.zip) notRun(FILE_SHAPE);
-  // `query`: where the query of COPY (query) TO is, inside its parentheses; null for COPY table TO.
-  return as('copy', { target: 'file', ref: file, start: to.start, end: to.end, query });
+  return as('copy', { target: 'file', ref: file, start: to.start, end: to.end });
 }
 
 // A lakehouse table's Parquet, as Direct Lake reads it fastest: a row group closes at 4M rows or 1 GiB uncompressed,
@@ -560,107 +554,200 @@ function withTableProperties(sql, props = TABLE_PROPERTIES) {
   return `${sql.slice(0, at).replace(/\s+$/, '')} ${clause}${j < tk.length ? ' ' : ''}${sql.slice(at)}`;
 }
 
-/**
- * Holds DuckDB's plan of a write (json_serialize_plan, parsed) to what writeOf read in its text: the kind of
- * statement, and the catalog it writes (`catalog`) or the file (`file`). DuckDB's own error on it, a table that
- * isn't there for one, is said as DuckDB says it.
- */
-function checkPlan(parsed, { plan, catalog = null, file = null }) {
-  if (!parsed || parsed.error) {
-    const message = parsed ? String(parsed.error_message || 'DuckDB could not plan it') : 'DuckDB could not plan it';
-    if (UNSERIALIZED.test(message)) notRun(`DuckDB could not show its plan of this write, so it isn't run: ${message}`);
-    if (/^(?:binder|catalog|parser|conversion|invalid input|not implemented)$/i.test(String(parsed && parsed.error_type))) throw new Error(message);
-    notRun(`DuckDB could not show its plan of this write, so it isn't run: ${message}`);
-  }
-  const plans = parsed.plans || [];
-  if (plans.length !== 1) notRun('DuckDB reads this as more than one statement');
-  const p = plans[0];
-  if (p.type !== plan) notRun(`DuckDB plans this as ${String(p.type).replace(/^LOGICAL_/, '')}, not ${plan.replace(/^LOGICAL_/, '')}`);
-  if (file != null) {
-    if (p.file_path !== file) notRun(`DuckDB would write ${p.file_path}, not the file this statement names`);
-    return;
-  }
-  const info = p.table_info || p.info || {};
-  // A DROP is of a table, never of a schema or anything else under the same plan.
-  if (p.type === 'LOGICAL_DROP' && info.type !== 'TABLE_ENTRY') notRun(`DuckDB plans this as a DROP of ${String(info.type || 'something').toLowerCase()}, not of a table`);
-  const path = info.qualified_name && Array.isArray(info.qualified_name.path) ? info.qualified_name.path : null;
-  const where = (path && path[0]) || info.catalog || '';
-  if (String(where).toLowerCase() !== String(catalog).toLowerCase()) {
-    notRun(`DuckDB would write to ${where || 'a catalog it doesn\'t name'}, not the lakehouse this statement names`);
-  }
-}
-
-// DuckDB can't write every bound plan as JSON. The scan of an Iceberg table an UPDATE, a DELETE or a MERGE changes has
-// no serialization, and nor do most file reads: read_csv says `CSVReaderSerialize not implemented`, read_parquet,
-// read_json, read_text and read_blob `Operator 'LOGICAL_GET' does not support serialization` (DuckDB 2.0). Such a
-// write is held to its physical plan instead, by the operators that write: DuckDB-Iceberg's ICEBERG_INSERT,
-// ICEBERG_UPDATE and ICEBERG_DELETE, the delta extension's DELTA_INSERT, and a COPY's own COPY_TO_FILE. Which table
-// it is, the statement's text alone can say: no statement may name a write's catalog (oneStatement), so the only one
-// it binds is the one engine-host.js named in it. Which file a COPY writes, its physical plan doesn't say: that is
-// the bound plan of the same COPY of SELECT 1 (copyStandIn).
-const UNSERIALIZED = /serialization not implemented|serialize not implemented|does not support serialization/i;
-const ICEBERG_WRITES = new Set(['ICEBERG_INSERT', 'ICEBERG_UPDATE', 'ICEBERG_DELETE']);
-const DELTA_WRITES = new Set(['DELTA_INSERT']);
-const COPIES = new Set(['COPY_TO_FILE', 'BATCH_COPY_TO_FILE']);
-// A write that is not the lake's: to a DuckDB table, a file, another database. DuckDB-Iceberg's own copy under a
-// CTAS is `CREATE TABLE & COPY TO FILE`.
-const OTHER_WRITES = /^(?:BATCH_)?(?:INSERT|UPDATE|DELETE|COPY_TO_FILE|CREATE_TABLE_AS|CREATE_TABLE|CREATE_INDEX|DROP|ALTER|ATTACH|DETACH|EXPORT|MERGE_INTO)$|^DELTA_|^ICEBERG_(?:INSERT|UPDATE|DELETE)$|COPY TO FILE/;
+// What each write is in DuckDB's physical plan of it (EXPLAIN (FORMAT json)), which plans it as it will run and
+// runs nothing: the operator at its root, and the lake's own writes it may hold. DuckDB-Iceberg adds a table's rows
+// with ICEBERG_INSERT (a CTAS's over the copy that makes the table, IcebergCatalog::PlanCreateTableAs) and marks them
+// deleted with ICEBERG_UPDATE or ICEBERG_DELETE; the delta extension adds them with DELTA_INSERT. A schema, a table
+// with no rows, an ALTER and a DROP are DuckDB's own operators, whatever the catalog, and a COPY is its COPY_TO_FILE.
+// None of them says which catalog or file: the text does. No statement may name a write's catalog (oneStatement), so
+// the only one it can bind is the one engine-host.js named in it, and a COPY's file is the URL engine-host.js put in.
+const COPIES = ['COPY_TO_FILE', 'BATCH_COPY_TO_FILE'];
+const SHAPES = {
+  iceberg: {
+    'create schema': { roots: ['CREATE_SCHEMA'] },
+    'create table': { roots: ['CREATE_TABLE', 'ICEBERG_INSERT'], lake: true },
+    alter: { roots: ['ALTER'] },
+    'drop table': { roots: ['DROP'] },
+    insert: { roots: ['ICEBERG_INSERT'], lake: true },
+    // An UPDATE writes its rows anew (ICEBERG_INSERT, over the ICEBERG_UPDATE that marks the old ones deleted), or
+    // marks them alone; a DELETE marks them; a MERGE does any of those under its MERGE_INTO.
+    update: { roots: ['ICEBERG_INSERT', 'ICEBERG_UPDATE'], lake: true, has: 'ICEBERG_UPDATE' },
+    delete: { roots: ['ICEBERG_DELETE'], lake: true },
+    merge: { roots: ['MERGE_INTO'], lake: true },
+    copy: { roots: COPIES },
+  },
+  delta: { insert: { roots: ['DELTA_INSERT'], lake: true } },
+};
+const LAKE_WRITES = { iceberg: new Set(['ICEBERG_INSERT', 'ICEBERG_UPDATE', 'ICEBERG_DELETE']), delta: new Set(['DELTA_INSERT']) };
+// Every operator that writes: DuckDB's own, to a table, a schema, a file or another database, and every extension's.
+// DuckDB-Iceberg's copy under a CTAS is `CREATE TABLE & COPY TO FILE`.
+const WRITES = /^(?:BATCH_)?(?:INSERT|UPDATE|DELETE|MERGE_INTO|COPY_TO_FILE|CREATE_TABLE_AS)$|^(?:CREATE|DROP|ALTER|ATTACH|DETACH|EXPORT|VACUUM|CHECKPOINT)(?:_|$)|^(?:ICEBERG|DELTA|DUCKLAKE)_(?!SCAN)|COPY TO FILE/;
+// A lake write writes its rows' files with a copy of its own, under it.
+const LAKE_COPIES = new Set([...COPIES, 'CREATE TABLE & COPY TO FILE']);
 
 /**
- * Holds DuckDB's physical plan of a write (EXPLAIN (FORMAT json), parsed) to what writeOf read in its text, when its
- * bound plan can't be had (checkPlan's `unserialized`). `delta`: the write goes to a Delta table, through the delta
- * extension, not to an Iceberg one.
+ * Holds DuckDB's physical plan of a write (EXPLAIN (FORMAT json), parsed) to what writeOf read in its text, `what`.
+ * `delta`: the write goes to a Delta table, through the delta extension. Throws, saying why, for anything else.
  */
 function checkPhysical(tree, what, { delta = false } = {}) {
   const roots = Array.isArray(tree) ? tree : [tree];
   if (roots.length !== 1 || !roots[0]) notRun('DuckDB plans this as more than one statement');
+  const shape = SHAPES[delta ? 'delta' : 'iceberg'][what];
+  if (!shape) notRun(`DuckDB can't ${what === 'drop table' ? 'drop' : String(what).toUpperCase()} a Delta table`);
   const root = String(roots[0].name || '');
-  // A COPY writes its one file, and nothing under it writes.
-  if (what === 'copy') {
-    if (!COPIES.has(root)) notRun(`DuckDB plans this as ${root}, not COPY_TO_FILE`);
-    const below = n => (n.children || []).forEach(c => {
-      const name = String(c.name || '');
-      if (OTHER_WRITES.test(name)) notRun(`DuckDB plans a ${name} in this, which isn't the COPY it names`);
-      below(c);
-    });
-    below(roots[0]);
-    return;
-  }
-  // An UPDATE writes its rows anew (ICEBERG_INSERT, over the ICEBERG_UPDATE that marks the old ones deleted), or
-  // marks them alone; a DELETE marks them; a MERGE does any of those under its MERGE_INTO. An INSERT and a CTAS
-  // add rows: a CTAS's ICEBERG_INSERT is over the copy that makes the table (IcebergCatalog::PlanCreateTableAs).
-  const shape = delta
-    ? { insert: { roots: ['DELTA_INSERT'], has: 'DELTA_INSERT' } }[what]
-    : { update: { roots: ['ICEBERG_INSERT', 'ICEBERG_UPDATE'], has: 'ICEBERG_UPDATE' },
-        delete: { roots: ['ICEBERG_DELETE'], has: 'ICEBERG_DELETE' },
-        merge: { roots: ['MERGE_INTO'], has: null },
-        insert: { roots: ['ICEBERG_INSERT'], has: 'ICEBERG_INSERT' },
-        'create table': { roots: ['ICEBERG_INSERT'], has: 'ICEBERG_INSERT' } }[what];
-  if (!shape) notRun(`DuckDB's plan of ${what}${delta ? ' on a Delta table' : ''} is checked by its bound plan only`);
-  const lake = delta ? DELTA_WRITES : ICEBERG_WRITES;
+  if (!shape.roots.includes(root)) notRun(`DuckDB plans this as ${root}, not ${shape.roots.join(' or ')}`);
+  const lake = shape.lake ? LAKE_WRITES[delta ? 'delta' : 'iceberg'] : new Set();
   const writes = [];
   const walk = (n, under) => {
     const name = String(n.name || '');
     if (lake.has(name)) writes.push(name);
-    // A lake write writes its files with a COPY of its own, under it.
-    else if (OTHER_WRITES.test(name) && !(under && (COPIES.has(name) || name === 'CREATE TABLE & COPY TO FILE')) && !(name === 'MERGE_INTO' && n === roots[0] && what === 'merge')) {
-      notRun(`DuckDB plans a ${name} in this, which isn't a write to the lakehouse it names`);
+    else if (WRITES.test(name) && n !== roots[0] && !(under && LAKE_COPIES.has(name))) {
+      notRun(`DuckDB plans a ${name} in this, which isn't the write it names`);
     }
     for (const c of n.children || []) walk(c, under || lake.has(name));
   };
   walk(roots[0], false);
-  if (!shape.roots.includes(root)) notRun(`DuckDB plans this as ${root}, not ${shape.has || shape.roots[0]}`);
-  if (!writes.length) notRun(`DuckDB's plan of this writes no ${delta ? 'Delta' : 'Iceberg'} table`);
+  if (shape.lake && root !== 'CREATE_TABLE' && !writes.length) notRun(`DuckDB's plan of this writes no ${delta ? 'Delta' : 'Iceberg'} table`);
   if (shape.has && !writes.includes(shape.has)) notRun(`DuckDB's plan of this has no ${shape.has}`);
 }
 
+// -----------------------------------------------------------------------------
+// A tab's own session: its variables, and its temporary tables and views
+// -----------------------------------------------------------------------------
+// A tab runs its statements on one DuckDB session of its own (engine-host.js tabSession), so what DuckDB keeps on a
+// connection is the tab's, as in any DuckDB session: SET VARIABLE (read with getvariable() or $name), and TEMP tables
+// and views. None of it is OneLake's or a file: a temporary object is in the session's own `temp` catalog. What such
+// a statement reads is held to every check a read is: its text here (oneStatement), its query by DuckDB's parser
+// (checkedRead, in engine-host.js), and DuckDB's physical plan of it to the one write it is (checkTempPhysical).
+
+// A name as a session statement gives one: bare, or in the temp catalog (temp.x, temp.main.x). Its parts and where
+// it ends, or null.
+function tempNameAt(tk, at) {
+  const parts = [];
+  let j = at;
+  for (;;) {
+    const t = tk[j];
+    if (!t || (t.t !== 'word' && t.t !== 'name')) break;
+    parts.push(t.v);
+    if (!tk[j + 1] || tk[j + 1].t !== '.') { j++; break; }
+    j += 2;
+  }
+  if (!parts.length) return null;
+  const qualified = parts.length > 1;
+  const temp = qualified && String(parts[0]).toLowerCase() === 'temp' && (parts.length === 2 || (parts.length === 3 && String(parts[1]).toLowerCase() === 'main'));
+  if (qualified && !temp) return null;
+  return { name: parts[parts.length - 1], qualified, next: j };
+}
+
 /**
- * The COPY whose bound plan says which file `sql` writes, when DuckDB can't write the plan of its query: SELECT 1,
- * to `target` (what runs in place of the target writeOf found, `w`), with the statement's own options after it.
+ * What one statement does to a tab's own session, or null for any other statement:
+ *   { kind: 'set variable', name, value }        `value`: the expression, as written, comments gone
+ *   { kind: 'reset variable', name }
+ *   { kind: 'temp', what, name, query }           what: create table, create view, insert, update, delete, drop
+ * `query`: where the read a CREATE TEMP … AS or an INSERT … SELECT takes is, { start, end } in `sql`, or null.
+ * `isTemp(name)`: whether the session holds a temporary table or view of that name, which is what an INSERT, an
+ * UPDATE, a DELETE or a DROP of a bare name must name: anything else is a lakehouse's (writeOf).
  */
-function copyStandIn(sql, w, target) {
-  if (w.what !== 'copy') throw new Error('copyStandIn is for a COPY');
-  return `COPY (SELECT 1) TO ${target}${String(sql).slice(w.end)}`;
+function sessionStatementOf(sql, isTemp = () => false) {
+  oneStatement(sql);
+  const tk = tokens(sql).filter(t => t.t !== ';');
+  const w = k => (tk[k] && tk[k].t === 'word' ? tk[k].w : '');
+  const rest = k => (tk[k] ? { start: tk[k].start, end: sql.replace(/[\s;]+$/, '').length } : null);
+  const named = k => (tk[k] && (tk[k].t === 'word' || tk[k].t === 'name') ? tk[k].v : null);
+
+  if ((w(0) === 'set' || w(0) === 'reset') && w(1) === 'variable') {
+    const name = named(2);
+    if (name == null) refuse(`${w(0).toUpperCase()} VARIABLE names a variable`);
+    if (w(0) === 'reset') {
+      if (tk.length !== 3) refuse('RESET VARIABLE names one variable');
+      return { kind: 'reset variable', name };
+    }
+    if (!tk[3] || !(tk[3].t === '=' || w(3) === 'to') || !tk[4]) refuse('SET VARIABLE is written SET VARIABLE <name> = <value>');
+    const r = rest(4);
+    const value = withoutComments(sql.slice(r.start, r.end)).trim();
+    return { kind: 'set variable', name, value };
+  }
+
+  const temp = (what, n, query = null) => ({ kind: 'temp', what, name: n.name, query });
+  if (w(0) === 'create') {
+    let k = 1;
+    if (w(k) === 'or' && w(k + 1) === 'replace') k += 2;
+    if (w(k) !== 'temp' && w(k) !== 'temporary') return null;
+    k++;
+    const kind = w(k);
+    if (kind !== 'table' && kind !== 'view') refuse(`CREATE TEMP ${String(named(k) || '').toUpperCase()} isn't one of a tab's own: only a TEMP TABLE or a TEMP VIEW is`);
+    k++;
+    if (w(k) === 'if' && w(k + 1) === 'not' && w(k + 2) === 'exists') k += 3;
+    const n = tempNameAt(tk, k);
+    if (!n) refuse('a temporary table or view is named by its name alone, or temp.<name>');
+    k = n.next;
+    // A column list: a table's columns, or a view's names for them.
+    if (tk[k] && tk[k].t === '(') {
+      const depth = tk[k].depth;
+      k = tk.findIndex((t, x) => x > k && t.t === ')' && t.depth === depth) + 1;
+      if (k <= 0) refuse('a column list ends with )');
+    }
+    if (w(k) === 'as') return temp(`create ${kind}`, n, rest(k + 1));
+    if (kind === 'view' || tk[k]) refuse(`CREATE TEMP ${kind.toUpperCase()} is written … AS <query>${kind === 'table' ? ', or with its columns' : ''}`);
+    return temp('create table', n);
+  }
+
+  // A write to one of the session's own: by a temp. name, or a bare one the session holds.
+  const own = k => {
+    const n = tempNameAt(tk, k);
+    return n && (n.qualified || isTemp(n.name)) ? n : null;
+  };
+  if (w(0) === 'insert' && w(1) === 'into') {
+    const n = own(2);
+    if (!n) return null;
+    let k = n.next;
+    if (tk[k] && tk[k].t === '(') {
+      const depth = tk[k].depth;
+      k = tk.findIndex((t, x) => x > k && t.t === ')' && t.depth === depth) + 1;
+      if (k <= 0) refuse('a column list ends with )');
+    }
+    if (w(k) === 'by' && (w(k + 1) === 'name' || w(k + 1) === 'position')) k += 2;
+    if (w(k) === 'default' && w(k + 1) === 'values') return temp('insert', n);
+    return temp('insert', n, rest(k));
+  }
+  if (w(0) === 'update') {
+    const n = own(1);
+    return n ? temp('update', n) : null;
+  }
+  if (w(0) === 'delete' && w(1) === 'from') {
+    const n = own(2);
+    return n ? temp('delete', n) : null;
+  }
+  if (w(0) === 'drop' && (w(1) === 'table' || w(1) === 'view')) {
+    const k = w(2) === 'if' && w(3) === 'exists' ? 4 : 2;
+    const n = own(k);
+    return n ? temp('drop', n) : null;
+  }
+  return null;
+}
+
+// DuckDB's own operators for a write to the session's temp catalog, and no write anywhere else in it.
+const TEMP_ROOTS = {
+  'set variable': ['SET_VARIABLE'],
+  'create table': ['CREATE_TABLE', 'CREATE_TABLE_AS', 'BATCH_CREATE_TABLE_AS'],
+  'create view': ['CREATE_VIEW'],
+  insert: ['INSERT', 'BATCH_INSERT'],
+  update: ['UPDATE'],
+  delete: ['DELETE'],
+  drop: ['DROP'],
+};
+/** Holds DuckDB's physical plan of a session's write (EXPLAIN (FORMAT json), parsed) to the one write it is. */
+function checkTempPhysical(tree, what) {
+  const roots = Array.isArray(tree) ? tree : [tree];
+  if (roots.length !== 1 || !roots[0]) notRun('DuckDB plans this as more than one statement');
+  const root = String(roots[0].name || '');
+  if (!(TEMP_ROOTS[what] || []).includes(root)) notRun(`DuckDB plans this as ${root}, not ${(TEMP_ROOTS[what] || ['a write to this tab']).join(' or ')}`);
+  const below = n => (n.children || []).forEach(c => {
+    const name = String(c.name || '');
+    if (WRITES.test(name)) notRun(`DuckDB plans a ${name} in this, which isn't the write it names`);
+    below(c);
+  });
+  below(roots[0]);
 }
 
 /** The statements of `sql`, as their text, in order: split where DuckDB would split them, empty ones left out. */
@@ -1282,5 +1369,5 @@ async function writeWithNamespace(sql, ns, serialize, duck, listed) {
 }
 
 module.exports = { sqlStr, quoteIdent, storedFault, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
-                   writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, checkPhysical, copyStandIn, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
+                   writeOf, withTableProperties, TABLE_PROPERTIES, checkPhysical, sessionStatementOf, checkTempPhysical, statementsOf, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
                    useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf };

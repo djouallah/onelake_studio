@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+- **A tab is one DuckDB session.** Its statements run on a DuckDB connection of its own, so what DuckDB keeps on one
+  lasts: `SET VARIABLE` is DuckDB's own, read with `getvariable('x')` or `$x` (`$x` failed before), and
+  `CREATE TEMP TABLE` and `TEMP VIEW` work, with `INSERT`, `UPDATE`, `DELETE` and `DROP` on them. Another tab sees
+  none of it. A Stop starts the tab on a new session, and says so when its temp tables and variables went.
 - **Fixed: a write that read a file was refused.** `CREATE TABLE … AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` or
   `COPY` from a CSV, Parquet or JSON file, in `Files/` or at a URL, said `CSVReaderSerialize not implemented` or
-  `Operator 'LOGICAL_GET' does not support serialization`, and didn't run. They run now, held to DuckDB's plan as
-  every write is.
+  `Operator 'LOGICAL_GET' does not support serialization`, and didn't run. A write is now held to DuckDB's physical
+  plan of it alone, which DuckDB gives for any statement it can run.
 - **A first start with no internet works.** The bundled `iceberg` extension was loaded before `avro`, which it
   needs, so it failed and was downloaded in its place: with no connection, or behind a proxy DuckDB can't use, the
   engine did not start the first time. They load in the right order now, and nothing is fetched.

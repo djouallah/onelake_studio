@@ -300,7 +300,24 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
       await c.run(`ATTACH ${sqlStr(uri)} AS control (TYPE quack, SECRET studio);`);
     } finally { try { c.closeSync(); } catch (_) {} }
   }
-  return { local, admin, route, stopGrowing, reattach, reattachControl, listTagged, cancelIds };
+  // An attach of a tab's own: one server session, which keeps what DuckDB keeps on a connection (SET VARIABLE, TEMP
+  // tables and views) from one statement to the next. Its statements are sent one at a time (engine-host.js session).
+  async function dedicated() {
+    const name = `t${named++}`;
+    const c = await local.connect();
+    try { await c.run(`ATTACH ${sqlStr(uri)} AS ${name} (TYPE quack, SECRET studio);`); }
+    finally { try { c.closeSync(); } catch (_) {} }
+    return {
+      text: sql => `SELECT * FROM ${name}.query(${sqlStr(sql)})`,
+      async detach() {
+        const d = await local.connect();
+        try { await d.run(`DETACH ${name};`); }
+        catch (_) { /* gone with the server's listener */ }
+        finally { try { d.closeSync(); } catch (_) {} }
+      },
+    };
+  }
+  return { local, admin, route, dedicated, stopGrowing, reattach, reattachControl, listTagged, cancelIds };
 }
 
 // Lines from a stream's text, in time linear in its length: each chunk is searched once, and a line
@@ -465,7 +482,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       throw new Error('the engine stopped');
     }
     if (reattachSaid) client.reattach().catch(() => {});
-    const { local, admin, route, stopGrowing, reattachControl, listTagged, cancelIds } = client;
+    const { local, admin, route, dedicated, stopGrowing, reattachControl, listTagged, cancelIds } = client;
     const recover = recovery(ask, client);
 
     let seq = 0;
@@ -487,6 +504,49 @@ function createRemote({ onGone = () => {}, ...cfg }) {
         if (ids.length && await cancelNow(ids)) return;
         await sleep(CANCEL_EVERY_MS);
       }
+    }
+
+    // A connection of this window's DuckDB whose statements go to the server: `routeOf` says down which attach
+    // each one goes. `again`: a statement that found the listener gone is sent again once it is back.
+    async function wrap(routeOf, { again: goAgain = true } = {}) {
+      const c = await local.connect();
+      let tag = null, way = null, stopped = false;
+      const done = () => { if (way) { if (stopped) way.retire(); else way.release(); } way = null; };
+      // The tag ends with its comment's close, so statement 1's doesn't also match statement 12.
+      const wrapped = sql => {
+        done();
+        tag = `${window}:${++seq}*/`;
+        way = routeOf(`${sql}\n/*onelake:${tag}`);
+        return way.text;
+      };
+      // Nothing has come back yet when these fail, so going again repeats nothing.
+      const again = (go, sql) => go(wrapped(sql)).catch(async e => {
+        if (closing || !goAgain || !LOST.test(String(e && e.message))) throw e;
+        done();
+        await recover();
+        // A Stop that came while this recovered: there is no statement to go again.
+        if (stopped) throw new Error('INTERRUPT Error: Interrupted!');
+        return go(wrapped(sql));
+      });
+      return {
+        run: sql => again(x => c.run(x), sql).catch(clean).finally(done),
+        runAndReadAll: sql => again(x => c.runAndReadAll(x), sql).catch(clean).finally(done),
+        // A stream holds its attach until its connection closes: rows are still coming through it.
+        async stream(sql) {
+          const r = await again(x => c.stream(x), sql).catch(clean);
+          return {
+            deduplicatedColumnNames: () => r.deduplicatedColumnNames(),
+            columnType: i => r.columnType(i),
+            fetchChunk: () => r.fetchChunk().catch(clean),
+          };
+        },
+        interrupt() {
+          stopped = true;
+          // The tag as it is by then: going again gives a statement a new one.
+          if (tag) cancel(() => tag).catch(() => {});
+        },
+        closeSync() { done(); c.closeSync(); },
+      };
     }
 
     return {
@@ -512,44 +572,19 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       othersRunning: () => ask({ othersRunning: true }),
       logs: limit => ask({ logs: { limit } }),
       clearLogs: () => ask({ clearLogs: true }),
-      async connect() {
-        const c = await local.connect();
-        let tag = null, way = null, stopped = false;
-        const done = () => { if (way) { if (stopped) way.retire(); else way.release(); } way = null; };
-        // The tag ends with its comment's close, so statement 1's doesn't also match statement 12.
-        const wrapped = sql => {
-          done();
-          tag = `${window}:${++seq}*/`;
-          way = route(`${sql}\n/*onelake:${tag}`);
-          return way.text;
-        };
-        // Nothing has come back yet when these fail, so going again repeats nothing.
-        const again = (go, sql) => go(wrapped(sql)).catch(async e => {
-          if (closing || !LOST.test(String(e && e.message))) throw e;
-          done();
-          await recover();
-          // A Stop that came while this recovered: there is no statement to go again.
-          if (stopped) throw new Error('INTERRUPT Error: Interrupted!');
-          return go(wrapped(sql));
-        });
+      async connect() { return wrap(sql => route(sql)); },
+      /**
+       * A tab's own session on the server (engine-host.js session): `connect()` gives what connect() does, its
+       * statements sent down the session's one attach. `close()` ends the session, and what it kept goes with it.
+       * A statement that finds the server's listener gone fails, the session with it: what it kept is lost, so it
+       * isn't sent again on a new one as if nothing had happened.
+       */
+      async session() {
+        const way = await dedicated();
+        let ended = false;
         return {
-          run: sql => again(x => c.run(x), sql).catch(clean).finally(done),
-          runAndReadAll: sql => again(x => c.runAndReadAll(x), sql).catch(clean).finally(done),
-          // A stream holds its attach until its connection closes: rows are still coming through it.
-          async stream(sql) {
-            const r = await again(x => c.stream(x), sql).catch(clean);
-            return {
-              deduplicatedColumnNames: () => r.deduplicatedColumnNames(),
-              columnType: i => r.columnType(i),
-              fetchChunk: () => r.fetchChunk().catch(clean),
-            };
-          },
-          interrupt() {
-            stopped = true;
-            // The tag as it is by then: going again gives a statement a new one.
-            if (tag) cancel(() => tag).catch(() => {});
-          },
-          closeSync() { done(); c.closeSync(); },
+          connect: () => wrap(sql => ({ text: way.text(sql), release() {}, retire() {} }), { again: false }),
+          close() { if (ended) return; ended = true; way.detach().catch(() => {}); },
         };
       },
       // This window's part of the server, ended while Node can still run. closeSync below blocks

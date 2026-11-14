@@ -659,3 +659,45 @@ test("the control pipe before the token: nothing is answered, nothing is held, a
   await alive("after a window's own bad lines");
   assert.equal(log().match(/starting: pid/g).length, 1, "the same server all along");
 });
+
+// A tab is one DuckDB session (engine-host.js tabSession): what DuckDB keeps on a connection lasts from one of its
+// statements to the next, no other tab sees it, and a Stop ends it.
+async function sessionHolds(engine, stop) {
+  const one = engine.forTab(), two = engine.forTab();
+  const q = async (tab, sql) => (await tab.call("query", [sql])).rows;
+  await q(one, "SET VARIABLE n = 3");
+  assert.deepEqual((await q(one, "SELECT getvariable('n') AS g, $n + 1 AS d")).map(r => [Number(r.g), Number(r.d)]), [[3, 4]]);
+  await q(one, "CREATE TEMP TABLE t AS SELECT range AS i FROM range(getvariable('n'))");
+  await q(one, "INSERT INTO t VALUES (10)");
+  await q(one, "UPDATE t SET i = i + 1 WHERE i = 10");
+  await q(one, "DELETE FROM t WHERE i = 0");
+  await q(one, "CREATE OR REPLACE TEMP VIEW v AS SELECT sum(i) AS s FROM t");
+  assert.equal(Number((await q(one, "SELECT s FROM v"))[0].s), 14, "1 + 2 + 11");
+  // The other tab has none of it, and can't write to it.
+  assert.deepEqual(await q(two, "SELECT getvariable('n') AS g"), [{ g: null }]);
+  await assert.rejects(q(two, "SELECT * FROM t"), /t does not exist|Table with name t/);
+  await assert.rejects(q(two, "INSERT INTO t VALUES (1)"), /Not run/);
+  // What isn't the session's is refused, in a tab as anywhere.
+  for (const sql of ["CREATE TABLE t2 AS SELECT 1", "CREATE TEMP MACRO m() AS 1", "SET threads = 1",
+                     "INSERT INTO lake.main.x SELECT 1", "CREATE TEMP TABLE x AS SELECT * FROM query('SELECT 1')"]) {
+    await assert.rejects(q(one, sql), /Not run/, sql);
+  }
+  await q(one, "DROP VIEW v");
+  await q(one, "RESET VARIABLE n");
+  assert.deepEqual(await q(one, "SELECT getvariable('n') AS g"), [{ g: null }]);
+  if (!stop) return;
+  // A Stop ends the session: the next statement starts a new one, and the temp table went with the old.
+  let stopped = null;
+  const running = one.call("query", [stop]).catch(e => { stopped = e; });
+  await new Promise(r => setTimeout(r, 1000));
+  await one.call("cancel");
+  await running;
+  assert.equal(stopped && stopped.cancelled, true);
+  assert.equal(stopped.sessionCleared, true, "it said what went with it");
+  await assert.rejects(q(one, "SELECT * FROM t"), /t does not exist|Table with name t/);
+  assert.deepEqual(await q(one, "SELECT 8 AS next"), [{ next: 8 }]);
+}
+
+test("on the shared server, a tab is one DuckDB session: variables, $name and temp tables last, a Stop clears them", async t => {
+  await sessionHolds((await setup(t)).open(), LONG);
+});

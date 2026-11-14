@@ -33,8 +33,9 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, storedFault, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPlan, checkPhysical, copyStandIn,
-        isUnserialized, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog,
+const { AsyncLocalStorage } = require('node:async_hooks');
+const { sqlStr, quoteIdent, storedFault, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPhysical,
+        sessionStatementOf, checkTempPhysical, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog,
         tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ,
         useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf } = require('../sql');
 const { sqlName, sqlPart, itemPart, displayName, abfssUrl, MODEL_KIND, modelSqlName, ENGINE_DB } = require('../names');
@@ -271,6 +272,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // a flag the page reads — DuckDB's text for it ("Interrupted!") never said "cancel".
   const interrupted = new WeakSet();
   function withConn(fn, owner = live) {
+    if (owner && owner.session) return owner.session.run(fn);
     const run = (async () => {
       if (closed || !instance) throw new Error('the engine was closed');
       const c = await instance.connect();
@@ -289,6 +291,64 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const done = () => inFlight.delete(run);
     run.then(done, done);
     return run;
+  }
+
+  // A tab's own DuckDB session: every statement of the tab runs on it, one at a time, so what DuckDB keeps on a
+  // connection (SET VARIABLE, TEMP tables and views) is the tab's from one statement to the next, as in any DuckDB
+  // session. On the shared server it is an attach of the tab's own (engine-client.js session); here, a connection
+  // kept open. A Stop ends it: what the stopped statement was reading can keep it busy for a minute, so the next
+  // statement starts a new one, and what the old one kept is gone (`sessionCleared` on the stopped statement's error,
+  // when it kept anything). `owner` is the tab's: cancel() interrupts the connection running now.
+  const inSession = new AsyncLocalStorage();
+  function tabSession(owner) {
+    let open = null, chain = Promise.resolve(), ended = false;
+    const session = {
+      // Whether it holds anything a Stop would take: a variable, a temporary table or view.
+      kept: false,
+      run(fn) {
+        // A statement inside one of its own (a write's EXPLAIN, then the write) is on the same connection already.
+        const here = inSession.getStore();
+        if (here && here.session === session) return fn(here.conn);
+        const go = async () => {
+          if (closed || !instance || ended) throw new Error('the engine was closed');
+          if (!open) open = await openSession();
+          const mine = open;
+          const c = await mine.connect();
+          owner.add(c);
+          let stopped = false;
+          try { return await inSession.run({ session, conn: c }, () => fn(c)); }
+          catch (e) {
+            if (interrupted.has(c) && e && typeof e === 'object') {
+              stopped = true;
+              try { e.cancelled = true; if (session.kept) e.sessionCleared = true; } catch (_) {}
+            }
+            throw e;
+          } finally {
+            owner.delete(c);
+            try { c.closeSync(); } catch (_) {}
+            if (stopped && open === mine) { open = null; session.kept = false; mine.close(); }
+          }
+        };
+        const run = chain.then(go, go);
+        chain = run.catch(() => {});
+        inFlight.add(run);
+        const done = () => inFlight.delete(run);
+        run.then(done, done);
+        return run;
+      },
+      close() {
+        ended = true;
+        if (open) { open.close(); open = null; }
+      },
+    };
+    return session;
+  }
+  async function openSession() {
+    if (instance.session) return instance.session();
+    const c = await instance.connect();
+    // Kept open between statements: closeSync is the session's, at its end.
+    const kept = new Proxy(c, { get: (t, k) => (k === 'closeSync' ? () => {} : typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });
+    return { connect: async () => kept, close() { try { c.closeSync(); } catch (_) {} } };
   }
 
   let tmpDir = null;
@@ -1232,13 +1292,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return true;
   }
 
-  // DuckDB's plan of a statement, bound where it runs (the server, on the shared engine), as checkPlan reads it.
-  async function planOf(statement, owner) {
-    const r = await withConn(c => c.runAndReadAll(`SELECT json_serialize_plan(${sqlStr(statement)}) AS plan`), owner);
-    const { plan } = r.getRowObjectsJson()[0];
-    return typeof plan === 'string' ? JSON.parse(plan) : plan;
-  }
-
   // DuckDB's physical plan of a statement, EXPLAIN (FORMAT json), parsed: what it will run, which runs nothing.
   async function physicalOf(statement, owner) {
     const r = await withConn(c => c.runAndReadAll(`EXPLAIN (FORMAT json) ${statement}`), owner);
@@ -1302,11 +1355,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     let attached = null, delta = null, sent = false;
     const place = text => sql.slice(0, w.start) + text + sql.slice(w.end);
     try {
-      let statement, expect;
+      let statement;
       if (w.target === 'file') {
         const url = abfssUrl(lh.workspace, `${lh.item}/Files`) + w.ref.path.slice('/Files'.length);
         statement = place(sqlStr(url));
-        expect = { plan: w.plan, file: url, standIn: copyStandIn(sql, w, sqlStr(url)) };
       } else {
         const target = w.target === 'table' ? await deltaTarget(w) : null;
         const folder = target && target.folder;
@@ -1315,28 +1367,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           delta = await deltaAttach(folder);
           // The table is the attached folder's own, as the delta extension names it: <alias>.main.<alias>.
           statement = place([delta, 'main', delta].map(quoteIdent).join('.'));
-          expect = { plan: w.plan, catalog: delta, delta: true };
         } else {
           attached = await iceAttach(lh.warehouse);
           statement = place([attached, w.ref.schema, ...(w.target === 'table' ? [w.ref.table] : [])].map(quoteIdent).join('.'));
-          expect = { plan: w.plan, catalog: attached };
         }
       }
       const never = () => false;
       const res = await withAuthRetry(() => withTables(statement, async run => {
-        // DuckDB's bound plan. One it can't write as JSON (an UPDATE, DELETE or MERGE on an Iceberg table, a read of
-        // a file) is held to its physical plan instead (sql.js checkPhysical). A COPY's file is then the bound plan of
-        // the same COPY of SELECT 1, and its query must be one read, as DuckDB's parser reads it.
-        const bound = await planOf(run, owner);
-        try { checkPlan(bound, expect); }
-        catch (e) {
-          if (!isUnserialized(e)) throw e;
-          if (w.what === 'copy') {
-            if (w.query) await checkedRead(sql.slice(w.query.start, w.query.end), serialize, { strict: true });
-            checkPlan(await planOf(expect.standIn, owner), expect);
-          }
-          checkPhysical(await physicalOf(run, owner), w.what, { delta: !!expect.delta });
-        }
+        // DuckDB's physical plan of it, as it will run, on the connection it runs on (sql.js checkPhysical).
+        checkPhysical(await physicalOf(run, owner), w.what, { delta: !!delta });
         begin();
         sent = true;
         if (!emit) return runAll(run, owner);
@@ -1481,6 +1520,37 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         return runWrite(run, { owner, begin, signal, ...o });
       });
     };
+    // A statement of this tab's own session (sql.js sessionStatementOf): a variable, a temporary table or view. Only
+    // a tab has a session; anywhere else it is no read and no write to a lakehouse, and refused as one.
+    const tempNames = async () => new Set((await runAll(`SELECT lower(table_name) AS n FROM duckdb_tables() WHERE temporary
+      UNION ALL SELECT lower(view_name) FROM duckdb_views() WHERE temporary`, owner)).rows.map(r => String(r.n)));
+    async function sessionStatement(sql) {
+      if (!owner.session) return null;
+      const probe = sessionStatementOf(sql, () => true);
+      if (!probe || probe.kind !== 'temp' || probe.what.startsWith('create')) return probe;
+      // An INSERT, UPDATE, DELETE or DROP of a bare name is this tab's only when the session holds that name.
+      const names = await tempNames();
+      return sessionStatementOf(sql, n => names.has(String(n).toLowerCase()));
+    }
+    // Run as written, once what it reads is checked as any read is: by DuckDB's parser, under this tab's USE, then its
+    // physical plan held to the one thing it does (sql.js checkTempPhysical).
+    const inTab = (st, sql, emit) => stoppable(async (begin, signal) => {
+      await init();
+      let text = sql;
+      if (st.kind === 'set variable') await checkedRead(`SELECT ${st.value}`, serialize, { strict: true });
+      else if (st.query) {
+        const read = await namespaced(await checkedRead(sql.slice(st.query.start, st.query.end), serialize, { strict: true }), ns, owner);
+        text = sql.slice(0, st.query.start) + read;
+      }
+      const res = await withAuthRetry(() => withTables(text, async run => {
+        if (st.kind !== 'reset variable') checkTempPhysical(await physicalOf(run, owner), st.kind === 'temp' ? st.what : st.kind);
+        begin();
+        if (!emit) return runAll(run, owner);
+        return { done: true, numRows: await withConn(c => runStreaming(c, run, emit), owner) };
+      }, undefined, { signal }));
+      owner.session.kept = true;
+      return res;
+    });
     // What this tab made, the only things it may take away.
     const views = new Set(), attached = new Set();
     async function release({ views: goingViews = [], attached: goingAttached = [] } = {}) {
@@ -1496,11 +1566,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       return true;
     }
     return {
-      // The page's SQL reads, or writes to a lakehouse (runWrite). A read is checked here at once, then asked of
-      // DuckDB's parser; a write is held to DuckDB's own plan of it.
+      // The page's SQL reads, writes to a lakehouse (runWrite), or keeps something in this tab's session (inTab). A read
+      // is checked here at once, then asked of DuckDB's parser; a write is held to DuckDB's own plan of it.
       async query(sql) {
         const asked = useOf(sql);
         if (asked) return use(asked, run => runAll(run, owner));
+        const own = await sessionStatement(sql);
+        if (own) return inTab(own, sql);
         if (!readsOnly(sql)) return write(sql);
         assertReads(sql);
         return stoppable(async (begin, signal) => {
@@ -1518,6 +1590,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       async stream(sql, emit) {
         const asked = useOf(sql);
         if (asked) return use(asked, run => withConn(c => runStreaming(c, run, emit), owner).then(numRows => ({ done: true, numRows })));
+        const own = await sessionStatement(sql);
+        if (own) return inTab(own, sql, emit);
         if (!readsOnly(sql)) return write(sql, { emit });
         assertReads(sql);
         return stoppable(async (begin, signal) => {
@@ -1630,6 +1704,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const tabs = new Set();
   function forTab() {
     const mine = new Set();
+    mine.session = tabSession(mine);
     tabs.add(mine);
     const table = methodsOf(mine);
     return {
@@ -1637,7 +1712,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       call: (method, args, emit) => callOn(table, method, args, emit),
       dispose() {
         tabs.delete(mine);
-        return table.releaseAll().catch(() => {});
+        return table.releaseAll().catch(() => {}).finally(() => mine.session.close());
       },
     };
   }
@@ -1801,6 +1876,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     if (instance && instance.leave) await instance.leave({ stop }).catch(() => {});
     await adminChain.catch(() => {});
     for (const c of running()) { try { c.closeSync(); } catch (_) {} }
+    for (const t of tabs) { try { t.session.close(); } catch (_) {} }
     live.clear();
     agentLive.clear();
     tabs.clear();

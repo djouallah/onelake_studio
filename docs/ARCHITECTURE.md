@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
-| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf` and `checkPlan` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
+| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Create Semantic Model and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`core/host.js`](../core/host.js), [`extension/panel.js`](../extension/panel.js), [`core/engine/engine-client.js`](../core/engine/engine-client.js) |
@@ -483,8 +483,15 @@ once and counts, though the answer still comes through the host.
   one is running (`2/3 · …`), and the last one's rows are shown. **Plan** shows where one statement spends its time.
 - **A statement can write** to a lakehouse ([SQL writes](#sql-writes)), with no question asked.
 - **Errors:** the status line says what DuckDB says, and the cursor goes where it says it is.
-- **Variables:** `SET VARIABLE year = 2024` keeps a value in that tab and `getvariable('year')`
-  reads it. **Clear Query Variables** forgets them, in every tab of the window.
+- **A tab is one DuckDB session.** Its statements run one at a time on a DuckDB connection of its own (on the
+  shared server, an attach of its own; `tabSession` in [`core/engine/engine-host.js`](../core/engine/engine-host.js)),
+  so what DuckDB keeps on a connection lasts from one of them to the next, and no other tab sees it:
+  `SET VARIABLE year = 2024`, read with `getvariable('year')` or `$year`, and `CREATE TEMP TABLE` / `TEMP VIEW`, with
+  `INSERT`, `UPDATE`, `DELETE` and `DROP` on them (`sessionStatementOf` in [`core/sql.js`](../core/sql.js), each held
+  to its `EXPLAIN` as a write is). A variable never set is asked for the first time a statement reads it.
+  **Clear Query Variables** resets them, in every tab of the window. A **Stop** ends the session: what the stopped
+  statement was reading can keep it busy for a minute, so the tab's next statement starts a new one, and the status
+  line says when its temp tables and variables went with the old.
 - **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List. Files, folders
   and semantic models have no right-click: their actions are icons on the row, shown on hover.
   - **A file:** Download File… and Copy SQL Name. A semantic model: Download File…, which asks Ossie (its local copy,
@@ -715,7 +722,7 @@ its header and is black, always; the chrome is the text's colour, and colour is 
 ## SQL writes
 
 A statement in the SQL box or the command line's `sql` can write to a lakehouse, and to nothing else
-([`core/sql.js`](../core/sql.js) `writeOf` and `checkPlan`, [`core/engine/engine-host.js`](../core/engine/engine-host.js)
+([`core/sql.js`](../core/sql.js) `writeOf` and `checkPhysical`, [`core/engine/engine-host.js`](../core/engine/engine-host.js)
 `runWrite`). There is no dialog: running it is the consent, once the settings let it run.
 
 - **The settings** (*Writes*, read at each statement), with nothing sent while the one a statement needs is off:
@@ -765,23 +772,17 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
   writes the commit to `_delta_log`, with the same secret's token, and a commit another writer made first is a
   conflict, not an overwrite. The extension adds rows only: an `UPDATE`, `DELETE`, `MERGE`, `ALTER` or
   `CREATE TABLE … AS` on a Delta table is refused before anything is attached, and so is a table whose Delta
-  features it can't write. Its plan is a `LOGICAL_INSERT` into that attach, held by `checkPlan` like any other.
+  features it can't write. Its plan is the extension's `DELTA_INSERT`, held by `checkPhysical` like any other.
   OneLake converts the new commit to the table's Iceberg face in its own time; the engine reads the Delta log, so
   the next read has the rows at once.
 - **Checked by DuckDB, then run.** The statement's text says what it writes and where (`writeOf`). Then DuckDB's own
-  plan of it, as it will run (`json_serialize_plan`, bound in the server against the real catalogs), must agree: the
-  kind of statement (`LOGICAL_INSERT`, `LOGICAL_CREATE_TABLE`, …), and the catalog it writes, which must be the one
-  attached for it, or for a `COPY` the file's URL (`checkPlan`). Some bound plans DuckDB can't write as JSON: an
-  `UPDATE`, a `DELETE` or a `MERGE` on an Iceberg table (its scan of the table has no serialization), and any write
-  that reads a file, a CSV, Parquet or JSON in `Files/` or at a URL (DuckDB 2.0 has none for `read_csv`,
-  `read_parquet`, `read_json`, `read_text` or `read_blob`). Such a write is held to its physical plan instead
-  (`EXPLAIN (FORMAT json)`, `checkPhysical`): DuckDB-Iceberg's own `ICEBERG_INSERT` (an `INSERT`, and a
+  physical plan of it, as it will run (`EXPLAIN (FORMAT json)`, on the connection that runs it, which runs nothing),
+  must be that write and no other (`checkPhysical`): DuckDB-Iceberg's `ICEBERG_INSERT` (an `INSERT`, and a
   `CREATE TABLE … AS` over the copy that makes the table), `ICEBERG_UPDATE` or `ICEBERG_DELETE`, a `MERGE_INTO` whose
-  every write is one of those, or the delta extension's `DELTA_INSERT`, and no other write anywhere in it. Which table
-  it is, the text alone says: no statement may name a write's catalog, so the only one it binds is the one named in it
-  here. A `COPY`'s physical plan doesn't name its file, so its file is the bound plan of the same `COPY` of `SELECT 1`
-  (`copyStandIn`), its query must be one read as DuckDB's parser reads it, and its physical plan one `COPY_TO_FILE`
-  with no write under it. Being wrong about the text writes nowhere else.
+  every write is one of those, the delta extension's `DELTA_INSERT`, DuckDB's own `CREATE_SCHEMA`, `CREATE_TABLE`,
+  `ALTER` or `DROP`, or a `COPY_TO_FILE`, with no other write anywhere in it. Which table or file it is, the text
+  alone says: no statement may name a write's catalog, so the only one it binds is the one attached for it, and a
+  `COPY`'s file is the URL put in it here. What it reads is any read: a table, a file in `Files/`, a URL, VALUES.
 - **Each statement is its own commit.** A write is never sent twice: a failure is said, not retried.
 - **Afterwards:** the lakehouse's table listing is read again, and a table's new snapshot is synced into the lake, so
   the tree and the next read show it. After a `COPY`, its folder is listed again.
@@ -1191,7 +1192,7 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
 | **Install Agent Skill (Claude Code, GitHub Copilot)** | Installs the skill above. |
 | **New Query**, **Open Query**, **Rename Query…**, **Delete Query**, **Show Queries Folder** | Saved queries, under *Queries* in the tree. |
 | **Go to a Table, Column or Measure…** (Ctrl+Alt+O) | Searches everything the cache holds. |
-| **Clear Query Variables** | Forgets values from `SET VARIABLE`. |
+| **Clear Query Variables** | Resets every variable `SET VARIABLE` set in a tab. |
 | **Select Top Rows**, **Copy SQL Name**, **Copy Column List** | A table's right-click. Copy SQL Name is on a file's and a folder's too. |
 | **Download Again (from Fabric)** | Replaces a semantic model's local copy. |
 | **Copy App URL** | An app's button. |

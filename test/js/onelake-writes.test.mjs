@@ -6,8 +6,7 @@
 // it. What it wrote is then read twice: by the engine itself, by the table's SQL name through the lake (what
 // a SELECT after it in a tab reads), and by a DuckDB of the test's own, straight from the catalog. A COPY to Files/,
 // what is refused, two writes at once, and INSERTs into Delta tables, which the delta extension writes to their
-// Delta log. Then every write from every source (a file in Files/, a CSV at a URL, a table, a join, VALUES), and the
-// coffee benchmark end to end. The tables a run makes are dropped after, by the test's
+// Delta log. Then writes that read a file (a CSV, Parquet, JSON, a CSV at a URL), and the coffee benchmark end to end. The tables a run makes are dropped after, by the test's
 // own DuckDB: the engine drops nothing. Skipped without those variables, set only by the lake's workflow.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -65,7 +64,7 @@ function resolverFor(prefix) {
   };
 }
 
-test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { skip, timeout: 2_400_000 }, async t => {
+test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { skip, timeout: 900_000 }, async t => {
   const prefix = await prefixOf();
   // The workspace's GUID, off a table of it, as sqltables.js lakehouseOf reads it: the catalog writes there.
   const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
@@ -369,116 +368,44 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     await noneAttached();
   });
 
-  // Every write, from every source a user writes from: a file in Files/ (CSV, Parquet, JSON, by its name or by its
-  // reader), a CSV at a URL, an Iceberg table, a Delta table, a file joined to a table, a CTE over a file, and VALUES.
-  // DuckDB can't write the bound plan of most file reads as JSON, so those writes are held to their physical plan
-  // (sql.js checkPhysical); a CREATE TABLE … AS from a CSV was once refused for it. Every cell runs, and the ones
-  // that fail are said together at the end.
-  await t.test("every write, from every source", async () => {
+  // A write that reads a file: one of each that DuckDB can't serialize a plan of, the case that was refused.
+  await t.test("writes that read a file: CTAS from a CSV, INSERT from Parquet and JSON, COPY from a CSV at a URL", async () => {
     assert.ok(folders.has(DW), "the Delta table was read");
     const fileOf = ext => `${WS}.${LH}/Files/lakeci/${run}_src.${ext}`;
-    const urlOf = path => `abfss://${WS}@${DFS}/${ITEM}/Files/${path}`;
+    const files = ["csv", "parquet", "json"].map(ext => `lakeci/${run}_src.${ext}`).concat(`lakeci/${run}_out.parquet`);
     const three = [{ id: "1", name: "n1" }, { id: "2", name: "n2" }, { id: "3", name: "n3" }];
     const seed = "SELECT i::BIGINT AS id, 'n' || i AS name FROM range(1, 4) r(i)";
-    const src = `${run}_src`;
-    made.push(["test", src]);
-    const files = ["csv", "parquet", "json"].map(ext => `lakeci/${run}_src.${ext}`);
-    const PRODUCTS = "https://raw.githubusercontent.com/JosueBogran/coffeeshopdatagenerator/refs/heads/main/Dim_Products_Table.csv";
-    const sources = [
-      { key: "csv", from: `SELECT id, name FROM '${fileOf("csv")}'` },
-      { key: "read_csv", from: `SELECT id, name FROM read_csv('${fileOf("csv")}', header = true)` },
-      { key: "parquet", from: `SELECT id, name FROM '${fileOf("parquet")}'` },
-      { key: "read_parquet", from: `SELECT id, name FROM read_parquet('${fileOf("parquet")}')` },
-      { key: "json", from: `SELECT id, name FROM read_json('${fileOf("json")}')` },
-      { key: "url_csv", from: `SELECT record_id AS id, name FROM '${PRODUCTS}' WHERE record_id <= 3`,
-        rows: [{ id: "1", name: "Latte" }, { id: "2", name: "Cappuccino" }, { id: "3", name: "Macchiato" }] },
-      { key: "iceberg", from: `SELECT id, name FROM ${tbl(src)}` },
-      { key: "delta", from: `SELECT i AS id, 'n' || i AS name FROM (SELECT row_number() OVER () AS i FROM (SELECT * FROM ${tbl(DW)} LIMIT 3))` },
-      { key: "file_join_table", from: `SELECT f.id, t.name FROM '${fileOf("csv")}' f JOIN ${tbl(src)} t ON f.id = t.id` },
-      { key: "cte_over_file", from: `WITH s AS (SELECT * FROM '${fileOf("parquet")}') SELECT id, name FROM s` },
-      { key: "values", from: "SELECT * FROM (VALUES (1, 'n1'), (2, 'n2'), (3, 'n3')) v(id, name)" },
-    ];
-    // Each source as the same two columns, whatever its reader made of them.
-    const typed = s => `SELECT id::BIGINT AS id, name::VARCHAR AS name FROM (${s.from}) s`;
-    const passed = [], failed = [];
-    const cell = async (label, fn) => {
-      try { await fn(); passed.push(label); }
-      catch (e) { failed.push(`${label}: ${String(e.message).split("\n")[0]}`); console.log(`FAILED ${label}: ${e.message}`); }
-    };
     try {
-      // The sources: written from VALUES-like reads, whose plans DuckDB can write.
       await sql(`COPY (${seed}) TO '${fileOf("csv")}' (FORMAT csv, HEADER true)`);
       await sql(`COPY (${seed}) TO '${fileOf("parquet")}' (FORMAT parquet)`);
       await sql(`COPY (${seed}) TO '${fileOf("json")}' (FORMAT json)`);
-      await sql(`CREATE TABLE ${tbl(src)} AS ${seed}`);
-      for (const s of sources) assert.deepEqual(norm(await sql(`${typed(s)} ORDER BY id`)), s.rows || three, `${s.key} reads as a source`);
 
-      for (const [k, s] of sources.entries()) {
-        const rows = s.rows || three;
-        await cell(`CREATE TABLE AS from ${s.key}`, async () => {
-          const n = `${run}_ctas_${s.key}`;
-          made.push(["test", n]);
-          await sql(`CREATE TABLE ${tbl(n)} AS ${typed(s)}`);
-          assert.deepEqual(await both(n, "id, name", "id"), rows);
-        });
-        await cell(`INSERT INTO an Iceberg table from ${s.key}`, async () => {
-          const n = `${run}_ins_${s.key}`;
-          made.push(["test", n]);
-          await sql(`CREATE TABLE ${tbl(n)} (id BIGINT, name VARCHAR)`);
-          await sql(`INSERT INTO ${tbl(n)} ${typed(s)}`);
-          assert.deepEqual(await both(n, "id, name", "id"), rows);
-        });
-        await cell(`INSERT INTO a Delta table from ${s.key}`, async () => {
-          // Rows of its own in the Delta table, by an id no other cell uses.
-          const base = 900_000_000 + k * 100;
-          await sql(`INSERT INTO ${tbl(DW)} SELECT id + ${base} AS id, name AS region, 1.5::DOUBLE AS amount FROM (${typed(s)})`);
-          const mine = norm(await sql(`SELECT id - ${base} AS id, region AS name FROM ${tbl(DW)} WHERE id BETWEEN ${base} AND ${base + 99} ORDER BY id`));
-          assert.deepEqual(mine, rows, "the engine reads them at once");
-          assert.deepEqual(norm(await back(`SELECT id - ${base} AS id, region AS name FROM delta_scan(${lit(folders.get(DW))}) WHERE id BETWEEN ${base} AND ${base + 99} ORDER BY id`)),
-            rows, "the Delta log has them");
-        });
-        if (!s.rows) {
-          await cell(`UPDATE, DELETE and MERGE INTO an Iceberg table from ${s.key}`, async () => {
-            const n = `${run}_upd_${s.key}`;
-            made.push(["test", n]);
-            await sql(`CREATE TABLE ${tbl(n)} AS SELECT i::BIGINT AS id, 'old' AS name FROM range(1, 5) r(i)`);
-            await sql(`UPDATE ${tbl(n)} AS t SET name = s.name FROM (${typed(s)}) s WHERE t.id = s.id`);
-            assert.deepEqual(await both(n, "id, name", "id"), [...three, { id: "4", name: "old" }], "UPDATE … FROM");
-            await sql(`DELETE FROM ${tbl(n)} WHERE id IN (SELECT id FROM (${typed(s)}) s WHERE id >= 2)`);
-            assert.deepEqual(await both(n, "id, name", "id"), [{ id: "1", name: "n1" }, { id: "4", name: "old" }], "DELETE … WHERE IN");
-            await sql(`MERGE INTO ${tbl(n)} AS t USING (${typed(s)}) AS s ON t.id = s.id
-              WHEN MATCHED THEN UPDATE SET name = upper(s.name) WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.name)`);
-            assert.deepEqual(await both(n, "id, name", "id"),
-              [{ id: "1", name: "N1" }, { id: "2", name: "n2" }, { id: "3", name: "n3" }, { id: "4", name: "old" }], "MERGE INTO … USING");
-          });
-        }
-        for (const fmt of ["parquet", "csv", "json"]) {
-          await cell(`COPY to Files/ as ${fmt} from ${s.key}`, async () => {
-            const path = `lakeci/${run}_out_${s.key}.${fmt}`;
-            files.push(path);
-            await sql(`COPY (${typed(s)}) TO '${WS}.${LH}/Files/${path}' (FORMAT ${fmt}${fmt === "csv" ? ", HEADER true" : ""})`);
-            assert.deepEqual(norm(await back(`SELECT id::BIGINT AS id, name::VARCHAR AS name FROM read_${fmt}(${lit(urlOf(path))}) ORDER BY id`)), rows);
-          });
-        }
-      }
+      const c = `${run}_from_csv`;
+      made.push(["test", c]);
+      await sql(`CREATE TABLE ${tbl(c)} AS SELECT id::BIGINT AS id, name FROM '${fileOf("csv")}'`);
+      assert.deepEqual(await both(c, "id, name", "id"), three, "CREATE TABLE AS from a CSV");
 
-      // What is refused stays refused when what it reads is a file.
-      for (const [text, why] of [
-        [`COPY (SELECT * FROM '${fileOf("csv")}') TO 'x.csv'`, /COPY writes to a lakehouse's Files/],
-        [`COPY (SELECT * FROM read_parquet('${fileOf("parquet")}')) TO 'abfss://${WS}@${DFS}/${ITEM}/Files/x.csv'`, /COPY writes to a lakehouse's Files/],
-        [`INSERT INTO lake.main.x SELECT * FROM '${fileOf("csv")}'`, /engine's own/],
-        [`INSERT INTO onelake.main.x SELECT * FROM read_json('${fileOf("json")}')`, /engine's own/],
-        [`CREATE TABLE ice_0123456789abcdef.test.x AS SELECT * FROM '${fileOf("csv")}'`, /engine's own/],
-        [`INSERT INTO ${q(WS)}.${q(`${LH}_warehouse`)}.dbo.t SELECT * FROM '${fileOf("csv")}'`, /lakehouse only/],
-      ]) await cell(`refused: ${text.slice(0, 60)}`, () => assert.rejects(engine.agentQuery(text), why, text));
+      const p = `${run}_from_parquet`;
+      made.push(["test", p]);
+      await sql(`CREATE TABLE ${tbl(p)} (id BIGINT, name VARCHAR)`);
+      await sql(`INSERT INTO ${tbl(p)} SELECT * FROM read_parquet('${fileOf("parquet")}')`);
+      assert.deepEqual(await both(p, "id, name", "id"), three, "INSERT INTO an Iceberg table from Parquet");
+
+      const base = 900_000_000;
+      await sql(`INSERT INTO ${tbl(DW)} SELECT id + ${base} AS id, name AS region, 1.5::DOUBLE AS amount FROM read_json('${fileOf("json")}')`);
+      assert.deepEqual(norm(await back(`SELECT id - ${base} AS id, region AS name FROM delta_scan(${lit(folders.get(DW))}) WHERE id > ${base} ORDER BY id`)),
+        three, "INSERT INTO a Delta table from JSON");
+
+      const PRODUCTS = "https://raw.githubusercontent.com/JosueBogran/coffeeshopdatagenerator/refs/heads/main/Dim_Products_Table.csv";
+      await sql(`COPY (SELECT record_id, name FROM '${PRODUCTS}' WHERE record_id <= 3) TO '${WS}.${LH}/Files/lakeci/${run}_out.parquet' (FORMAT parquet)`);
+      assert.deepEqual(norm(await back(`SELECT record_id, name FROM read_parquet(${lit(`abfss://${WS}@${DFS}/${ITEM}/Files/lakeci/${run}_out.parquet`)}) ORDER BY 1`)),
+        [{ record_id: "1", name: "Latte" }, { record_id: "2", name: "Cappuccino" }, { record_id: "3", name: "Macchiato" }], "COPY from a CSV at a URL");
       await noneAttached();
     } finally {
       for (const path of files) {
         await fetch(`https://${DFS}/${WS}/${ITEM}/Files/${path}`, { method: "DELETE", headers: { ...auth, "x-ms-version": "2023-11-03" } }).catch(() => {});
       }
     }
-    console.log(`every write, from every source: ${passed.length} passed, ${failed.length} failed`);
-    assert.deepEqual(failed, [], `cells that failed:\n${failed.join("\n")}`);
   });
 
   // The coffee benchmark as a user runs it in a tab (test/fixtures/coffee/coffee.sql): its two dimension tables

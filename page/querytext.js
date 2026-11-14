@@ -124,22 +124,19 @@ export function errorOffset(message, sql) {
   return at + Math.min(caret, excerpt.length);
 }
 
-// Query variables, kept by the page for the session: `SET VARIABLE name = expr` sets one
-// (never sent to the engine, whose guard refuses SET), and getvariable('name') in a query is
-// replaced by its value before the query runs.
-const SET_VARIABLE = /^\s*set\s+variable\s+("(?:[^"]|"")+"|[A-Za-z_]\w*)\s*(?:=|to)\s*([\s\S]+?)\s*;?\s*$/i;
+// Query variables. DuckDB keeps them: a tab's statements run on one DuckDB session of its own, so SET VARIABLE goes
+// to the engine as written, and getvariable('name') or $name in a later statement reads it there. The page only
+// keeps which names this tab has set, so one never set is asked for the first time a statement reads it.
+const SET_VARIABLE = /^\s*(set|reset)\s+variable\s+("(?:[^"]|"")+"|[A-Za-z_]\w*)/i;
 const GET_VARIABLE = /getvariable\s*\(\s*'((?:[^']|'')*)'\s*\)/gi;
-// Only when `sql` is one statement (a selection of a SET and a SELECT is not a SET), and the
-// value as SQL with its comments gone: `2024 -- the year` is 2024.
+/** The variable a statement sets or resets, { name, reset }, or null for any other (one statement only). */
 export function setVariable(sql) {
   const text = String(sql);
   const list = statements(text);
   if (list.length !== 1) return null;
-  const m = SET_VARIABLE.exec(text.slice(list[0].start, list[0].end));
+  const m = SET_VARIABLE.exec(withoutComments(text.slice(list[0].start, list[0].end)));
   if (!m) return null;
-  const name = m[1].startsWith('"') ? m[1].slice(1, -1).replace(/""/g, '"') : m[1];
-  const value = withoutComments(m[2]).trim();
-  return value ? { name, value } : null;
+  return { name: m[2].startsWith('"') ? m[2].slice(1, -1).replace(/""/g, '"') : m[2], reset: m[1].toLowerCase() === 'reset' };
 }
 // `sql` with its -- and /* */ comments removed, quotes kept as they are.
 function withoutComments(sql) {
@@ -155,21 +152,33 @@ function withoutComments(sql) {
   }
   return out;
 }
-// The variable names a statement reads, once each, as written.
+// The $names of `sql`, outside comments, quotes and $tag$ strings: $num_rows, not $1 (a parameter) or col$a.
+function dollarNames(sql) {
+  const s = String(sql), out = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    const comment = commentEnd(s, i);
+    if (comment !== -1) { i = comment; continue; }
+    if (c === "'" || c === '"') { i = quotedEnd(s, i); continue; }
+    if (c === '$') {
+      const end = dollarEnd(s, i);
+      if (end !== -1) { i = end; continue; }
+      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)/.exec(s.slice(i, i + 256));
+      if (m && !(i > 0 && WORD.test(s[i - 1]))) { out.push(m[1]); i += m[0].length; continue; }
+    }
+    i++;
+  }
+  return out;
+}
+/** The variable names a statement reads, by getvariable('name') or $name, once each, as written. */
 export function variablesIn(sql) {
   const seen = new Map();
-  for (const m of withoutComments(sql).matchAll(GET_VARIABLE)) {
-    const name = m[1].replace(/''/g, "'");
-    if (!seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
-  }
+  const add = name => { if (!seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name); };
+  for (const m of withoutComments(sql).matchAll(GET_VARIABLE)) add(m[1].replace(/''/g, "'"));
+  for (const name of dollarNames(sql)) add(name);
   return [...seen.values()];
 }
-// Each getvariable('name') replaced by (its value); `values` by lower-cased name. One in a comment
-// isn't read, so a statement with none stays as it was written.
-export const bindVariables = (sql, values) => (!variablesIn(sql).length ? String(sql) : withoutComments(sql).replace(GET_VARIABLE, (all, name) => {
-  const v = values.get(name.replace(/''/g, "'").toLowerCase());
-  return v == null ? all : `(${v})`;
-}));
 // A value typed at the prompt, as SQL: a number as it is, a quoted literal as it is, anything
 // else quoted.
 export function literal(text) {

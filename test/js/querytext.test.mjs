@@ -34,17 +34,17 @@ test("DuckDB's LINE/caret is found in the statement as written, comments and all
   assert.equal(q.errorOffset(msg, "SELECT something else"), null);
 });
 
-test("query variables: SET VARIABLE is kept, getvariable() is bound, a typed value is quoted", () => {
-  assert.deepEqual(q.setVariable("SET VARIABLE year = 2024;"), { name: "year", value: "2024" });
-  assert.deepEqual(q.setVariable("set variable \"my v\" TO DATE '2024-01-01'"), { name: "my v", value: "DATE '2024-01-01'" });
+test("query variables: SET VARIABLE names one, getvariable() and $name read one, a typed value is quoted", () => {
+  assert.deepEqual(q.setVariable("SET VARIABLE year = 2024;"), { name: "year", reset: false });
+  assert.deepEqual(q.setVariable("set variable \"my v\" TO DATE '2024-01-01'"), { name: "my v", reset: false });
+  assert.deepEqual(q.setVariable("/* why */ RESET VARIABLE year"), { name: "year", reset: true });
   assert.equal(q.setVariable("SELECT 1"), null);
-  // A selection of a SET and a query is not a SET; a comment is not part of the value.
+  // A selection of a SET and a query is not a SET.
   assert.equal(q.setVariable("SET VARIABLE x = 1;\nSELECT getvariable('x') AS v"), null);
-  assert.deepEqual(q.setVariable("SET VARIABLE y = 2024 -- the year"), { name: "y", value: "2024" });
-  assert.deepEqual(q.setVariable("SET VARIABLE s = '-- not a comment' /* note */;"), { name: "s", value: "'-- not a comment'" });
   assert.deepEqual(q.variablesIn("SELECT getvariable('year'), GETVARIABLE( 'Year' ), getvariable('it''s')"), ["year", "it's"]);
-  assert.equal(q.bindVariables("WHERE y = getvariable('Year') AND n = getvariable('none')", new Map([["year", "2024"]])),
-    "WHERE y = (2024) AND n = getvariable('none')");
+  // $name is DuckDB's other way to read one; $1 is a parameter, col$a a name, $tag$…$tag$ a string.
+  assert.deepEqual(q.variablesIn("SELECT $num_rows - 1, $Num_Rows, $1, col$a, $tag$ $inside $tag$, '$quoted', \"$named\" FROM t"), ["num_rows"]);
+  assert.deepEqual(q.variablesIn("FROM generate_series(0, $n - 1) -- $comment\n/* $block */"), ["n"]);
   assert.deepEqual(["42", "-1.5e3", "abc", "'x'", "o'k", "NULL"].map(q.literal), ["42", "-1.5e3", "'abc'", "'x'", "'o''k'", "NULL"]);
 });
 
@@ -56,10 +56,7 @@ test("a statement ends where DuckDB says it does", () => {
   assert.deepEqual(texts("SELECT 1 -- c\r; SELECT 2"), ["SELECT 1 -- c", "SELECT 2"], "a carriage return ends a line comment");
 });
 
-test("a variable named in a comment isn't asked for, and a statement with none stays as written", () => {
+test("a variable named in a comment isn't asked for", () => {
   assert.deepEqual(q.variablesIn("SELECT 1 -- AND y = getvariable('year')\n/* getvariable('n') */"), []);
   assert.deepEqual(q.variablesIn("SELECT getvariable('a') -- getvariable('b')"), ["a"]);
-  const untouched = "SELECT 1 /* a note */";
-  assert.equal(q.bindVariables(untouched, new Map()), untouched);
-  assert.equal(q.bindVariables("SELECT getvariable('a') -- getvariable('b')\n", new Map([["a", "1"], ["b", "2"]])).trim(), "SELECT (1)");
 });
