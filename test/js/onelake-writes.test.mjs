@@ -397,7 +397,8 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   // DuckDB's delta extension, on its own (none of the engine): CREATE TABLE of a new Delta table in a folder that
   // isn't there yet, on this machine and on OneLake, by the same DuckDB in the same run. Locally it makes the folder;
   // on OneLake it said 404. Not one of the product's writes (no setting makes a new Delta table), so a todo: it
-  // reports what happened, and the run fails on neither answer. When it passes, the extension can make one.
+  // reports what happened, and the run fails on neither answer. When it passes, the extension can make one:
+  // https://github.com/duckdb/duckdb-delta/issues/432
   await t.test("upstream: the delta extension's CREATE TABLE makes a new Delta table, on this machine and on OneLake", { todo: true }, async () => {
     console.log(JSON.stringify(await back(`SELECT version() AS duckdb, list(extension_name || ' ' || extension_version ORDER BY extension_name) AS ext
       FROM duckdb_extensions() WHERE loaded AND extension_name IN ('delta', 'azure')`)));
