@@ -10,7 +10,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
-    "@microsoft/fabric-user-data-functions": "1.36.1"
+    "@microsoft/fabric-user-data-functions": "1.36.2"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
