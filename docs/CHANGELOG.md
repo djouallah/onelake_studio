@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- **Writes are off until you turn them on.** A new *Writes* section in Settings: **Allow Writes**, off by default,
-  lets SQL write to OneLake; until then every write is refused and nothing is sent. **Allow Drop Table**, off by
-  default too, lets `DROP TABLE` delete an Iceberg table and its files.
+- **Writes to tables are off until you turn them on.** A new *Writes* section in Settings: **Allow Table Writes**,
+  off by default, lets SQL write to a lakehouse's tables; until then each such write is refused and nothing is sent.
+  **Allow Drop Table**, off by default too, lets `DROP TABLE` delete an Iceberg table and its files. **Allow Copy to
+  Files**, on by default, lets `COPY` write a file to a lakehouse's `Files/`, replacing one of the same name.
 
 - **INSERT into a Delta table.** SQL's `INSERT INTO` a lakehouse table that is Delta now adds the rows to its
   Delta log, and the next read shows them; it was refused. An Iceberg table is still written as Iceberg, and a new

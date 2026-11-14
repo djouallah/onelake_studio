@@ -143,8 +143,9 @@ VS Code extension); nothing is written to Fabric or OneLake.
   through OneLake's table read API: the answer has only the rows and columns their roles allow, so it can differ from
   what someone else sees. Each new read uses the workspace's capacity, so the answer is kept and read again after a day
   or a Refresh, not on every query. `table` may fail with a 403 for it while `sql` still reads it.
-- `sql` reads, and writes to a lakehouse only once the user turns on Allow Writes (`onelakeStudio.allowWrites`,
-  off by default; a write says so when it is off), with no question asked: its tables (`CREATE TABLE`,
+- `sql` reads, and writes to a lakehouse, with no question asked: its tables only once the user turns on Allow
+  Table Writes (`onelakeStudio.allowTableWrites`, off by default; a write says so when it is off), and its `Files/`
+  while Allow Copy to Files is on (on by default). Its tables (`CREATE TABLE`,
   `CREATE TABLE … AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE`, `CREATE SCHEMA`) and its
   `Files/` by `COPY (…) TO '<ws>.<lh>/Files/<path>'`. A target is `<ws>.<lh>.<schema>.<table>`. Each table
   is written in its own format, and a new one is made as Iceberg. A Delta table takes `INSERT` only.

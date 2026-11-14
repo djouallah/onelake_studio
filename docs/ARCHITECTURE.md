@@ -711,9 +711,11 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 ([`core/sql.js`](../core/sql.js) `writeOf` and `checkPlan`, [`core/engine/engine-host.js`](../core/engine/engine-host.js)
 `runWrite`). There is no dialog: running it is the consent, once the settings let it run.
 
-- **The settings** (*Writes*, read at each statement): **Allow Writes** (`onelakeStudio.allowWrites`) is off by default,
-  and every write is refused until it is on, with nothing sent. **Allow Drop Table** (`allowDropTable`) is off by
-  default too, and `DROP TABLE` needs both. The command line reads the same keys from its settings file.
+- **The settings** (*Writes*, read at each statement), with nothing sent while the one a statement needs is off:
+  **Allow Table Writes** (`onelakeStudio.allowTableWrites`) is off by default, for every write to a table or a schema.
+  **Allow Drop Table** (`allowDropTable`) is off by default too, and `DROP TABLE` needs both. **Allow Copy to Files**
+  (`allowCopyToFiles`) is on by default, for `COPY` to `Files/` alone, which replaces a file already at its path. The
+  command line reads the same keys from its settings file.
 
 | Statement | Where it writes |
 | --- | --- |

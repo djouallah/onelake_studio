@@ -227,7 +227,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, lakeFolder = 'lake', resolveTable = null, resolveFile = null,
                             resolveLakehouse = null, onWritten = () => {},
-                            catalogTables = null, offlineReason = () => null, checkConnectivity = null, writesAllowed = () => true, dropAllowed = () => false,
+                            catalogTables = null, offlineReason = () => null, checkConnectivity = null, tableWritesAllowed = () => true, dropAllowed = () => false,
+                            copyAllowed = () => true,
                             onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
   let served = null;            // serve: the address Quack answers on
@@ -1262,10 +1263,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     // A new table's Parquet, as Direct Lake reads it best, with nothing asked of whoever wrote it (sql.js TABLE_PROPERTIES).
     sql = withTableProperties(sql);
     const w = writeOf(sql);
-    // Off until the person turns them on (onelakeStudio.allowWrites, allowDropTable): nothing is sent before then,
-    // whoever sends it. A DROP TABLE needs both.
-    if (!writesAllowed()) {
-      throw Object.assign(new Error("Not run: writing to OneLake is off. Turn on Allow Writes in OneLake Studio's settings."), { writesOff: true });
+    // The Writes settings (onelakeStudio.allowTableWrites, allowDropTable, allowCopyToFiles): nothing is sent while the
+    // one a statement needs is off, whoever sends it. A COPY to Files/ needs only its own; a DROP TABLE needs both of
+    // the tables' ones.
+    if (w.target === 'file' ? !copyAllowed() : !tableWritesAllowed()) {
+      throw Object.assign(new Error(w.target === 'file'
+        ? "Not run: COPY to Files/ is off. Turn on Allow Copy to Files in OneLake Studio's settings."
+        : "Not run: writing to a lakehouse's tables is off. Turn on Allow Table Writes in OneLake Studio's settings."), { writesOff: true });
     }
     if (w.what === 'drop table' && !dropAllowed()) {
       throw Object.assign(new Error("Not run: DROP TABLE is off. Turn on Allow Drop Table in OneLake Studio's settings."), { writesOff: true });

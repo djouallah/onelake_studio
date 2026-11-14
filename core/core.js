@@ -129,8 +129,9 @@ function createCore({
       },
       offlineReason: () => connectivity.reason(),
       // SQL's writes to OneLake: off unless the settings are on, each read at the write (package.json's Writes).
-      writesAllowed: () => settings.read('allowWrites', false) === true,
+      tableWritesAllowed: () => settings.read('allowTableWrites', false) === true,
       dropAllowed: () => settings.read('allowDropTable', false) === true,
+      copyAllowed: () => settings.read('allowCopyToFiles', true) !== false,
       checkConnectivity: () => connectivity.check(),
       onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
       onFileRead: url => { if (onelake) onelake.fileRead(url).catch(() => {}); },

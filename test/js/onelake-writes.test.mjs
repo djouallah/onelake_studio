@@ -74,11 +74,11 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const warnings = [], written = [];
   // The Writes settings, as the extension hands them in (core.js engineCallbacks), set by each test that needs them.
-  const opts = { writes: true, drop: false };
+  const opts = { tables: true, drop: false, copy: true };
   const engine = createEngineHost({
     extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
     fileCacheDir: cacheDir, fileCacheMaxBytes: 1e9,
-    writesAllowed: () => opts.writes, dropAllowed: () => opts.drop,
+    tableWritesAllowed: () => opts.tables, dropAllowed: () => opts.drop, copyAllowed: () => opts.copy,
     getToken: async () => TOKEN,
     onWarn: w => warnings.push(w),
     onWritten: w => written.push(w),
@@ -424,20 +424,35 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     assert.match(said.onelake, /^ok/, "on OneLake");
   });
 
-  await t.test("Allow Writes off: every write is refused, with nothing sent", async () => {
+  await t.test("Allow Table Writes off: every write to a table is refused, with nothing sent, and COPY to Files/ still runs", async () => {
     const count = async () => String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(a)}`))[0].n);
     const before = await count();
-    opts.writes = false;
+    opts.tables = false;
     opts.drop = true;
     try {
       for (const text of [`INSERT INTO ${tbl(a)} VALUES (8, 'h', 8)`, `DELETE FROM ${tbl(a)} WHERE true`, `DROP TABLE ${tbl(a)}`,
                           `CREATE TABLE ${tbl(`${run}_off`)} AS SELECT 1 AS one`]) {
-        await assert.rejects(engine.agentQuery(text), /writing to OneLake is off\. Turn on Allow Writes/, text);
+        await assert.rejects(engine.agentQuery(text), /writing to a lakehouse's tables is off\. Turn on Allow Table Writes/, text);
       }
-    } finally { opts.writes = true; opts.drop = false; }
-    assert.equal(await count(), before, "nothing was written");
+      // Its own setting, on: the same file as before, replaced.
+      await sql(`COPY (SELECT 8 AS eight) TO '${WS}.${LH}/Files/${file}' (FORMAT parquet)`);
+      assert.deepEqual(norm(await back(`SELECT eight FROM read_parquet(${lit(`abfss://${WS}@${DFS}/${ITEM}/Files/${file}`)})`)), [{ eight: "8" }],
+        "the file is replaced");
+    } finally { opts.tables = true; opts.drop = false; }
+    assert.equal(await count(), before, "nothing was written to the table");
     assert.equal((await loadTable(prefix, "test", `${run}_off`)).status, 404, "no table was made");
     await noneAttached();
+  });
+
+  await t.test("Allow Copy to Files off: a COPY to Files/ is refused, and the file is as it was", async () => {
+    const read = async () => norm(await back(`SELECT * FROM read_parquet(${lit(`abfss://${WS}@${DFS}/${ITEM}/Files/${file}`)})`));
+    const before = await read();
+    opts.copy = false;
+    try {
+      await assert.rejects(engine.agentQuery(`COPY (SELECT 9 AS nine) TO '${WS}.${LH}/Files/${file}' (FORMAT parquet)`),
+        /COPY to Files\/ is off\. Turn on Allow Copy to Files/);
+    } finally { opts.copy = true; }
+    assert.deepEqual(await read(), before, "the file is as it was");
   });
 
   await t.test("DROP TABLE drops an Iceberg table only with Allow Drop Table on", async () => {
