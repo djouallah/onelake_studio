@@ -773,11 +773,9 @@ A model file, an app's file or a `.sql` file on this machine opens in a tab, as 
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
 - **In VS Code**, a `.fabricapp`, a `*.ossie.yaml` and a `.sql` file open in OneLake Studio by default (custom editors
   that hand them over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). None of them is a
-  text editor, so no SQL extension starts for a `.sql` file. When the desktop app is installed,
-  they open in the app: the editor finds it by the key its installer writes (`OneLakeStudio.Model`'s open command) and
-  starts it with the file. Without the app, or if it fails to start, they open in the extension. This matters for a
-  Windows double-click on a `*.ossie.yaml`: Windows goes by the last extension only, `.yaml`, whose default is often
-  VS Code. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
+  text editor, so no SQL extension starts for a `.sql` file. They open in the extension even when the desktop app is
+  installed: VS Code is what was picked to open them, and it can't tell *Open with > Visual Studio Code* from a
+  double-click whose default is VS Code. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
   what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
   `.yaml`, `.yml`, `.bim` or `.fabricapp`.
 - **In the desktop app**, File › Open… (Ctrl+O); a double-click on a `.fabricapp`, whose default app it is; and

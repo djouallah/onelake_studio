@@ -7,6 +7,8 @@
   the same name. A `.bim` or Ossie `.yaml` model file is written in on Model's YAML (or BIM), still coloured, and
   **Save** writes it back and opens the model again from it. Text that isn't a model is not saved. Saving to OneLake
   needs a connection.
+- **A file opened in VS Code stays in VS Code.** A `.sql`, `*.ossie.yaml` or `.fabricapp` file opened with VS Code
+  went to the desktop app when it was installed. It now opens in VS Code's OneLake Studio.
 
 ## 0.2.23
 
