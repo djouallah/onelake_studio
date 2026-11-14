@@ -713,7 +713,8 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 
 | Statement | Where it writes |
 | --- | --- |
-| `CREATE TABLE … (…)`, `CREATE TABLE … AS …`, `INSERT INTO`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE` | A lakehouse table, as Iceberg |
+| `CREATE TABLE … (…)`, `CREATE TABLE … AS …`, `INSERT INTO`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE` | A lakehouse table that is Iceberg, or a new one, made as Iceberg |
+| `INSERT INTO` | A lakehouse table that is Delta |
 | `CREATE SCHEMA` | A lakehouse with schemas |
 | `COPY (…) TO '<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
 
@@ -727,7 +728,7 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
   schema is `<ws>.<lh>.<schema>`.
 - **What is refused, before anything runs:** `DROP` of anything, for now; what DuckDB's Iceberg writer doesn't have
   (`CREATE OR REPLACE`, `INSERT OR REPLACE`, `ON CONFLICT`, `TRUNCATE`, `COPY … FROM`); a view, a macro, a secret or any
-  other `CREATE`; a temporary table; a table that is Delta in OneLake, whose Iceberg face is read only; a warehouse, a
+  other `CREATE`; anything but `INSERT INTO` on a table that is Delta in OneLake; a warehouse, a
   SQL or mirrored database; a name of the engine's own (`lake`, `system_internal`, …); and a `COPY` to
   anywhere but a lakehouse's `Files/`. What OneLake's catalog itself turns down fails with its own error.
 - **How a table is written:** DuckDB writes Iceberg only through a catalog. So the host attaches the lakehouse's
@@ -740,6 +741,19 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
   [`core/sqltables.js`](../core/sqltables.js)). A workspace with no table yet has the name's scope alone. The token is an Iceberg secret's, as an `ATTACH`'s `TOKEN` shows in `duckdb_databases()`. The write's
   target is named as that catalog's table, as a file's name is given its URL, and the statement's reads go through the
   lake as any read does. No statement may name such a catalog itself.
+- **Each table in its own format.** Which format a table is, the catalog says (`sourceFormat` in
+  [`core/names.js`](../core/names.js)): the store's answer first, and a Delta one asked of OneLake again, since an
+  Iceberg table has a Delta log beside it that is OneLake's conversion, never to be written (`deltaTarget` in
+  `engine-host.js`). A table that isn't there is made as Iceberg. A Delta table's Iceberg face is read only, so an
+  `INSERT` into it is written by DuckDB's `delta` extension instead: the table's folder is attached (`TYPE delta`)
+  for that one statement under a name of its own (`delta_` and 16 hex digits), and the statement names that
+  attach as its table. DuckDB writes the rows' files with the storage secret; the extension's own storage client
+  writes the commit to `_delta_log`, with the same secret's token, and a commit another writer made first is a
+  conflict, not an overwrite. The extension adds rows only: an `UPDATE`, `DELETE`, `MERGE`, `ALTER` or
+  `CREATE TABLE … AS` on a Delta table is refused before anything is attached, and so is a table whose Delta
+  features it can't write. Its plan is a `LOGICAL_INSERT` into that attach, held by `checkPlan` like any other.
+  OneLake converts the new commit to the table's Iceberg face in its own time; the engine reads the Delta log, so
+  the next read has the rows at once.
 - **Checked by DuckDB, then run.** The statement's text says what it writes and where (`writeOf`). Then DuckDB's own
   plan of it, as it will run (`json_serialize_plan`, bound in the server against the real catalogs), must agree: the
   kind of statement (`LOGICAL_INSERT`, `LOGICAL_CREATE_TABLE`, …), and the catalog it writes, which must be the one

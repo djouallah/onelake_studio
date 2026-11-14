@@ -505,6 +505,8 @@ test("what isn't one of DuckDB's Iceberg writes to a lakehouse is refused, sayin
     ["CALL ducklake_cleanup_old_files('lake')", /the lake is kept by the engine/],
     ["INSERT INTO ice_0123456789abcdef.dbo.t SELECT 1", /a write's catalog is the engine's own/],
     ["SELECT * FROM ice_0123456789abcdef.dbo.t", /a write's catalog is the engine's own/],
+    ["INSERT INTO delta_0123456789abcdef SELECT 1", /a write's catalog is the engine's own/],
+    ["SELECT * FROM delta_0123456789abcdef.main.delta_0123456789abcdef", /a write's catalog is the engine's own/],
     ["INSERT INTO aemo.data.dbo.t SELECT 1; DROP TABLE aemo.data.dbo.t", /one statement at a time/],
   ];
   for (const [sql, why] of refused) {
@@ -532,6 +534,12 @@ test("DuckDB's plan has the last word: the kind of statement, and the catalog or
     { plan: "LOGICAL_CREATE_TABLE", catalog: ice }));
   assert.doesNotThrow(() => checkPlan(planned("LOGICAL_ALTER", { info: { catalog: ice, schema: "dbo", name: "t" } }),
     { plan: "LOGICAL_ALTER", catalog: ice }));
+  // A Delta table's INSERT: the attach is the table, as DuckDB 2.0's delta extension names it.
+  const delta = "delta_0123456789abcdef";
+  assert.doesNotThrow(() => checkPlan(planned("LOGICAL_INSERT", { table_info: { qualified_name: { path: [delta, "main", delta] } } }),
+    { plan: "LOGICAL_INSERT", catalog: delta }));
+  assert.throws(() => checkPlan(planned("LOGICAL_INSERT", tableAt(ice)), { plan: "LOGICAL_INSERT", catalog: delta }),
+    /would write to ice_0123456789abcdef, not the lakehouse/);
   const url = "abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.csv";
   assert.doesNotThrow(() => checkPlan(planned("LOGICAL_COPY_TO_FILE", { file_path: url }), { plan: "LOGICAL_COPY_TO_FILE", file: url }));
 

@@ -17,7 +17,10 @@ const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart, itemPart, ENGINE_DB } = require('./names');
 // The engine's own catalogs, other than its database: a name starting with one is DuckDB's, never a workspace's.
 const OWN_CATALOGS = new Set(['temp', 'system', 'lake', 'system_internal']);
-const isOwnCatalog = s => OWN_CATALOGS.has(String(s).toLowerCase()) || /^ice_[0-9a-f]{16}$/i.test(String(s));
+// A write's own catalog (engine-host.js runWrite): ice_ or delta_ and 16 hex digits, attached for one statement.
+const WRITE_CATALOG = '(?:ice|delta)_[0-9a-f]{16}';
+const isWriteCatalog = s => new RegExp(`^${WRITE_CATALOG}$`, 'i').test(String(s));
+const isOwnCatalog = s => OWN_CATALOGS.has(String(s).toLowerCase()) || isWriteCatalog(s);
 
 // -----------------------------------------------------------------------------
 // Read only, enforced where the engine is
@@ -194,9 +197,10 @@ const refuse = why => {
 
 const ONELAKE_HOST = /^(?:[a-z0-9-]+-)?onelake\.(?:dfs|blob)\.fabric\.microsoft\.com$/i;
 
-// The name a write's Iceberg catalog is attached under: ice_ and 16 hex digits (engine-host.js).
+// The names a write's catalog is attached under (engine-host.js): a lakehouse's Iceberg catalog, or a Delta table.
 const ICE_PREFIX = 'ice_';
-const ICE_CATALOG = /\bice_[0-9a-f]{16}\b/i;
+const DELTA_PREFIX = 'delta_';
+const WRITE_CATALOG_NAMED = new RegExp(`\\b${WRITE_CATALOG}\\b`, 'i');
 
 // A path a table's own metadata names, or one about to be asked for with the OneLake token: a URL must be
 // OneLake's. The token goes with any abfss:// URL whatever its host, so a log or a manifest that names another
@@ -228,9 +232,9 @@ function oneStatement(sql) {
   if (/\b(?:write_blob|write_log)"?\s*\(/i.test(called)) refuse('this function writes');
   // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
   if (/\bquery(?:_table)?"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');
-  // A write's own Iceberg catalog (engine-host.js runWrite) is attached for that one statement, under a name
-  // that is never a statement's to use: it would go around every check on what a write may reach.
-  if (ICE_CATALOG.test(called)) refuse('a write\'s catalog is the engine\'s own');
+  // A write's own catalog (engine-host.js runWrite) is attached for that one statement, under a name that is
+  // never a statement's to use: it would go around every check on what a write may reach.
+  if (WRITE_CATALOG_NAMED.test(called)) refuse('a write\'s catalog is the engine\'s own');
   // A URL on another host is refused here, where it can be said why. One joined up from pieces gets past this,
   // DuckDB joining the text after it, and reads nothing: the secret's scope names no such place (ONELAKE_SCOPES).
   for (const [, authority] of kept.matchAll(/\b(?:abfss?|az|azure):\/\/([^/'"\r\n]*)/gi)) {
@@ -899,9 +903,9 @@ const CATALOG_CTES = `WITH RECURSIVE
         FROM duckdb_schemas()
         -- The lake (engine-host.js): the engine's own copy of each OneLake table, by a hash of its folder. What a
         -- query names is the table's own name; these are how it is read. Its metadata, system_internal, is listed.
-        -- Nor a write's own Iceberg catalog, there for that one statement (engine-host.js runWrite), nor DuckDB's
-        -- own system and temp: what is listed is OneLake's, the lake's metadata, and a database file a tab opened.
-        WHERE database_name NOT IN ('lake', 'system', 'temp') AND NOT starts_with(database_name, '${ICE_PREFIX}')),
+        -- Nor a write's own catalog, there for that one statement (engine-host.js runWrite), nor DuckDB's own
+        -- system and temp: what is listed is OneLake's, the lake's metadata, and a database file a tab opened.
+        WHERE database_name NOT IN ('lake', 'system', 'temp') AND NOT regexp_full_match(database_name, '${WRITE_CATALOG}')),
   p AS (SELECT database_oid, database_name, oid, q AS path, [n] AS parts FROM s WHERE parent_schema_oid IS NULL
         UNION ALL
         SELECT s.database_oid, s.database_name, s.oid, p.path || '.' || s.q, list_append(p.parts, s.n)
@@ -939,7 +943,7 @@ FROM p ORDER BY database_name, schema_name`;
 // The databases a user names: OneLake's, the lake's metadata, and a database file a tab opened; not the lake,
 // DuckDB's own, or a write's catalog.
 const SHOW_DATABASES = `SELECT database_name FROM duckdb_databases()
-WHERE NOT internal AND database_name NOT IN ('lake', 'system', 'temp') AND NOT starts_with(database_name, '${ICE_PREFIX}')
+WHERE NOT internal AND database_name NOT IN ('lake', 'system', 'temp') AND NOT regexp_full_match(database_name, '${WRITE_CATALOG}')
 ORDER BY database_name = '${ENGINE_DB}' DESC, database_name`;
 
 // A dotted name as SQL wrote it -> its parts, quotes undone; null when it is not one.
@@ -1214,5 +1218,5 @@ async function writeWithNamespace(sql, ns, serialize, duck, listed) {
 }
 
 module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
-                   writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
+                   writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
                    useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf };

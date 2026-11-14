@@ -201,7 +201,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
     }
     named.at = meta.at;
     named.listed = { workspace: ws, item: dir, schema: t.schema || '', table: t.table };
-    if (meta.empty) return { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) };
+    // Read as its typed empty SELECT; a Delta one still says where its log is, for a write to go there.
+    if (meta.empty) return { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields), deltaTable: meta.metadataLocation ? deltaTableOf(meta) : null };
     // Its log is read by the engine, into the lake (engine-host.js lakeTable).
     return { ...named, metadataLocation: meta.metadataLocation, deltaTable: deltaTableOf(meta), tableUuid: meta.tableUuid || null,
              ...(inLake ? { sync: true } : {}) };

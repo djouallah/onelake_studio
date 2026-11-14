@@ -495,6 +495,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       lakeStop: name => ask({ lakeStop: name }),
       icebergAttach: w => ask({ icebergAttach: w }),
       icebergDetach: w => ask({ icebergDetach: w }),
+      deltaAttach: w => ask({ deltaAttach: w }),
+      deltaDetach: w => ask({ deltaDetach: w }),
       stats: () => ask({ stats: true }),
       othersRunning: () => ask({ othersRunning: true }),
       logs: limit => ask({ logs: { limit } }),

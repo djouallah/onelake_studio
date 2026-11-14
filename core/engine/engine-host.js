@@ -34,7 +34,7 @@ const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
 const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPlan, checkPhysical,
-        isUnserialized, ICE_PREFIX,
+        isUnserialized, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog,
         tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ,
         useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf } = require('../sql');
 const { sqlName, sqlPart, itemPart, displayName, abfssUrl, MODEL_KIND, modelSqlName, ENGINE_DB } = require('../names');
@@ -373,7 +373,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // REQUIRED, and treated differently from the rest: `azure` is how anything is read from OneLake
       // (abfss://), `iceberg` is an Iceberg table and the catalog's own reads, and `httpfs` is the https the
       // Iceberg catalog and public URLs need. An optional extension that will not load costs one kind of thing,
-      // and `delta` says so when a Delta table is opened (makeView);
+      // and says so when it is wanted: `delta` when an INSERT goes to a Delta table (deltaAttach);
       // these three failing means the extension cannot do its job, and saying so beats
       // a later "Failed to open file" that names nothing.
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
@@ -792,7 +792,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   function reachable(ref) {
     if (ref.byGuid) return true;
     const ws = String(ref.workspace).toLowerCase();
-    if (!ENGINE_NAMES.has(ws) && !attachedFiles.has(ws) && !ws.startsWith(ICE_PREFIX)) return true;
+    if (!ENGINE_NAMES.has(ws) && !attachedFiles.has(ws) && !isWriteCatalog(ws)) return true;
     if (ref.bare) return false;
     throw new Error(`${sqlName(ref)}: ${ref.workspace} is also the name of a database or schema of this engine, which SQL finds ` +
       'first. Name the table by its GUIDs instead: "<workspace id>"."<item id>".<schema>.<table>');
@@ -1151,8 +1151,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   // ---------------------------------------------------------------------------
-  // Writes: a lakehouse's Tables, through its Iceberg catalog, and its Files/
+  // Writes: a lakehouse's Tables, Iceberg through its catalog and Delta by folder, and its Files/
   // ---------------------------------------------------------------------------
+  // Each table is written in its own format, and a new one is made as Iceberg (deltaTarget, below).
   // DuckDB writes Iceberg only through a catalog, so a write to a table attaches the lakehouse's Iceberg REST
   // catalog for that one statement, under a name of its own, and detaches it after. Nothing stays attached for a
   // listing to find, two statements never share one, and each is attached with the token of its time. The
@@ -1188,6 +1189,31 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return true;
   }
 
+  // A Delta table is written by DuckDB's delta extension, attached by its folder for that one statement, the same
+  // way: a name of its own, detached after. The attach is the table, and its name is the table's in the statement.
+  // Its rows' files are written with the storage secret, and its commit to _delta_log by the extension's own
+  // storage client, with the same secret's token.
+  const deltaAttached = new Set();
+  async function deltaAttach(folder) {
+    if (remote) return instance.deltaAttach({ folder: String(folder) });
+    await init();
+    if (!capabilities.delta) throw new Error("Not run: DuckDB's delta extension isn't loaded, so nothing is written to a Delta table.");
+    if (!isOneLakeTable(folder)) throw new Error(`Not run: ${String(folder).slice(0, 120)} is not a OneLake table's folder.`);
+    const name = `${DELTA_PREFIX}${randomBytes(8).toString('hex')}`;
+    await admin(async () => {
+      if (!secretToken) throw new Error('Not run: a write to OneLake needs a sign-in.');
+      await conn.run(`ATTACH ${sqlStr(folder)} AS ${quoteIdent(name)} (TYPE delta)`);
+      deltaAttached.add(name);
+    });
+    return name;
+  }
+  async function deltaDetach(name) {
+    if (remote) return instance.deltaDetach({ name: String(name) });
+    if (!deltaAttached.delete(String(name))) return false;
+    await admin(() => conn.run(`DETACH ${quoteIdent(name)}`));
+    return true;
+  }
+
   // DuckDB's plan of a statement, bound where it runs (the server, on the shared engine), as checkPlan reads it.
   async function planOf(statement, owner) {
     const r = await withConn(c => c.runAndReadAll(`SELECT json_serialize_plan(${sqlStr(statement)}) AS plan`), owner);
@@ -1203,12 +1229,26 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return JSON.parse(String(text));
   }
 
-  // A Delta table isn't written: its Iceberg face in OneLake is read only, and SQL here writes Iceberg.
-  async function refuseDelta(ref) {
+  // The Delta table a write goes to, by its folder, or null for one written through the Iceberg catalog: an Iceberg
+  // table, or a new one, which is made as Iceberg. A Delta table's Iceberg face in OneLake is read only, so it is
+  // written by the delta extension instead, which adds rows only: anything else to it is refused here.
+  // What the store holds says it first. A Delta table is asked of OneLake again: one dropped and made again as
+  // Iceberg has a Delta log beside it that is OneLake's conversion, which is never to be written.
+  async function deltaTarget(w) {
+    const ref = { kind: 'lakehouse', ...w.ref };
     let r = null;
-    try { r = await resolveTable({ kind: 'lakehouse', ...ref }, {}); }
-    catch (_) { return; }   // not there: a CREATE makes it, and anything else fails on DuckDB's word
-    if (r && r.deltaTable) notRunError(`${sqlName(r)} is a Delta table, and SQL here writes Iceberg tables only`);
+    try {
+      r = await resolveTable(ref, {});
+      if (r && r.deltaTable) r = await resolveTable(ref, { fresh: true });
+    } catch (e) {
+      if (w.what === 'create table') return null;   // not there: the CREATE makes it
+      throw e;
+    }
+    if (!r || !r.deltaTable) return null;
+    const name = sqlName(r);
+    if (w.what === 'create table') notRunError(`${name} is already there, as a Delta table`);
+    if (w.what !== 'insert') notRunError(`${name} is a Delta table, and DuckDB's only write to a Delta table is INSERT`);
+    return r.deltaTable;
   }
   const notRunError = why => { throw new Error(`Not run: ${why}.`); };
 
@@ -1228,7 +1268,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     // The token first: the write's catalog is attached with it.
     await ensureAuth();
     const lh = await resolveLakehouse({ workspace: w.ref.workspace, item: w.ref.item, name: sql.slice(w.start, w.end) });
-    let attached = null, sent = false;
+    let attached = null, delta = null, sent = false;
     const place = text => sql.slice(0, w.start) + text + sql.slice(w.end);
     try {
       let statement, expect;
@@ -1237,11 +1277,17 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         statement = place(sqlStr(url));
         expect = { plan: w.plan, file: url };
       } else {
-        if (w.target === 'table') await refuseDelta(w.ref);
-        await allowStorage(lh.scopes || []);
-        attached = await iceAttach(lh.warehouse);
-        statement = place([attached, w.ref.schema, ...(w.target === 'table' ? [w.ref.table] : [])].map(quoteIdent).join('.'));
-        expect = { plan: w.plan, catalog: attached };
+        const folder = w.target === 'table' ? await deltaTarget(w) : null;
+        await allowStorage([...(lh.scopes || []), ...(folder ? [scopeOfUrl(folder)] : [])]);
+        if (folder) {
+          delta = await deltaAttach(folder);
+          statement = place([delta, 'main', delta].map(quoteIdent).join('.'));
+          expect = { plan: w.plan, catalog: delta };
+        } else {
+          attached = await iceAttach(lh.warehouse);
+          statement = place([attached, w.ref.schema, ...(w.target === 'table' ? [w.ref.table] : [])].map(quoteIdent).join('.'));
+          expect = { plan: w.plan, catalog: attached };
+        }
       }
       const never = () => false;
       const res = await withAuthRetry(() => withTables(statement, async run => {
@@ -1261,6 +1307,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       return res;
     } finally {
       if (attached) await iceDetach(attached).catch(e => onWarn(`a write's Iceberg catalog was not detached — ${e.message}`));
+      if (delta) await deltaDetach(delta).catch(e => onWarn(`a write's Delta table was not detached — ${e.message}`));
       // What it wrote, read again: the listing, and a table's new snapshot into the lake, so the next read is of it.
       // Waited for, so a SELECT right after reads what was written; once it was sent, whatever happened: a statement
       // that failed may still have committed.
@@ -1749,7 +1796,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
                 readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, clearLogs,
-                icebergAttach: ({ warehouse }) => iceAttach(warehouse), icebergDetach: ({ name }) => iceDetach(name) };
+                icebergAttach: ({ warehouse }) => iceAttach(warehouse), icebergDetach: ({ name }) => iceDetach(name),
+                deltaAttach: ({ folder }) => deltaAttach(folder), deltaDetach: ({ name }) => deltaDetach(name) };
   return api;
 }
 

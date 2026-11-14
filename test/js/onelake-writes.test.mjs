@@ -5,7 +5,8 @@
 // Each of DuckDB's Iceberg writes goes through the lakehouse's Iceberg catalog and is held to DuckDB's own plan of
 // it. What it wrote is then read twice: by the engine itself, by the table's SQL name through the lake (what
 // a SELECT after it in a tab reads), and by a DuckDB of the test's own, straight from the catalog. A COPY to Files/,
-// what is refused, a Delta table, and two writes at once. The tables a run makes are dropped after, by the test's
+// what is refused, two writes at once, and INSERTs into Delta tables, which the delta extension writes to their
+// Delta log. The tables a run makes are dropped after, by the test's
 // own DuckDB: the engine drops nothing. Skipped without those variables, set only by the lake's workflow.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -97,7 +98,7 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   // The test's own DuckDB, which reads straight from the catalog what the engine wrote, and drops it after.
   const own = await DuckDBInstance.create(":memory:", { allow_unsigned_extensions: "true" });
   const c = await own.connect();
-  for (const ext of ["iceberg", "azure", "httpfs"]) {
+  for (const ext of ["iceberg", "azure", "httpfs", "delta"]) {
     const shipped = join(BUNDLED, `${ext}.duckdb_extension`).replace(/\\/g, "/");
     await c.run(existsSync(shipped) ? `LOAD ${lit(shipped)}` : `LOAD ${ext}`);
   }
@@ -260,61 +261,53 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     assert.ok(written.some(w => w.kind === "files" && w.dir === "lakeci"), "its folder is listed again");
   });
 
-  await t.test("a Delta table is not written", async () => {
-    await assert.rejects(engine.agentQuery(`INSERT INTO ${tbl("lakeci_plain")} SELECT * FROM ${tbl("lakeci_plain")} LIMIT 0`),
-      /lakeci_plain is a Delta table, and SQL here writes Iceberg tables only/);
-  });
-
-  // lakeci_deltawrite: the plain case again, uploaded for this test alone (lake-tables.yml), so a write that got
-  // through damages no table another test reads. Its Iceberg face is OneLake's conversion, read once it is there.
+  // The Delta tables written to: the plain case as lakeci_deltawrite, and a case of each Delta feature as
+  // lakeci_dw_<case>, uploaded again for this test alone by each run (lake-tables.yml), so a write damages no table
+  // another test reads. Each is written by DuckDB's delta extension, by its folder, and read back three ways: by
+  // the engine through the lake, by delta_scan of the test's own DuckDB, and by the table's Delta log.
   const DW = "lakeci_deltawrite";
-  const deltaLog = async () => {
-    const r = await fetch(`https://${DFS}/${encodeURIComponent(WS)}?resource=filesystem&recursive=false&directory=${encodeURIComponent(`${ITEM}/Tables/test/${DW}/_delta_log`)}`,
+  const FEATURES = ["dv_packed", "column_mapping", "part_multi", "checkpoint", "types", "empty"].map(c => `lakeci_dw_${c}`);
+  const folders = new Map();   // table -> its folder, from the catalog
+  const deltaLog = async name => {
+    const r = await fetch(`https://${DFS}/${encodeURIComponent(WS)}?resource=filesystem&recursive=false&directory=${encodeURIComponent(`${ITEM}/Tables/test/${name}/_delta_log`)}`,
       { headers: { ...auth, "x-ms-version": "2023-11-03" } });
-    assert.ok(r.ok, `${DW}'s _delta_log listing: ${r.status}`);
-    return (await r.json()).paths.map(p => `${p.name} ${p.contentLength}`).sort();
+    assert.ok(r.ok, `${name}'s _delta_log listing: ${r.status}`);
+    return (await r.json()).paths.map(p => `${p.name.replace(/^.*\//, "")} ${p.contentLength}`).sort();
   };
-  // What a write would change: its Delta log's files, the Iceberg face's metadata, and its rows.
-  const deltaState = async () => {
-    const meta = await (await loadTable(prefix, "test", DW)).json();
-    const rows = String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(DW)}`))[0].n);
-    return { log: await deltaLog(), metadata: meta["metadata-location"], rows };
-  };
-  let deltaBefore = null;
-  await t.test("lakeci_deltawrite is a Delta table with an Iceberg face", async () => {
+  const commits = log => log.filter(l => /^\d{20}\.json /.test(l)).length;
+  // Its rows as the Delta log has them, read by the delta extension itself.
+  const deltaRows = async name => String((await back(`SELECT count(*)::BIGINT AS n FROM delta_scan(${lit(folders.get(name))})`))[0].n);
+  const deltaState = async name => ({ log: await deltaLog(name), rows: await deltaRows(name) });
+  const noneAttached = async () => assert.deepEqual(
+    await sql("SELECT database_name FROM duckdb_databases() WHERE regexp_full_match(database_name, '(ice|delta)_[0-9a-f]{16}')"), [],
+    "no write's catalog is left attached");
+
+  await t.test("each Delta table to write to has its Iceberg face", async () => {
     const until = Date.now() + 5 * 60_000;
-    for (;;) {
-      const r = await loadTable(prefix, "test", DW);
-      if (r.ok && sourceFormat((await r.json()).metadata).format === "delta") break;
-      assert.ok(Date.now() < until, `${DW} has no Iceberg face after 5 minutes: ${r.status}`);
-      await new Promise(res => setTimeout(res, 10_000));
+    for (const name of [DW, ...FEATURES]) {
+      for (;;) {
+        const r = await loadTable(prefix, "test", name);
+        if (r.ok) {
+          const body = await r.json();
+          if (sourceFormat(body.metadata).format === "delta") {
+            folders.set(name, body["metadata-location"].replace(/\/metadata\/[^/]+$/, "").replace(/^abfs:/, "abfss:"));
+            break;
+          }
+        }
+        if (r.status === 404 && name !== DW && !(await fetch(`https://${DFS}/${encodeURIComponent(WS)}?resource=filesystem&recursive=false&directory=${encodeURIComponent(`${ITEM}/Tables/test/${name}`)}`,
+          { headers: { ...auth, "x-ms-version": "2023-11-03" } })).ok) { console.log(`${name}: not uploaded (its case wasn't made)`); break; }
+        assert.ok(Date.now() < until, `${name} has no Iceberg face after 5 minutes: ${r.status}`);
+        await new Promise(res => setTimeout(res, 10_000));
+      }
     }
-    deltaBefore = await deltaState();
-    assert.ok(deltaBefore.log.some(l => /\.json /.test(l)), `${DW} has a Delta log: ${deltaBefore.log.join(", ")}`);
-    assert.notEqual(deltaBefore.rows, "0", `${DW} has rows`);
+    assert.ok(folders.has(DW), `${DW} is a Delta table`);
   });
 
-  await t.test("no write to a Delta table is sent: each is refused before OneLake is asked", async () => {
-    assert.ok(deltaBefore, "the Delta table was read");
-    const cols = (await back(`DESCRIBE back.test.${q(DW)}`)).map(r => r.column_name);
-    const first = q(cols[0]);
-    for (const text of [
-      `INSERT INTO ${tbl(DW)} SELECT * FROM ${tbl(DW)} LIMIT 1`,
-      `UPDATE ${tbl(DW)} SET ${first} = ${first}`,
-      `DELETE FROM ${tbl(DW)} WHERE true`,
-      `MERGE INTO ${tbl(DW)} AS t USING (SELECT * FROM ${tbl(DW)} LIMIT 1) AS s ON t.${first} = s.${first} WHEN MATCHED THEN DELETE`,
-      `ALTER TABLE ${tbl(DW)} ADD COLUMN lakeci_extra INTEGER`,
-      `CREATE TABLE ${tbl(DW)} AS SELECT 1 AS id`,
-    ]) await assert.rejects(engine.agentQuery(text), new RegExp(`${DW} is a Delta table, and SQL here writes Iceberg tables only`), text);
-    assert.deepEqual(await deltaState(), deltaBefore, "the Delta table is as it was");
-    assert.deepEqual(await sql("SELECT database_name FROM duckdb_databases() WHERE starts_with(database_name, 'ice_')"), [],
-      "no write's catalog was attached for any of them");
-  });
-
-  // Past the engine's refusal: the test's own DuckDB, on the lakehouse's Iceberg catalog, writes to the Delta table's
-  // Iceberg face, as any Iceberg client could. OneLake's face of a Delta table is read only, so it must refuse.
+  // Past the engine: the test's own DuckDB, on the lakehouse's Iceberg catalog, writes to the Delta table's Iceberg
+  // face, as any Iceberg client could. OneLake's face of a Delta table is read only, so it must refuse.
   await t.test("OneLake refuses an Iceberg write to a Delta table's Iceberg face", async () => {
-    assert.ok(deltaBefore, "the Delta table was read");
+    assert.ok(folders.has(DW), "the Delta table was read");
+    const before = await deltaState(DW);
     for (const text of [
       `INSERT INTO back.test.${q(DW)} SELECT * FROM back.test.${q(DW)} LIMIT 1`,
       `DELETE FROM back.test.${q(DW)} WHERE true`,
@@ -324,8 +317,60 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
       console.log(`OneLake on ${text}: ${said ?? "ACCEPTED"}`);
       assert.ok(said, `OneLake accepted ${text}`);
     }
-    assert.deepEqual(await deltaState(), deltaBefore, "the Delta table is as it was: no commit, no new metadata, the same rows");
+    assert.deepEqual(await deltaState(DW), before, "the Delta table is as it was: no commit, the same rows");
   });
+
+  await t.test("an INSERT into a Delta table is one more commit in its Delta log, read back at once", async () => {
+    assert.ok(folders.has(DW), "the Delta table was read");
+    const before = await deltaState(DW);
+    assert.notEqual(before.rows, "0", `${DW} has rows`);
+    await sql(`INSERT INTO ${tbl(DW)} SELECT * FROM ${tbl(DW)} LIMIT 3`);
+    const after = await deltaState(DW);
+    assert.equal(commits(after.log), commits(before.log) + 1, `one commit: ${after.log.join(", ")}`);
+    assert.equal(after.rows, String(Number(before.rows) + 3), "three rows more, as the Delta log has them");
+    assert.equal(String((await sql(`SELECT count(*)::BIGINT AS n FROM ${tbl(DW)}`))[0].n), after.rows, "the engine reads them at once");
+    const cols = (await back(`DESCRIBE SELECT * FROM delta_scan(${lit(folders.get(DW))})`)).map(r => q(r.column_name)).join(", ");
+    assert.deepEqual(norm(await sql(`SELECT ${cols} FROM ${tbl(DW)} ORDER BY ALL`)),
+      norm(await back(`SELECT ${cols} FROM delta_scan(${lit(folders.get(DW))}) ORDER BY ALL`)), "the same rows as delta_scan");
+    assert.ok(written.some(w => w.kind === "tables"), "its lakehouse's tables are listed again");
+    await noneAttached();
+  });
+
+  await t.test("every other write to a Delta table is refused, and changes nothing", async () => {
+    assert.ok(folders.has(DW), "the Delta table was read");
+    const before = await deltaState(DW);
+    const cols = (await back(`DESCRIBE SELECT * FROM delta_scan(${lit(folders.get(DW))})`)).map(r => r.column_name);
+    const first = q(cols[0]);
+    const only = new RegExp(`${DW} is a Delta table, and DuckDB's only write to a Delta table is INSERT`);
+    for (const [text, why] of [
+      [`UPDATE ${tbl(DW)} SET ${first} = ${first}`, only],
+      [`DELETE FROM ${tbl(DW)} WHERE true`, only],
+      [`MERGE INTO ${tbl(DW)} AS t USING (SELECT * FROM ${tbl(DW)} LIMIT 1) AS s ON t.${first} = s.${first} WHEN MATCHED THEN DELETE`, only],
+      [`ALTER TABLE ${tbl(DW)} ADD COLUMN lakeci_extra INTEGER`, only],
+      [`CREATE TABLE ${tbl(DW)} AS SELECT 1 AS id`, new RegExp(`${DW} is already there, as a Delta table`)],
+    ]) await assert.rejects(engine.agentQuery(text), why, text);
+    assert.deepEqual(await deltaState(DW), before, "the Delta table is as it was");
+    await noneAttached();
+  });
+
+  // Each Delta feature's table, INSERTed into: what the delta extension can write, and that what it wrote reads.
+  for (const name of FEATURES) {
+    await t.test(`an INSERT into ${name}`, async ctx => {
+      if (!folders.has(name)) return ctx.skip("not uploaded");
+      const before = await deltaState(name);
+      const add = before.rows === "0" ? 0 : 2;
+      let said = null;
+      try { await sql(`INSERT INTO ${tbl(name)} SELECT * FROM ${tbl(name)} LIMIT ${add}`); }
+      catch (e) { said = e.message; }
+      const after = await deltaState(name);
+      console.log(`${name}: ${said ? `refused — ${said}` : `written, ${before.rows} -> ${after.rows} rows`}`);
+      await noneAttached();
+      if (said) assert.deepEqual(after.log, before.log, `${name}: refused, and its log is as it was`);
+      assert.equal(said, null, `${name} is written`);
+      assert.equal(after.rows, String(Number(before.rows) + add), `${name}: ${add} rows more, as its Delta log has them`);
+      assert.equal(String((await sql(`SELECT count(*)::BIGINT AS n FROM ${tbl(name)}`))[0].n), after.rows, `${name}: the engine reads them at once`);
+    });
+  }
 
   await t.test("what is refused writes nothing, and leaves nothing attached", async () => {
     const count = async () => String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(a)}`))[0].n);

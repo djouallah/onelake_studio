@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | othersRunning | logs | clearLogs | storageToken | lakeTable | lakeSync | lakeTables | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | listen }, answered { id, value | error }
+//   window -> server   { id, stats | othersRunning | logs | clearLogs | storageToken | lakeTable | lakeSync | lakeTables | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | deltaAttach | deltaDetach | listen }, answered { id, value | error }
 //   server -> window   { reattach: true }   its own news, with no id
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
@@ -138,6 +138,9 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     // A write's Iceberg catalog, attached for its one statement and detached after (engine-host.js runWrite).
     if (msg.icebergAttach) return engine.icebergAttach(msg.icebergAttach);
     if (msg.icebergDetach) return engine.icebergDetach(msg.icebergDetach);
+    // A Delta table a write goes to, the same way.
+    if (msg.deltaAttach) return engine.deltaAttach(msg.deltaAttach);
+    if (msg.deltaDetach) return engine.deltaDetach(msg.deltaDetach);
     if (msg.listen) { await listenAgain(!!msg.listen.force); return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.othersRunning) return engine.othersRunning();

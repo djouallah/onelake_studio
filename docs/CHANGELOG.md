@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **INSERT into a Delta table.** SQL's `INSERT INTO` a lakehouse table that is Delta now adds the rows to its
+  Delta log, and the next read shows them; it was refused. An Iceberg table is still written as Iceberg, and a new
+  table is made as Iceberg. A Delta table takes `INSERT` only: `UPDATE`, `DELETE`, `MERGE` and `ALTER` on one are
+  refused.
 - **A table SQL makes is laid out for Direct Lake.** `CREATE TABLE` gives it row groups of up to 4M rows, 1 GiB files
   and 1 MB pages, with nothing to write for it. DuckDB's own defaults made row groups of about 800K rows on a wide
   table, and one page per column chunk. A setting the statement gives itself is kept.
