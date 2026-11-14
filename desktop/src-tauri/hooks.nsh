@@ -15,12 +15,28 @@
   RMDir /r "$INSTDIR\app"
 !macroend
 
-; A model file, .yaml, .yml or .bim, or a .sql file, is OneLake Studio's to open from Windows' "Open with", and never made
-; its default: .fabricapp is the only file the app takes (tauri.conf.json fileAssociations). Windows lets
-; only the person make it .yaml's default (Open with > Always); then a YAML that is not a model goes on to
-; the program that had it, before a window shows (main.rs open_elsewhere).
+; A model file, .yaml, .yml or .bim, and a .sql file: OneLake Studio is in Windows' "Open with" for each, and made
+; its default, as .fabricapp's is (tauri.conf.json fileAssociations). The default is the extension's own (Default)
+; value, the one Windows uses while the person has picked nothing: a program picked with Open with > Always is
+; kept by Windows over it, so a choice made before or after the install stands. What the default was is kept
+; under OneLakeStudio.Model\Previous and put back on uninstall. A YAML that is not a model goes on to the program
+; that had YAML, before a window shows (main.rs open_elsewhere).
 !macro OpenWithModel EXT
   WriteRegStr SHCTX "Software\Classes\${EXT}\OpenWithProgids" "OneLakeStudio.Model" ""
+  ReadRegStr $0 SHCTX "Software\Classes\${EXT}" ""
+  StrCmp $0 "OneLakeStudio.Model" +3
+  WriteRegStr SHCTX "Software\Classes\OneLakeStudio.Model\Previous" "${EXT}" "$0"
+  WriteRegStr SHCTX "Software\Classes\${EXT}" "" "OneLakeStudio.Model"
+!macroend
+; Uninstall: the default it had before, while it is still the app's; none, when it had none.
+!macro RestoreDefault EXT
+  ReadRegStr $0 SHCTX "Software\Classes\${EXT}" ""
+  StrCmp $0 "OneLakeStudio.Model" 0 +6
+  ReadRegStr $1 SHCTX "Software\Classes\OneLakeStudio.Model\Previous" "${EXT}"
+  StrCmp $1 "" +3
+  WriteRegStr SHCTX "Software\Classes\${EXT}" "" "$1"
+  Goto +2
+  DeleteRegValue SHCTX "Software\Classes\${EXT}" ""
 !macroend
 !macro NSIS_HOOK_POSTINSTALL
   WriteRegStr SHCTX "Software\Classes\OneLakeStudio.Model" "" "Semantic model"
@@ -35,6 +51,10 @@
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro StopRunningApp
+  !insertmacro RestoreDefault ".yaml"
+  !insertmacro RestoreDefault ".yml"
+  !insertmacro RestoreDefault ".bim"
+  !insertmacro RestoreDefault ".sql"
   DeleteRegValue SHCTX "Software\Classes\.yaml\OpenWithProgids" "OneLakeStudio.Model"
   DeleteRegValue SHCTX "Software\Classes\.yml\OpenWithProgids" "OneLakeStudio.Model"
   DeleteRegValue SHCTX "Software\Classes\.bim\OpenWithProgids" "OneLakeStudio.Model"

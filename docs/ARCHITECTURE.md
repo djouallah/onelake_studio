@@ -778,15 +778,15 @@ A model file, an app's file or a `.sql` file on this machine opens in a tab, as 
   double-click whose default is VS Code. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
   what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
   `.yaml`, `.yml`, `.bim` or `.fabricapp`.
-- **In the desktop app**, File › Open… (Ctrl+O); a double-click on a `.fabricapp`, whose default app it is; and
-  Windows' "Open with" on a `.yaml`, `.yml` or `.bim`, which lists it without becoming their default (the installer,
-  [`desktop/src-tauri/hooks.nsh`](../desktop/src-tauri/hooks.nsh)). A file the app is started with reaches the Node
+- **In the desktop app**, File › Open… (Ctrl+O), and a double-click on a `.fabricapp`, `.sql`, `.yaml`, `.yml` or `.bim`:
+  the installer makes the app their default ([`desktop/src-tauri/hooks.nsh`](../desktop/src-tauri/hooks.nsh)), by
+  each extension's own default value, which Windows uses while the person has picked no program. A program picked
+  with *Open with › Always*, before the install or after it, is kept over it: the app never takes a file from the
+  program the person picked. Uninstalling puts back the default each had. A file the app is started with reaches the Node
   process as a line on its stdin, `{"open":"<path>"}`, also when the app is already running (its single instance).
-  Windows lets only the person make the app `.yaml`'s default (*Open with › Choose another app › Always*), and a
-  double-click on a `*.ossie.yaml` then opens straight in the app, with no stop in VS Code. Any YAML then starts
-  the app's exe, which reads it before a window shows: a model (`*.ossie.yaml`, or a top-level `version:` and
-  `datasets:`) opens in the app, and any other YAML goes on to the program that opened it before, VS Code first
-  among `.yaml`'s other "Open with" programs, else Windows' own Open with dialog (`open_elsewhere` in
+  A YAML starts the app's exe, which reads it before a window shows: a model (`*.ossie.yaml`, or a top-level
+  `version:` and `datasets:`) opens in the app, and any other YAML goes on to the program that opened it before, VS
+  Code first among `.yaml`'s other "Open with" programs, else Windows' own Open with dialog (`open_elsewhere` in
   [`desktop/src-tauri/src/main.rs`](../desktop/src-tauri/src/main.rs)).
   A file dropped on the window is not opened: the window gets no path for it.
 

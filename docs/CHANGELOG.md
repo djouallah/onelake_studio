@@ -9,6 +9,9 @@
   needs a connection.
 - **A file opened in VS Code stays in VS Code.** A `.sql`, `*.ossie.yaml` or `.fabricapp` file opened with VS Code
   went to the desktop app when it was installed. It now opens in VS Code's OneLake Studio.
+- **The desktop app opens `.sql`, `.yaml`, `.yml` and `.bim` files by default.** Its installer makes it their default
+  program, as it is for `.fabricapp`. A program you pick with *Open with › Always* still wins, and uninstalling puts
+  the old default back. A YAML that isn't a model still goes on to the program that had YAML.
 
 ## 0.2.23
 
