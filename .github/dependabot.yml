@@ -1,20 +1,32 @@
 # A pull request a week for what has moved, grouped, so a fix upstream is seen without anyone looking.
 # The Extension workflow runs on each, and nothing merges by itself.
+#
+# No major versions: one changes what the code is written against (TypeScript 7 and Node 26's types
+# failed the function's typecheck the first week), and is taken on purpose, by hand.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       extension: { patterns: ["*"] }
   - package-ecosystem: npm
     directory: /fabric_app/rayfin/functions
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       function: { patterns: ["*"] }
   - package-ecosystem: cargo
     directory: /desktop/src-tauri
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       desktop: { patterns: ["*"] }
   - package-ecosystem: github-actions
