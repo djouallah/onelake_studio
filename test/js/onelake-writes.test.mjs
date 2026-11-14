@@ -74,11 +74,11 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const warnings = [], written = [];
   // The Writes settings, as the extension hands them in (core.js engineCallbacks), set by each test that needs them.
-  const opts = { writes: true, drop: false, format: "iceberg" };
+  const opts = { writes: true, drop: false };
   const engine = createEngineHost({
     extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
     fileCacheDir: cacheDir, fileCacheMaxBytes: 1e9,
-    writesAllowed: () => opts.writes, dropAllowed: () => opts.drop, newTableFormat: () => opts.format,
+    writesAllowed: () => opts.writes, dropAllowed: () => opts.drop,
     getToken: async () => TOKEN,
     onWarn: w => warnings.push(w),
     onWritten: w => written.push(w),
@@ -367,35 +367,6 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     await noneAttached();
   });
 
-  // New Table Format delta: the delta extension makes the table in its own folder under Tables/<schema>/, with
-  // CREATE TABLE (columns) only. OneLake then shows it as any Delta table, and INSERT adds to it.
-  await t.test("New Table Format delta: CREATE TABLE (columns) makes a Delta table, INSERT adds to it, CREATE TABLE AS is refused", async () => {
-    const name = `${run}_newdelta`;
-    const dir = `${ITEM}/Tables/test/${name}`;
-    t.after(() => fetch(`https://${DFS}/${WS}/${dir}?recursive=true`, { method: "DELETE", headers: { ...auth, "x-ms-version": "2023-11-03" } }).catch(() => {}));
-    opts.format = "delta";
-    try {
-      await assert.rejects(engine.agentQuery(`CREATE TABLE ${tbl(name)} AS SELECT 1::BIGINT AS id`), /it has no CREATE TABLE AS/);
-      await sql(`CREATE TABLE ${tbl(name)} (id BIGINT, s VARCHAR)`);
-      folders.set(name, `abfss://${WS}@${DFS}/${dir}`);
-      const made = await deltaLog(name);
-      assert.ok(commits(made) >= 1, `it has a Delta log: ${made.join(", ")}`);
-      // OneLake's Iceberg face of it, which is how the engine finds a table to INSERT into.
-      const until = Date.now() + 5 * 60_000;
-      for (;;) {
-        const r = await loadTable(prefix, "test", name);
-        if (r.ok && sourceFormat((await r.json()).metadata).format === "delta") break;
-        assert.ok(Date.now() < until, `${name} has no Iceberg face after 5 minutes: ${r.status}`);
-        await new Promise(res => setTimeout(res, 10_000));
-      }
-      await sql(`INSERT INTO ${tbl(name)} VALUES (1, 'a'), (2, 'b')`);
-      assert.equal(await deltaRows(name), "2", "its rows, as the Delta log has them");
-      assert.equal(commits(await deltaLog(name)), commits(made) + 1, "the INSERT is one more commit");
-      assert.equal(String((await sql(`SELECT count(*)::BIGINT AS n FROM ${tbl(name)}`))[0].n), "2", "the engine reads them");
-    } finally { opts.format = "iceberg"; }
-    await noneAttached();
-  });
-
   // Each Delta feature's table, INSERTed into: what the delta extension can write, and that what it wrote reads.
   // What it can't write is refused, with nothing written: column mapping as Spark writes it is on writer version 5,
   // whose legacy features include checkConstraints, which delta-kernel doesn't write.
@@ -422,6 +393,35 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
       assert.equal(String((await sql(`SELECT count(*)::BIGINT AS n FROM ${tbl(name)}`))[0].n), after.rows, `${name}: the engine reads them at once`);
     });
   }
+
+  // DuckDB's delta extension, on its own (none of the engine): CREATE TABLE of a new Delta table in a folder that
+  // isn't there yet, on this machine and on OneLake, by the same DuckDB in the same run. Locally it makes the folder;
+  // on OneLake it said 404. Not one of the product's writes (no setting makes a new Delta table), so a todo: it
+  // reports what happened, and the run fails on neither answer. When it passes, the extension can make one.
+  await t.test("upstream: the delta extension's CREATE TABLE makes a new Delta table, on this machine and on OneLake", { todo: true }, async () => {
+    console.log(JSON.stringify(await back(`SELECT version() AS duckdb, list(extension_name || ' ' || extension_version ORDER BY extension_name) AS ext
+      FROM duckdb_extensions() WHERE loaded AND extension_name IN ('delta', 'azure')`)));
+    const local = await mkdtemp(join(tmpdir(), "delta-probe-"));
+    const name = `${run}_probe`;
+    const remote = `abfss://${WS}@${DFS}/${ITEM}/Tables/test/${name}`;
+    t.after(async () => {
+      await rm(local, { recursive: true, force: true }).catch(() => {});
+      await fetch(`https://${DFS}/${WS}/${ITEM}/Tables/test/${name}?recursive=true`, { method: "DELETE", headers: { ...auth, "x-ms-version": "2023-11-03" } }).catch(() => {});
+    });
+    const said = {};
+    for (const [where, folder] of [["local", join(local, "newtable").replace(/\\/g, "/")], ["onelake", remote]]) {
+      try {
+        await c.run(`ATTACH ${lit(folder)} AS probe (TYPE delta)`);
+        await c.run("CREATE TABLE probe.probe (id BIGINT, s VARCHAR)");
+        await c.run("INSERT INTO probe.probe VALUES (1, 'a')");
+        said[where] = `ok, ${String((await back("SELECT count(*)::INTEGER AS n FROM probe.probe"))[0].n)} row`;
+      } catch (e) { said[where] = e.message; }
+      finally { await c.run("DETACH DATABASE IF EXISTS probe").catch(() => {}); }
+      console.log(`delta CREATE TABLE, ${where}: ${said[where]}`);
+    }
+    assert.match(said.local, /^ok/, "locally");
+    assert.match(said.onelake, /^ok/, "on OneLake");
+  });
 
   await t.test("Allow Writes off: every write is refused, with nothing sent", async () => {
     const count = async () => String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(a)}`))[0].n);

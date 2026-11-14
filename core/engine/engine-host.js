@@ -227,8 +227,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, lakeFolder = 'lake', resolveTable = null, resolveFile = null,
                             resolveLakehouse = null, onWritten = () => {},
-                            catalogTables = null, offlineReason = () => null, checkConnectivity = null, writesAllowed = () => true,
-                            dropAllowed = () => false, newTableFormat = () => 'iceberg',
+                            catalogTables = null, offlineReason = () => null, checkConnectivity = null, writesAllowed = () => true, dropAllowed = () => false,
                             onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
   let served = null;            // serve: the address Quack answers on
@@ -1235,23 +1234,16 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // the delta extension instead, which adds rows only: anything else to it is refused here, a DROP included.
   // What the store holds says it first. A Delta table is asked of OneLake again: one dropped and made again as
   // Iceberg has a Delta log beside it that is OneLake's conversion, which is never to be written.
-  // A new table with New Table Format delta (onelakeStudio.newTableFormat) is made in its own folder, under the
-  // lakehouse's Tables/<schema>/, by the delta extension, which has CREATE TABLE (columns) and no CREATE TABLE AS.
-  async function deltaTarget(w, lh) {
+  async function deltaTarget(w) {
     const ref = { kind: 'lakehouse', ...w.ref };
     let r = null;
     try {
       r = await resolveTable(ref, {});
       if (r && r.deltaTable) r = await resolveTable(ref, { fresh: true });
     } catch (e) {
-      if (w.what === 'drop table') return null;     // not there: DuckDB says so, or IF EXISTS does nothing
-      if (w.what !== 'create table') throw e;
-      if (newTableFormat() !== 'delta') return null;  // not there: the CREATE makes it, as Iceberg
-      if (w.query) {
-        notRunError('DuckDB makes a Delta table only with CREATE TABLE (columns), then INSERT; it has no CREATE TABLE AS. ' +
-          "Write it in two statements, or set New Table Format to iceberg in OneLake Studio's settings");
-      }
-      return { folder: abfssUrl(lh.workspace, `${lh.item}/Tables/${w.ref.schema}/${w.ref.table}`), create: true };
+      // Not there: a CREATE makes it, as Iceberg; a DROP is DuckDB's to answer, or IF EXISTS does nothing.
+      if (w.what === 'create table' || w.what === 'drop table') return null;
+      throw e;
     }
     if (!r || !r.deltaTable) return null;
     const name = sqlName(r);
@@ -1267,9 +1259,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
    * says, where it says. Never sent twice: a failure is said, not tried again. `emit` streams its answer in batches.
    */
   async function runWrite(sql, { owner, begin = () => {}, signal, emit = null }) {
-    // A new Iceberg table's Parquet, as Direct Lake reads it best, with nothing asked of whoever wrote it (sql.js
-    // TABLE_PROPERTIES). A new Delta table has none: the delta extension sets no Parquet layout.
-    if (newTableFormat() !== 'delta') sql = withTableProperties(sql);
+    // A new table's Parquet, as Direct Lake reads it best, with nothing asked of whoever wrote it (sql.js TABLE_PROPERTIES).
+    sql = withTableProperties(sql);
     const w = writeOf(sql);
     // Off until the person turns them on (onelakeStudio.allowWrites, allowDropTable): nothing is sent before then,
     // whoever sends it. A DROP TABLE needs both.
@@ -1296,7 +1287,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         statement = place(sqlStr(url));
         expect = { plan: w.plan, file: url };
       } else {
-        const target = w.target === 'table' ? await deltaTarget(w, lh) : null;
+        const target = w.target === 'table' ? await deltaTarget(w) : null;
         const folder = target && target.folder;
         await allowStorage([...(lh.scopes || []), ...(folder ? [scopeOfUrl(folder)] : [])]);
         if (folder) {

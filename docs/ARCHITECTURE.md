@@ -713,15 +713,13 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 
 - **The settings** (*Writes*, read at each statement): **Allow Writes** (`onelakeStudio.allowWrites`) is off by default,
   and every write is refused until it is on, with nothing sent. **Allow Drop Table** (`allowDropTable`) is off by
-  default too, and `DROP TABLE` needs both. **New Table Format** (`newTableFormat`) is `iceberg` by default, or
-  `delta`. The command line reads the same keys from its settings file.
+  default too, and `DROP TABLE` needs both. The command line reads the same keys from its settings file.
 
 | Statement | Where it writes |
 | --- | --- |
 | `CREATE TABLE … (…)`, `CREATE TABLE … AS …`, `INSERT INTO`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE` | A lakehouse table that is Iceberg, or a new one, made as Iceberg |
 | `INSERT INTO` | A lakehouse table that is Delta |
 | `DROP TABLE [IF EXISTS]` | A lakehouse table that is Iceberg: it and its files are gone. A Delta table is refused |
-| `CREATE TABLE … (…)`, with New Table Format `delta` | A new Delta table, in its own folder `Tables/<schema>/<table>`, by DuckDB's delta extension. `CREATE TABLE … AS` is refused: the extension has none |
 | `CREATE SCHEMA` | A lakehouse with schemas |
 | `COPY (…) TO '<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
 

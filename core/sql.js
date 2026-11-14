@@ -455,8 +455,7 @@ function writeOf(sql) {
   if (verb === 'create') {
     if (w(k + 1) === 'or') notRun("CREATE OR REPLACE isn't one of DuckDB's Iceberg writes");
     if (['temp', 'temporary'].includes(w(k + 1))) notRun('a temporary table is not in a lakehouse');
-    // `query`: a CREATE TABLE … AS, whose AS is the only top-level one (a column list's are in its parentheses).
-    if (w(k + 1) === 'table') return { ...as('create table', table(ifWords(k + 2, ['if', 'not', 'exists']))), query: topWord('as') };
+    if (w(k + 1) === 'table') return as('create table', table(ifWords(k + 2, ['if', 'not', 'exists'])));
     if (w(k + 1) === 'schema') return as('create schema', schema(ifWords(k + 2, ['if', 'not', 'exists'])));
     notRun(`CREATE ${(tk[k + 1] && tk[k + 1].v || '').toUpperCase()} isn't a write to a lakehouse: only CREATE TABLE and CREATE SCHEMA are`);
   }

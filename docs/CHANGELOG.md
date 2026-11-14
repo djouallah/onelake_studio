@@ -4,9 +4,7 @@
 
 - **Writes are off until you turn them on.** A new *Writes* section in Settings: **Allow Writes**, off by default,
   lets SQL write to OneLake; until then every write is refused and nothing is sent. **Allow Drop Table**, off by
-  default too, lets `DROP TABLE` delete an Iceberg table and its files. **New Table Format** picks what
-  `CREATE TABLE` makes: Iceberg by default, or Delta, which DuckDB writes with `CREATE TABLE (columns)` and `INSERT`
-  only.
+  default too, lets `DROP TABLE` delete an Iceberg table and its files.
 
 - **INSERT into a Delta table.** SQL's `INSERT INTO` a lakehouse table that is Delta now adds the rows to its
   Delta log, and the next read shows them; it was refused. An Iceberg table is still written as Iceberg, and a new

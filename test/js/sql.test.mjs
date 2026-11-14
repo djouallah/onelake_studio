@@ -419,9 +419,6 @@ test("a write is found with what it writes, and where", () => {
   // DROP TABLE is a write; engine-host.js runs it only with Allow Drop Table on.
   assert.equal(table("DROP TABLE aemo.data.dbo.monthly", "drop table", t).plan, "LOGICAL_DROP");
   table("drop table if exists aemo.data.dbo.monthly", "drop table", t);
-  // A CREATE TABLE … AS says so (a new Delta table can't be one); a column list's AS doesn't count.
-  assert.equal(writeOf("CREATE TABLE aemo.data.dbo.monthly AS SELECT 1 AS a").query, true);
-  assert.equal(writeOf("CREATE TABLE aemo.data.dbo.monthly (a INT, b INT GENERATED ALWAYS AS (a + 1))").query, false);
   table("WITH s AS (SELECT 1 AS a) INSERT INTO aemo.data.dbo.monthly SELECT * FROM s", "insert", t);
   table('/* why */ INSERT INTO "ANZ Retail"."gold-1".sales."order" SELECT 1', "insert",
         { workspace: "ANZ Retail", item: "gold-1", schema: "sales", table: "order" });

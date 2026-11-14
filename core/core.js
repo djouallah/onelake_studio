@@ -131,7 +131,6 @@ function createCore({
       // SQL's writes to OneLake: off unless the settings are on, each read at the write (package.json's Writes).
       writesAllowed: () => settings.read('allowWrites', false) === true,
       dropAllowed: () => settings.read('allowDropTable', false) === true,
-      newTableFormat: () => (settings.read('newTableFormat', 'iceberg') === 'delta' ? 'delta' : 'iceberg'),
       checkConnectivity: () => connectivity.check(),
       onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
       onFileRead: url => { if (onelake) onelake.fileRead(url).catch(() => {}); },
