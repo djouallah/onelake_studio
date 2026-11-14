@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A first start with no internet works.** The bundled `iceberg` extension was loaded before `avro`, which it
+  needs, so it failed and was downloaded in its place: with no connection, or behind a proxy DuckDB can't use, the
+  engine did not start the first time. They load in the right order now, and nothing is fetched.
+- **A database file can't run what a statement may not.** A view or a macro kept in a DuckDB file under `Files/`
+  runs as part of the statement that names it. A file whose view or macro calls one of the lake's own functions, or
+  `query()`, is no longer opened, and the message names it. `json_execute_serialized_sql` is refused in a
+  statement, as `query()` is.
+- **A community extension is the one that ships.** `h3`, `zipfs` and `nanoarrow` are never downloaded in place of a
+  bundled file, and every package now has all three.
 - **Download CSV works again in a model's Visual.** Since 0.2.24 it failed on every model: the button called the
   code that saves a model file back.
 - **An app's file from another computer asks before it publishes.** A `.fabricapp` names the app it is published

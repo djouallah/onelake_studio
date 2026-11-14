@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -1047,75 +1047,78 @@ test("a table the lake holds is read as it is, with nothing asked of OneLake, af
   assert.equal((await engine.lakeTable({ deltaTable: `${FOLDER}_never`, check: true })).name, null, "never synced here");
 });
 
-// --- Probes: what DuckDB itself does, said in the log (# lines), so the engine can be built on the answer. ---
+// --- What the engine is built on that only DuckDB can say: each fails the day DuckDB's answer changes. ---
 
-// Can a community extension shipped as a file load with its signature checked, unsigned ones refused?
-test("probe: a bundled community extension, with unsigned extensions refused", { skip: !existsSync(join(BUNDLED, "h3.duckdb_extension")) }, async t => {
+const first = e => String(e && e.message).split("\n")[0];
+const slash = p => p.replace(/\\/g, "/");
+
+// Why h3, zipfs and nanoarrow load as unsigned extensions (engine-host.js): DuckDB takes a community extension's
+// signature only from its own repository. The day one of these loads from a file with unsigned ones refused, the
+// engine can refuse them too, and this test says so by failing.
+test("DuckDB refuses a community extension from a file, however it is offered, with unsigned extensions refused", { skip: !existsSync(join(BUNDLED, "h3.duckdb_extension")) }, async t => {
   const { DuckDBInstance } = require("@duckdb/node-api");
-  const slash = p => p.replace(/\\/g, "/");
   const file = slash(join(BUNDLED, "h3.duckdb_extension"));
-  const first = e => String(e && e.message).split("\n")[0];
-  const attempt = async (name, run) => {
+  const attempt = async run => {
     const extDir = await mkdtemp(join(tmpdir(), "onelake-probe-"));
     const duck = await DuckDBInstance.create(":memory:", { allow_unsigned_extensions: "false", extension_directory: extDir });
     const c = await duck.connect();
-    try {
-      await run(c, extDir);
-      const r = await c.runAndReadAll("SELECT h3_latlng_to_cell(0, 0, 1) IS NOT NULL AS ok");
-      console.log(`PROBE ${name}: loaded, h3 answers ${JSON.stringify(r.getRowObjectsJson())}`);
-    } catch (e) { console.log(`PROBE ${name}: ${first(e)}`); }
+    try { await run(c); await c.run("SELECT h3_latlng_to_cell(0, 0, 1)"); return "loaded"; }
+    catch (e) { return first(e); }
     finally { c.closeSync(); duck.closeSync(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); }
   };
-  await attempt("LOAD by path", c => c.run(`LOAD '${file}'`));
-  await attempt("INSTALL from the file, then LOAD by name", async c => { await c.run(`INSTALL '${file}'`); await c.run("LOAD h3"); });
   // A folder laid out as a repository is: <version>/<platform>/<name>.duckdb_extension.
-  const layout = async (c, name = "h3") => {
+  const repository = async c => {
     const version = (await c.runAndReadAll("SELECT library_version AS v FROM pragma_version()")).getRowObjectsJson()[0].v;
     const platform = (await c.runAndReadAll("PRAGMA platform")).getRowObjectsJson()[0].platform;
     const repo = await mkdtemp(join(tmpdir(), "onelake-repo-"));
     t.after(() => rm(repo, { recursive: true, force: true }).catch(() => {}));
     await mkdir(join(repo, version, platform), { recursive: true });
-    await writeFile(join(repo, version, platform, `${name}.duckdb_extension`), await readFile(join(BUNDLED, `${name}.duckdb_extension`)));
-    console.log(`PROBE   (a repository folder for ${version}/${platform})`);
+    await writeFile(join(repo, version, platform, "h3.duckdb_extension"), await readFile(join(BUNDLED, "h3.duckdb_extension")));
     return slash(repo);
   };
-  await attempt("INSTALL from a folder laid out as a repository, then LOAD by name", async c => {
-    await c.run(`INSTALL h3 FROM '${await layout(c)}'`);
-    await c.run("LOAD h3");
-    const r = await c.runAndReadAll("SELECT extension_name, install_mode, installed_from FROM duckdb_extensions() WHERE extension_name = 'h3'");
-    console.log(`PROBE   ${JSON.stringify(r.getRowObjectsJson())}`);
-  });
-  await attempt("the same folder as the custom repository, autoinstall", async c => {
-    await c.run(`SET custom_extension_repository = '${await layout(c)}'`);
-    await c.run("INSTALL h3");
-    await c.run("LOAD h3");
-  });
-  await attempt("allow_community_extensions said outright, then INSTALL from the file", async c => {
-    await c.run("SET allow_community_extensions = true").catch(e => console.log(`PROBE   (${first(e)})`));
-    await c.run(`INSTALL '${file}'`);
-    await c.run("LOAD h3");
-  });
-  await attempt("what an installed one says of itself", async c => {
-    await c.run(`INSTALL '${file}'`);
-    const r = await c.runAndReadAll("SELECT extension_name, installed, install_mode, installed_from, install_path FROM duckdb_extensions() WHERE extension_name = 'h3'");
-    console.log(`PROBE   ${JSON.stringify(r.getRowObjectsJson())}`);
-    await c.run("LOAD h3");
-  });
-  // A file whose bytes were changed must never load, however it is offered.
-  const badDir = await mkdtemp(join(tmpdir(), "onelake-probe-"));
-  t.after(() => rm(badDir, { recursive: true, force: true }).catch(() => {}));
-  const bad = join(badDir, "h3.duckdb_extension");
-  const bytes = await readFile(join(BUNDLED, "h3.duckdb_extension"));
-  bytes[Math.floor(bytes.length / 2)] ^= 0xff;
-  await writeFile(bad, bytes);
-  await attempt("a tampered file, INSTALL then LOAD", async c => { await c.run(`INSTALL '${slash(bad)}'`); await c.run("LOAD h3"); });
+  const UNSIGNED = /signature/i;
+  assert.match(await attempt(c => c.run(`LOAD '${file}'`)), UNSIGNED, "by its path");
+  assert.match(await attempt(async c => { await c.run(`INSTALL '${file}'`); await c.run("LOAD h3"); }), UNSIGNED, "installed from the file");
+  assert.match(await attempt(async c => { await c.run(`INSTALL h3 FROM '${await repository(c)}'`); await c.run("LOAD h3"); }), UNSIGNED, "from a folder laid out as a repository");
 });
 
-// A database file from a lakehouse is someone else's: can a view or a macro stored in it run what a statement may not?
-test("probe: a view and a macro stored in an attached database file, calling what the guard refuses by name", { skip: NO_LAKE }, async t => {
+test("a community extension is the file this build ships or it is not there: nothing is downloaded in its place", { skip: !existsSync(join(BUNDLED, "h3.duckdb_extension")) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const bundle = await mkdtemp(join(tmpdir(), "onelake-bundle-"));
+  // The bundle as it is, but for h3: as a build for a platform with none would be.
+  for (const name of readdirSync(BUNDLED)) if (name !== "h3.duckdb_extension") cpSync(join(BUNDLED, name), join(bundle, name), { recursive: true });
+  const warned = [];
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: bundle, onWarn: w => warned.push(String(w)) });
+  t.after(async () => { await engine.close(); for (const d of [extDir, bundle]) await rm(d, { recursive: true, force: true }).catch(() => {}); });
+  assert.deepEqual((await engine.call("query", ["SELECT 1 AS a"])).rows, [{ a: 1 }], "the engine starts without it");
+  assert.equal(warned.filter(w => /'h3' unavailable — this build does not ship it/.test(w)).length, 1, warned.join(" | "));
+  await assert.rejects(engine.call("query", ["SELECT h3_latlng_to_cell(0, 0, 1)"]), /h3_latlng_to_cell/, "and its functions are not there");
+  assert.deepEqual((await engine.call("query", ["SELECT count(*) AS n FROM duckdb_extensions() WHERE extension_name = 'h3' AND (loaded OR installed)"])).rows, [{ n: 0 }],
+    "neither loaded nor installed from anywhere");
+});
+
+// A first start with no way out: what ships is enough. A proxy that isn't there stands in for no network, as DuckDB
+// goes through it for every download, so anything the engine tried to fetch would fail here, and say so.
+test("the engine starts from what ships alone: no extension is fetched, and none complains of another not loaded yet", { skip: !existsSync(BUNDLED) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
+  const warned = [];
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: BUNDLED, fileCacheDir: NO_LAKE ? null : cacheDir,
+                                    httpProxy: "http://127.0.0.1:9", onWarn: w => warned.push(String(w)) });
+  t.after(async () => { await engine.close(); for (const d of [extDir, cacheDir]) await rm(d, { recursive: true, force: true }).catch(() => {}); });
+  assert.deepEqual((await engine.call("query", ["SELECT 1 AS a"])).rows, [{ a: 1 }]);
+  assert.deepEqual(warned.filter(w => /would not load|unavailable|could not load/.test(w)), [], "every bundled extension loaded as it is");
+  const loaded = (await engine.call("query", ["SELECT extension_name AS name FROM duckdb_extensions() WHERE loaded ORDER BY 1"])).rows.map(r => r.name);
+  for (const name of ["httpfs", "avro", "azure", "iceberg", "delta", "excel", "sqlite", "h3", "zipfs", "nanoarrow"]) {
+    assert.ok(loaded.some(l => l.startsWith(name)), `${name} is loaded: ${loaded.join(", ")}`);
+  }
+  assert.deepEqual(readdirSync(extDir), [], "and nothing was installed into the extension folder");
+});
+
+// A database file from a lakehouse is someone else's. Its views and macros run inside whatever statement names
+// them, where no check on the statement reads their text.
+test("a database file whose view or macro calls what no statement may is not attached, and says which one", { skip: NO_LAKE }, async t => {
   const { DuckDBInstance } = require("@duckdb/node-api");
-  const slash = p => p.replace(/\\/g, "/");
-  const first = e => String(e && e.message).split("\n")[0];
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const outside = await mkdtemp(join(tmpdir(), "onelake-crafted-"));
@@ -1124,67 +1127,56 @@ test("probe: a view and a macro stored in an attached database file, calling wha
     await engine.close();
     for (const d of [extDir, cacheDir, outside]) await rm(d, { recursive: true, force: true }).catch(() => {});
   });
-  // Written where the writer has a lake of that name too, so the view binds.
-  const file = join(outside, "evil.duckdb");
-  const made = await DuckDBInstance.create(file);
-  const c = await made.connect();
-  try {
-    const shipped = join(BUNDLED, "ducklake.duckdb_extension");
-    if (existsSync(shipped)) await c.run(`LOAD '${slash(shipped)}'`); else { await c.run("INSTALL ducklake"); await c.run("LOAD ducklake"); }
-    await c.run(`ATTACH 'ducklake:${slash(join(outside, "m.ducklake"))}' AS lake (DATA_PATH '${slash(join(outside, "d"))}/')`);
-    for (const sql of [
-      "CREATE VIEW snapshots AS SELECT * FROM ducklake_snapshots('lake')",
-      "CREATE VIEW asked AS SELECT * FROM query('SELECT 42 AS a')",
-      "CREATE MACRO run(s) AS TABLE SELECT * FROM query(s)",
-    ]) await c.run(sql).catch(e => console.log(`PROBE   (could not make it: ${sql} -> ${first(e)})`));
-    await c.run("DETACH lake");
-    await c.run("CHECKPOINT");
-  } finally { c.closeSync(); made.closeSync(); }
-  await engine.call("attachFile", [{ path: await engine.copyToTemp("ws/lh/Files/evil.duckdb", await readFile(file)), alias: "evil" }]);
-  for (const sql of [
-    "SELECT * FROM ducklake_snapshots('lake')",
-    "SELECT count(*) AS n FROM evil.main.snapshots",
-    "SELECT * FROM evil.main.asked",
-    "SELECT * FROM evil.main.run('SELECT 1 AS a')",
-    "SELECT * FROM evil.main.run('SELECT count(*) AS n FROM duck' || 'lake_snapshots(''lake'')')",
+  // Written where the writer has a lake of that name too, so a view over the lake's own function binds.
+  const crafted = async (name, statements) => {
+    const file = join(outside, `${name}.duckdb`);
+    const made = await DuckDBInstance.create(file);
+    const c = await made.connect();
+    try {
+      const shipped = join(BUNDLED, "ducklake.duckdb_extension");
+      if (existsSync(shipped)) await c.run(`LOAD '${slash(shipped)}'`); else { await c.run("INSTALL ducklake"); await c.run("LOAD ducklake"); }
+      await c.run(`ATTACH 'ducklake:${slash(join(outside, `${name}.ducklake`))}' AS lake (DATA_PATH '${slash(join(outside, `${name}-d`))}/')`);
+      for (const sql of statements) await c.run(sql);
+      await c.run("DETACH lake");
+      await c.run("CHECKPOINT");
+    } finally { c.closeSync(); made.closeSync(); }
+    return engine.copyToTemp(`ws/lh/Files/${name}.duckdb`, await readFile(file));
+  };
+  const ran = async sql => (await engine.call("query", [sql])).rows;
+
+  for (const [name, statements, why, use] of [
+    ["lakefn", ["CREATE VIEW orders AS SELECT * FROM ducklake_snapshots('lake')"], /lakefn is not opened: its view main\.orders is not one a statement could be: the lake is kept by the engine/, "SELECT * FROM lakefn.main.orders"],
+    ["asked", ["CREATE VIEW orders AS SELECT * FROM query('SELECT 42 AS a')"], /asked is not opened: its view main\.orders .*query\(\) runs what no check here can read/, "SELECT * FROM asked.main.orders"],
+    ["runs", ["CREATE MACRO run(s) AS TABLE SELECT * FROM query(s)"], /runs is not opened: its macro main\.run .*query\(\) runs what no check here can read/, "SELECT * FROM runs.main.run('SELECT 1 AS a')"],
+    ["nested", ["CREATE TABLE t AS SELECT 1 AS a", "CREATE VIEW fine AS SELECT * FROM t", "CREATE SCHEMA deep", "CREATE VIEW deep.v AS SELECT a FROM (SELECT * FROM query('SELECT 1 AS a'))"],
+      /nested is not opened: its view deep\.v /, "SELECT * FROM nested.main.fine"],
   ]) {
-    try { console.log(`PROBE stored: ${sql} -> RAN: ${JSON.stringify((await engine.call("query", [sql])).rows).slice(0, 200)}`); }
-    catch (e) { console.log(`PROBE stored: ${sql} -> refused: ${first(e)}`); }
+    const path = await crafted(name, statements);
+    await assert.rejects(engine.call("attachFile", [{ path, alias: name }]), why, name);
+    // And it is gone, not left attached for a statement to name.
+    await assert.rejects(ran(use), /does not exist|not found|Catalog Error|Binder Error/i, `${name} is not there to be read`);
   }
+  // What is named in a string is not a call: a file that only talks about these still opens, and reads.
+  const fine = await crafted("fine", ["CREATE TABLE t AS SELECT 'ducklake_snapshots(' AS note", "CREATE VIEW v AS SELECT note, 'query(' AS also FROM t",
+                                        "CREATE MACRO twice(x) AS x * 2", "CREATE MACRO rows_of() AS TABLE SELECT * FROM t"]);
+  assert.equal(await engine.call("attachFile", [{ path: fine, alias: "fine" }]), "fine");
+  assert.deepEqual(await ran("SELECT note, also FROM fine.main.v"), [{ note: "ducklake_snapshots(", also: "query(" }]);
+  assert.deepEqual(await ran("SELECT fine.main.twice(21) AS a"), [{ a: 42 }]);
+  // The same from a statement itself, by the name a check on function names doesn't know to look for.
+  await assert.rejects(ran("SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1'))"), /Not run: query\(\) runs what no check here can read/);
 });
 
-// Can a statement read back the proxy's password the engine was given?
-test("probe: the proxy's password, asked for by a statement", { skip: !existsSync(BUNDLED) }, async t => {
-  // DuckDB itself first, as the engine sets it: is a proxy's password a setting anyone can read?
+// Not fixed, and said here so it is not forgotten: a statement can read the proxy's password back. It is a DuckDB
+// setting like any other. The way out is a secret, which DuckDB keeps from statements, and a proxy to test it with.
+test("known gap: DuckDB gives a proxy's password to any statement that asks", { skip: !existsSync(join(BUNDLED, "httpfs.duckdb_extension")) }, async () => {
   const { DuckDBInstance } = require("@duckdb/node-api");
   const duck = await DuckDBInstance.create(":memory:");
   const c = await duck.connect();
   try {
-    await c.run(`LOAD '${join(BUNDLED, "httpfs.duckdb_extension").replace(/\\/g, "/")}'`);
-    await c.run("SET GLOBAL http_proxy = '127.0.0.1:9'; SET GLOBAL http_proxy_username = 'someone'; SET GLOBAL http_proxy_password = 'hunter2secret'");
-    for (const sql of ["SELECT current_setting('http_proxy_password') AS v", "SELECT name, value FROM duckdb_settings() WHERE name LIKE '%proxy%'"]) {
-      try {
-        const said = JSON.stringify((await c.runAndReadAll(sql)).getRowObjectsJson());
-        console.log(`PROBE duckdb: ${sql} -> ${said}${said.includes("hunter2secret") ? "   <-- THE PASSWORD IS READ BACK" : ""}`);
-      } catch (e) { console.log(`PROBE duckdb: ${sql} -> ${String(e.message).split("\n")[0]}`); }
-    }
+    await c.run(`LOAD '${slash(join(BUNDLED, "httpfs.duckdb_extension"))}'`);
+    await c.run("SET GLOBAL http_proxy_password = 'hunter2secret'");
+    const said = JSON.stringify((await c.runAndReadAll("SELECT current_setting('http_proxy_password') AS v")).getRowObjectsJson());
+    // The day DuckDB hides it, this fails, and the gap is closed by DuckDB.
+    assert.ok(said.includes("hunter2secret"), said);
   } finally { c.closeSync(); duck.closeSync(); }
-
-  // Then the engine, started behind a proxy that isn't there: what it says while it boots, and what a statement reads.
-  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
-  const warned = [];
-  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: BUNDLED, httpProxy: "http://someone:hunter2secret@127.0.0.1:9", onWarn: w => warned.push(w) });
-  t.after(async () => { await engine.close(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); });
-  for (const sql of [
-    "SELECT current_setting('http_proxy_password') AS v",
-    "SELECT current_setting('azure_proxy_password') AS v",
-    "SELECT name, value FROM duckdb_settings() WHERE name LIKE '%proxy%'",
-  ]) {
-    try {
-      const r = await engine.call("query", [sql]);
-      const said = JSON.stringify(r.rows);
-      console.log(`PROBE engine: ${sql} -> ${said}${said.includes("hunter2secret") ? "   <-- THE PASSWORD IS READ BACK" : ""}`);
-    } catch (e) { console.log(`PROBE engine: ${sql} -> refused: ${String(e.message).split("\n")[0].slice(0, 300)}`); }
-  }
-  for (const w of warned) console.log(`PROBE engine warned: ${String(w).split("\n")[0].slice(0, 400)}`);
 });

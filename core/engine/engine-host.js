@@ -33,7 +33,7 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPlan, checkPhysical,
+const { sqlStr, quoteIdent, storedFault, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, withTableProperties, checkPlan, checkPhysical,
         isUnserialized, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog,
         tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ,
         useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf } = require('../sql');
@@ -377,8 +377,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // and says so when it is wanted: `delta` when an INSERT goes to a Delta table (deltaAttach);
       // these three failing means the extension cannot do its job, and saying so beats
       // a later "Failed to open file" that names nothing.
-      for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
-      for (const ext of ['avro', 'excel', 'sqlite_scanner', 'delta']) await load(ext, '');
+      // In this order: iceberg asks for avro and httpfs as it starts, and one that isn't loaded yet it downloads.
+      // Loaded after it, the bundled iceberg failed with no connection, on a first start, and behind a proxy
+      // DuckDB can't use: "requires the avro extension", then a download over plain http.
+      for (const ext of ['httpfs', 'avro', 'azure', 'iceberg']) await load(ext, '', true);
+      for (const ext of ['excel', 'sqlite_scanner', 'delta']) await load(ext, '');
       // nanoarrow's read_arrow is how a table with OneLake security is read: what the table read API answered.
       for (const ext of COMMUNITY) await load(ext, 'community');
       // A OneLake table is read through DuckLake, its files brought here as they are read (openLake). A cache
@@ -536,8 +539,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         try { await conn.run(`LOAD ${sqlStr(shipped.replace(/\\/g, '/'))};`); loaded = true; }
         catch (e) { onWarn(`bundled '${ext}' would not load (${e.message}); trying the repository`); }
       }
-      if (!loaded) try { await conn.run(`LOAD ${ext};`); }
-      catch (_) {
+      if (!loaded) try {
+        // With unsigned extensions allowed (for the ones this build ships), nothing would check one that came
+        // from anywhere else: a community extension is the shipped file or it is not there.
+        if (repo && unsignedAllowed) throw new Error('this build does not ship it, and nothing is downloaded in its place');
+        await conn.run(`LOAD ${ext};`);
+      }
+      catch (e) {
+        if (repo && unsignedAllowed) throw e;
         // INSTALL has no timeout, and every statement waits for the boot.
         if (offlineReason() === 'no internet') throw new Error('there is no internet to install it');
         await conn.run(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ''};`);
@@ -1539,6 +1548,19 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
             begin();
             return runAll(run, owner);
           }, undefined, { signal }));
+          // A DuckDB file's views and macros run as part of whatever statement names them, and the file is
+          // someone else's: one that calls what no statement may is not attached at all.
+          if (!sqlite) {
+            const stored = await runAll(`SELECT 'view' AS kind, schema_name AS "schema", view_name AS name, sql AS body
+                FROM duckdb_views() WHERE database_name = ${sqlStr(as)} AND NOT internal
+              UNION ALL SELECT 'macro', schema_name, function_name, macro_definition
+                FROM duckdb_functions() WHERE database_name = ${sqlStr(as)} AND NOT internal AND macro_definition IS NOT NULL`, owner);
+            const fault = storedFault(stored.rows);
+            if (fault) {
+              await runAll(`DETACH ${quoteIdent(as)}`, owner).catch(() => {});
+              throw new Error(`${as} is not opened: ${fault}`);
+            }
+          }
           attached.add(as);
           attachedFiles.add(as.toLowerCase());
           return as;

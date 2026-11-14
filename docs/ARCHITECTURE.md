@@ -187,11 +187,16 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   `read_arrow` on what the table read API answered ([OneLake security](#onelake-security)).
 - **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
-  remote archive. Nothing loads after it: every extension is loaded before, and autoload is off.
+  remote archive. Nothing loads after it: every extension is loaded before, and autoload is off. They load from the
+  files that ship, `httpfs` and `avro` before `iceberg`, which asks for both as it starts, so a first start fetches
+  nothing. A community extension is never fetched: DuckDB 2.0 takes its signature only from its own repository, so
+  the shipped file loads as unsigned, held by its hash at build time, and one that isn't shipped is not there.
 - **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one, or one of
   [SQL's writes](#sql-writes) to a lakehouse. Never `EXPORT`, `PRAGMA`, `DROP`, anything that attaches, a Quack
-  function, the log's own switches, a `ducklake_` function, `query()`, a function that writes, a write's own
-  catalog, or an Azure URL whose host isn't OneLake's.
+  function, the log's own switches, a `ducklake_` function, `query()` or `json_execute_serialized_sql()`, a function
+  that writes, a write's own catalog, or an Azure URL whose host isn't OneLake's. A view or a macro kept in a DuckDB
+  file is held to the same list when the file is attached (`storedFault` in [`core/sql.js`](../core/sql.js)), since
+  it runs inside whatever statement names it: a file with one that isn't allowed is not opened.
 - **How a tab sets up a file:** by host methods, `fileView`, `attachFile` and `releaseFiles`, not by SQL. A tab takes
   away only what it made, and what it made goes when it closes. A view's source is one read too, and an attach is
   always `READ_ONLY`, from OneLake or a copy the host made.
@@ -1213,6 +1218,8 @@ every window. The rest apply at once.
 
 ## Limitations
 
+- **A proxy's password can be read by a statement.** A proxy given as `http://user:password@host` in VS Code's
+  `http.proxy` is handed to DuckDB as settings, and `current_setting('http_proxy_password')` answers. Not fixed yet.
 - **A statement can read any `https://` address.** So SQL someone else wrote, or an agent wrote after reading
   hostile text, can send data out in a URL. The OneLake token goes only to OneLake. See [SECURITY.md](https://github.com/djouallah/onelake_studio/blob/main/SECURITY.md).
 - **The guard on SQL is in the window, not in the engine's process.** Whatever holds the engine's session token can

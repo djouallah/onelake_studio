@@ -938,7 +938,7 @@ async function activateInner(context) {
         await removeDir(fileCacheDir);
       } catch (e) {
         // A file something still holds (Windows): what could be deleted is, and this says what stopped it.
-        log(`clear cache: ${(e && e.stack) || e}`);
+        if (out) out.appendLine(`clear cache: ${(e && e.stack) || e}`);
         tree.redraw();
         vscode.window.showErrorMessage(`OneLake Studio: the cache was only partly cleared — ${e.message}. Close what may be using it and clear it again.`);
         return;

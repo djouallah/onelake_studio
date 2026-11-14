@@ -218,6 +218,15 @@ function assertOneLakeUrl(url) {
 function oneStatement(sql) {
   const { text, seps } = scan(String(sql));
   if (seps.some(i => text.slice(i + 1).trim() !== '')) refuse('runs one statement at a time');
+  refuseCalls(sql);
+  const s = text.trim().replace(/;+\s*$/, '').trim();
+  if (!s) refuse('this statement is empty');
+  return s;
+}
+
+// What no SQL here may call or name, whatever kind of statement it is in: refused with why. A statement's own text
+// is held to this, and so is the text of a view or a macro kept in a database file someone attached (storedFault).
+function refuseCalls(sql) {
   // Quack is how the shared engine's windows reach it, and its functions start, stop and connect
   // servers. Read with the quotes' insides kept, since a function's name can be quoted.
   const kept = scan(String(sql), true).text;
@@ -231,7 +240,8 @@ function oneStatement(sql) {
   if (/\bducklake_\w+"?\s*\(/i.test(called)) refuse('the lake is kept by the engine, not by statements');
   if (/\b(?:write_blob|write_log)"?\s*\(/i.test(called)) refuse('this function writes');
   // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
-  if (/\bquery(?:_table)?"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');
+  // json_execute_serialized_sql runs a statement handed to it as JSON, which is the same thing.
+  if (/\b(?:query(?:_table)?|json_execute_serialized_sql)"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');
   // A write's own catalog (engine-host.js runWrite) is attached for that one statement, under a name that is
   // never a statement's to use: it would go around every check on what a write may reach.
   if (WRITE_CATALOG_NAMED.test(called)) refuse('a write\'s catalog is the engine\'s own');
@@ -241,9 +251,21 @@ function oneStatement(sql) {
     const host = authority.slice(authority.lastIndexOf('@') + 1);
     if (host.includes('.') && !ONELAKE_HOST.test(host)) refuse(`${host} is not OneLake`);
   }
-  const s = text.trim().replace(/;+\s*$/, '').trim();
-  if (!s) refuse('this statement is empty');
-  return s;
+}
+
+/**
+ * Why a view or a macro kept in an attached database file can't be let in, or null. Its text is not in the statement
+ * that names it, so no check on a statement reads it: a view that selects from one of the lake's own functions would
+ * run it for whoever opens the view. So each one's text is held to what a statement may call.
+ */
+function storedFault(stored) {
+  for (const { kind, schema, name, body } of stored) {
+    try { refuseCalls(String(body || '')); }
+    catch (e) {
+      return `its ${kind} ${[schema, name].filter(Boolean).join('.')} is not one a statement could be: ${String(e.message).replace(/^Not run: /, '')}`;
+    }
+  }
+  return null;
 }
 
 // EXPLAIN [ANALYZE] q, or EXPLAIN (ANALYZE, FORMAT json|html) q — Explore's Show plan. The option
@@ -1222,6 +1244,6 @@ async function writeWithNamespace(sql, ns, serialize, duck, listed) {
   return out;
 }
 
-module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
+module.exports = { sqlStr, quoteIdent, storedFault, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly,
                    writeOf, withTableProperties, TABLE_PROPERTIES, checkPlan, checkPhysical, isUnserialized: e => UNSERIALIZED.test(String(e && e.message)), statementsOf, ICE_PREFIX, DELTA_PREFIX, isWriteCatalog, tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog,
                    useOf, namespaceName, bareNames, withNamespace, writeWithNamespace, DUCK_NAMES, duckNamesOf };

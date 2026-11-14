@@ -64,6 +64,8 @@ const FORBIDDEN_READS = [
   "SELECT 1; SELECT 2",
   "SELECT * FROM query('DELETE FROM t')",
   "SELECT * FROM query_table('t')",
+  "SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1'))",
+  "SELECT * FROM \"json_execute_serialized_sql\" ('{}')",
   "SELECT * FROM \"query\"('DELETE FROM t')",
   "SELECT quack_stop('quack:127.0.0.1:1')",
   "SELECT * FROM quack_query('quack:127.0.0.1:1', 'SELECT 1')",
