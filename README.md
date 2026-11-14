@@ -46,7 +46,7 @@ Needs desktop VS Code 1.101+ on Windows x64, or macOS or Linux (x64 or arm64).
 **Read only.** There are three exceptions, and each asks first. *Export to Fabric* publishes an app. *Create Semantic
 Model* makes a Power BI semantic model of a model file. *Upload Files…* writes files from your computer into a lakehouse's `Files/`. Opening a semantic model keeps it on your machine only.
 
-How it works: [the website](https://djouallah.github.io/onelake_studio/design.html). Commands,
+How it works: [the website](https://djouallah.github.io/onelake_studio/architecture.html). Commands,
 settings and release notes: [the docs](https://djouallah.github.io/onelake_studio/docs/).
 
 > A personal project, not a Microsoft product or supported by Microsoft. Results computed from a

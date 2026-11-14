@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Architecture: OneLake Studio</title>
-  <meta name="description" content="The parts of the OneLake Studio app and what each does: the window, the Node process, the local catalog and its sync, the query server and its local lake, Excel's XMLA endpoint, the command line and the exported Fabric app.">
+  <meta name="description" content="How OneLake Studio is built and why: one SQL name for every object, SQL only, on your machine and offline, then each part and what it does: the window, the Node process, the local catalog and its sync, the query server and its local lake, Excel's XMLA endpoint, the command line and the exported Fabric app.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -17,7 +17,6 @@
         <a href="write-to-onelake.html">Write to OneLake</a>
         <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html" aria-current="page">Architecture</a>
-        <a href="design.html">Design</a>
         <a href="dax-sql.html">dax-sql</a>
         <a href="changelog.html">Changelog</a>
         <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
@@ -28,7 +27,68 @@
   <main class="wrap">
     <section class="intro">
       <h1>Architecture</h1>
-      <p class="lead">The app is the VS Code extension running in its own window. It runs several processes on your machine. This page shows what each one does and how they connect.</p>
+      <p class="lead">How OneLake Studio is built, and why. First the decisions behind it, then the parts: the app is the VS Code extension running in its own window, and it runs several processes on your machine. This page shows what each one does and how they connect.</p>
+    </section>
+
+    <section>
+      <h2 id="decisions">Design decisions</h2>
+      <p>The decisions behind OneLake Studio, and why we made them.</p>
+      <h3 id="names">One SQL name for every object</h3>
+      <p>Every table, file and semantic model in your tenant has one SQL name. The name is where Fabric keeps the object. A lakehouse table is named as Fabric's Spark names it, and any other item has its type after its name. A table can also be named by its workspace's and item's GUIDs.</p>
+      <div class="table-box names">
+        <table>
+          <thead>
+            <tr><th>Object</th><th>Its name</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>A table</td><td><code>&lt;workspace&gt;.&lt;lakehouse&gt;.&lt;schema&gt;.&lt;table&gt;</code>, another item's <code>&lt;workspace&gt;.&lt;item&gt;_&lt;kind&gt;.&lt;schema&gt;.&lt;table&gt;</code></td><td><code>demo.data.aemo.duid</code></td></tr>
+            <tr><td>A semantic model</td><td><code>&lt;workspace&gt;.&lt;model&gt;_semanticmodel</code></td><td><code>demo.DL_semanticmodel</code></td></tr>
+            <tr><td>A file</td><td><code>'&lt;workspace&gt;.&lt;lakehouse&gt;/Files/&lt;path&gt;'</code></td><td><code>'demo.data/Files/x.parquet'</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Why: Fabric makes workspace names unique in a tenant, item names unique for their type in a workspace, and table names unique in a schema. So each name points to exactly one object, and a query that joins tables from different workspaces can't read the wrong one. If one name could mean two objects, a query could return wrong data without an error.</p>
+      <p>The names are real SQL. The workspace, item and schema are schemas in DuckDB's own catalog, and each table is a view.</p>
+      <p class="more"><a href="naming.html">The naming rules in detail</a></p>
+
+      <h3 id="sql">SQL only</h3>
+      <p>Everything is queried with SQL, semantic models included. A Power BI semantic model is read as one table, and <code>AGG("measure")</code> computes a measure:</p>
+<pre><code>SELECT duid.Region, AGG("Mwh") AS mwh
+FROM demo.DL_semanticmodel
+GROUP BY ALL;</code></pre>
+      <p>Why: one language for tables and models means one query can join both, and anyone who knows SQL can use a model. <a href="https://github.com/djouallah/dax-sql">dax-sql</a> compiles the model's measures to SQL, and DuckDB runs it. There are no DAX queries. Matching Power BI's DAX results in every case is not a goal, so a result can differ from Power BI in edge cases.</p>
+      <p>Opening a model reads its definition from the Fabric REST API once and keeps it on your machine. Only Direct Lake models are supported, over a lakehouse or a SQL endpoint, and their tables are read from OneLake. Reading a model's definition needs the Contributor role or higher on the workspace, or write permission on the model.</p>
+
+      <h3 id="read-only">Reads, unless you turn writes on</h3>
+      <p>OneLake Studio doesn't change a table unless you turn on Allow Table Writes in its settings, which is off by default. Every statement is checked before it runs: one statement at a time, and a write only to a lakehouse, only where its text says, and only when its setting is on. <code>COPY</code> to a lakehouse's Files/ is on by default. Export to Fabric and Upload Files write too, and both ask you first. See <a href="write-to-onelake.html">Write to OneLake</a>.</p>
+      <p>Why: you can point it at production data without risk, and so can an agent, until you choose to write.</p>
+
+      <h3 id="local">Runs on your machine</h3>
+      <p>DuckDB runs on your machine and reads OneLake directly, with your own sign-in. There is no service in between, and no app to register in your tenant.</p>
+      <p>Why: nothing to deploy or pay for, your data goes only between OneLake and your machine, and you see only what your account can already see.</p>
+
+      <h3 id="offline">Works offline</h3>
+      <p>Everything you have read is kept on your machine and keeps working without internet: its metadata, and each table file a query opened, kept whole. Nothing needs to be turned on. When you are offline, the status bar says so, and no request is sent, so nothing waits for a timeout.</p>
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr><th>Works offline, once read</th><th>Needs OneLake</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>The tree, <code>SHOW ALL TABLES</code>, <code>information_schema</code>, Go To</td><td>A table's file no query has opened here, or a file never read</td></tr>
+            <tr><td>A table's Stats and History, and first rows already read</td><td>A wildcard over files</td></tr>
+            <tr><td>Semantic models: opening them, the Model page, <code>SHOW SEMANTIC …</code></td><td>A table whose metadata was never read</td></tr>
+            <tr><td>Table rows, model queries and the Visual, for data already read</td><td>Export to Fabric</td></tr>
+            <tr><td><code>Files/</code> objects read before</td><td>Upload Files</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The cache is per Microsoft account, so one account never sees another's data. It is kept when you sign out, and only <strong>Clear Cached OneLake Data</strong> deletes it.</p>
+      <p>Why: you can work on a plane or a slow connection, and a query on data you have read doesn't wait for the network.</p>
+
+      <h3 id="agents">Agents</h3>
+      <p>Claude Code and GitHub Copilot use OneLake Studio through its command line, with the same access you have. <strong>Install Agent Skill</strong>, in the app or in VS Code, sets it up. The command line asks the running app or VS Code, and if neither is open, it runs on its own.</p>
+      <p>The answer goes to stdout and notes go to stderr. <code>--json</code> gives a structured answer, and exit codes say what happened, such as <code>3</code> for not signed in and <code>4</code> for data that isn't cached.</p>
     </section>
 
     <section>
@@ -146,7 +206,7 @@
       <ol>
         <li>Each semantic model the query names is opened from its local copy. The first time, its definition is read from Fabric.</li>
         <li><a href="https://github.com/djouallah/dax-sql">dax-sql</a> rewrites a query on a model as plain SQL over table names. A query that names no model is left as it is.</li>
-        <li>The Node process refuses more than one statement and anything that isn't a read, using DuckDB's own parser to tell.</li>
+        <li>The Node process refuses more than one statement, and anything that neither reads nor is a write its setting allows, using DuckDB's own parser to tell (<a href="write-to-onelake.html">Write to OneLake</a>).</li>
         <li>Each table name is found in the local catalog and becomes a view over that table in the local lake. A table the lake doesn't hold yet is added from its log first, once. Each file name becomes its <code>abfss://</code> address. A name that doesn't exist fails here.</li>
         <li>The query runs on the query server. It reads the files already copied from disk, and the rest from OneLake, and the table service then copies those. Stop cancels only that tab's queries. A result over <code>maxResultRows</code> (200,000 by default) is counted, and only the first rows go to the tab.</li>
       </ol>
@@ -187,7 +247,7 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
 
     <section>
       <h2 id="servers">The servers</h2>
-      <p>DuckDB runs in one separate process, the query server. The Node process checks each statement before sending it: it must only read, and every name must resolve to a table.</p>
+      <p>DuckDB runs in one separate process, the query server. The Node process checks each statement before sending it: it must read, or be a write to a lakehouse that its setting allows, and every name must resolve to a table.</p>
       <ul>
         <li>Statements go over Quack. Stop cancels only its own tab's statements.</li>
         <li>The OneLake token, the offline switch, the sync worker's requests to sync a table, and the data for the Logs and Performance tabs go over a separate OS pipe, because Quack logs everything it receives.</li>
@@ -214,7 +274,7 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
 
     <section>
       <h2 id="export">Export to Fabric</h2>
-      <p>Export to Fabric is one of two features that write, with Upload Files, and it asks before writing anything. It publishes the app with the Fabric REST API. An app made from a Power BI semantic model queries that model as it is, and nothing is written to it.</p>
+      <p>Export to Fabric asks before writing anything. It publishes the app with the Fabric REST API. An app made from a Power BI semantic model queries that model as it is, and nothing is written to it.</p>
       <ul>
         <li>The app doesn't hold a copy of the model. It reads the model from the lakehouse each time it runs.</li>
         <li>A small window under the button asks what the app runs on. Direct Lake is picked unless you change it.</li>
@@ -247,7 +307,20 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
     <section>
       <h2 id="vscode">In VS Code</h2>
       <p>The parts are the same, except VS Code is the window and its Microsoft account provider does the sign-in. On one machine, the app, the extension and the command line share the local catalog and the cache.</p>
-      <p class="more"><a href="design.html">Design decisions</a> and <a href="reference.html">the full reference</a></p>
+    </section>
+
+    <section>
+      <h2 id="scope">Not in scope</h2>
+      <p>Matching Power BI's DAX behavior 100% is not a goal. Measures are compiled to SQL and run in DuckDB, so results can differ from Power BI in edge cases. Also not in scope:</p>
+      <ul>
+        <li>DAX queries (<code>EVALUATE</code>).</li>
+        <li>Editing data in the grid.</li>
+        <li><code>CREATE</code> and <code>DROP SEMANTIC VIEW</code>: a model exists because Fabric has it.</li>
+        <li>A TDS connection to the SQL endpoint.</li>
+        <li>Diagrams for lakehouse tables, since they declare no keys.</li>
+        <li>vscode.dev: the engine is a native library, so the extension needs desktop VS Code.</li>
+      </ul>
+      <p class="more"><a href="reference.html">The full reference</a></p>
     </section>
   </main>
 
