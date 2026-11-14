@@ -354,6 +354,9 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   });
 
   // Each Delta feature's table, INSERTed into: what the delta extension can write, and that what it wrote reads.
+  // What it can't write is refused, with nothing written: column mapping as Spark writes it is on writer version 5,
+  // whose legacy features include checkConstraints, which delta-kernel doesn't write.
+  const REFUSED = { lakeci_dw_column_mapping: /Feature 'checkConstraints' is not supported/ };
   for (const name of FEATURES) {
     await t.test(`an INSERT into ${name}`, async ctx => {
       if (!folders.has(name)) return ctx.skip("not uploaded");
@@ -366,6 +369,11 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
       console.log(`${name}: ${said ? `refused — ${said}` : `written, ${before.rows} -> ${after.rows} rows`}`);
       await noneAttached();
       if (said) assert.deepEqual(after.log, before.log, `${name}: refused, and its log is as it was`);
+      if (REFUSED[name]) {
+        assert.match(String(said), REFUSED[name], `${name} is refused for what delta-kernel can't write`);
+        assert.equal(after.rows, before.rows, `${name}: no rows added`);
+        return;
+      }
       assert.equal(said, null, `${name} is written`);
       assert.equal(after.rows, String(Number(before.rows) + add), `${name}: ${add} rows more, as its Delta log has them`);
       assert.equal(String((await sql(`SELECT count(*)::BIGINT AS n FROM ${tbl(name)}`))[0].n), after.rows, `${name}: the engine reads them at once`);
