@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createExport } = require("../../fabric_app/export/exportflow.js");
-const { writeApp, readApp, zip, SITE, MARKER, FORMAT } = require("../../fabric_app/export/exportapp.js");
+const { writeApp, readApp, zip, SITE, FORMAT } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
 
 const URL_ = "https://onelake.dfs.fabric.microsoft.com/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555";
