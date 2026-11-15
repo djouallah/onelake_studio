@@ -493,4 +493,13 @@ async function syncedAll(c) {
   return (await rows(c, `SELECT * EXCLUDE (log) FROM ${SYNCED} ORDER BY name`)).map(syncedRow);
 }
 
-module.exports = { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, rows, META };
+/** Each lake table's folder, how many data files its snapshot has, and how many of them are still only on OneLake. */
+async function localAll(c) {
+  return (await rows(c, `SELECT s.folder, count(f.data_file_id)::INTEGER AS files,
+      count(f.data_file_id) FILTER (WHERE f.path_is_relative OR f.path LIKE 'abfs%')::INTEGER AS remote
+    FROM ${SYNCED} s JOIN ${META}.ducklake_table t ON t.table_name = s.name AND t.end_snapshot IS NULL
+    LEFT JOIN ${META}.ducklake_data_file f ON f.table_id = t.table_id AND f.end_snapshot IS NULL
+    GROUP BY s.folder`)).map(r => ({ folder: r.folder, files: Number(r.files), remote: Number(r.remote) }));
+}
+
+module.exports = { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, localAll, rows, META };

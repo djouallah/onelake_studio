@@ -200,9 +200,10 @@ async function main() {
   async function leave() {
     if (leaving) return;
     leaving = true;
-    const timer = setTimeout(() => process.exit(0), 5000);
+    // Its engine goes with it (extension.js deactivate): a stop, and the process ended if it is still there in 5 s.
+    const timer = setTimeout(() => process.exit(0), 8000);
     if (timer.unref) timer.unref();
-    try { await extension.deactivate(); } catch (_) {}
+    try { await extension.deactivate({ stopEngine: true }); } catch (_) {}
     for (const d of context.subscriptions) { try { d.dispose(); } catch (_) {} }
     server.close();
     process.exit(0);

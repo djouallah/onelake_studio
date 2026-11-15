@@ -515,7 +515,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     const recover = recovery(ask, client);
     // A server that doesn't answer its pipe has its loop stuck: every statement of every window waits on it, for
     // ever. Two pings with no answer, and it is stopped; this window starts another, as when one goes (onGone).
-    const unwatch = watchdog({
+    const unwatch = options.selfCheck === false ? () => {} : watchdog({
       check: () => ask({ ping: true }), everyMs: PING_EVERY_MS, waitMs: PING_WAIT_MS, misses: 2,
       onStuck: () => {
         if (closing || gone) return;
@@ -602,6 +602,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       lakeTable: t => ask({ lakeTable: t }),
       lakeSync: t => ask({ lakeSync: t }),
       lakeTables: () => ask({ lakeTables: true }),
+      lakeLocal: () => ask({ lakeLocal: true }),
       lakeStats: () => ask({ lakeStats: true }),
       lakeFetch: name => ask({ lakeFetch: name }),
       lakeStop: name => ask({ lakeStop: name }),
@@ -647,7 +648,11 @@ function createRemote({ onGone = () => {}, ...cfg }) {
           await cancelNow(await listTagged(`${window}:`).catch(() => [])).catch(() => {});
         }
         await new Promise(resolve => {
-          const timer = setTimeout(resolve, stop ? 5_000 : 1_000);
+          // A server asked to stop that is still there after 5 s is ended: what follows may need what it holds.
+          const timer = setTimeout(() => {
+            if (stop) { try { if (state.pid) process.kill(state.pid); } catch (_) {} }
+            resolve();
+          }, stop ? 5_000 : 1_000);
           sock.once('close', () => { clearTimeout(timer); resolve(); });
           if (stop) sock.write(`${JSON.stringify({ stop: true })}\n`);
           else sock.destroy();

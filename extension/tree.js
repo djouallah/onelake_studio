@@ -62,8 +62,10 @@ class LakehouseTree {
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
                 queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {},
-                keepLimitBytes = () => 0, internalTables = null }) {
+                keepLimitBytes = () => 0, internalTables = null, tableLocal = null }) {
     this.keepLimitBytes = keepLimitBytes;
+    // Whether every file of a table is on this machine (core.js tableLocal): its check. Without it, whether it was read.
+    this.tableLocal = tableLocal || ((lh, t) => onelake.cached.rows(lh, t));
     this.internalTables = internalTables;
     this.onAsked = onAsked;
     this.onDrawn = onDrawn;
@@ -117,8 +119,8 @@ class LakehouseTree {
 
   async _tableTooltip(n) {
     const lines = [sqlNameOrNull(n) || (n.schema ? `${n.schema}.${n.table}` : n.table), n.cached
-      ? 'Read on this machine. What was read works offline; a column or a file never read needs OneLake.'
-      : 'Not read on this machine yet, so its rows need OneLake.'];
+      ? 'Every file of it is on this machine, so it works offline.'
+      : "Not all of it is on this machine: what isn't needs OneLake. Download for offline brings the rest."];
     const t = { workspace: n.workspace, item: n.item, schema: n.schema, table: n.table };
     const reads = this.onelake.usage.readsInUse(t);
     if (!reads) return lines.join('\n');
@@ -143,11 +145,16 @@ class LakehouseTree {
     }
     (n.kind === 'file'
       ? this.onelake.cached.file(n.workspace, n)
-      : this.onelake.cached.rows({ workspace: n.workspace, item: n.item }, { schema: n.schema, table: n.table })).then(cached => {
+      : this.tableLocal({ workspace: n.workspace, item: n.item }, { schema: n.schema, table: n.table })).then(cached => {
       if (!!n.cached === cached) return;
       n.cached = cached;
       this._emitter.fire(n);
     }, () => {});
+  }
+
+  // The lake says other tables have every file here now, or no longer: each table drawn asks again.
+  localChanged() {
+    for (const n of this._nodes.values()) if (n.kind === 'table') this._cachedChanged(n);
   }
 
   _changed(c) {
@@ -303,7 +310,7 @@ class LakehouseTree {
       case 'schema':
         item.iconPath = new vscode.ThemeIcon('symbol-namespace');
         break;
-      // As a model: a cloud until it is on this machine, a check once it is.
+      // A cloud until every file of it is on this machine, a check once it is.
       case 'table':
         item.command = { command: 'onelakeStudio.openTable', title: 'Open table', arguments: [n] };
         if (n.notValid) {
@@ -614,7 +621,7 @@ class LakehouseTree {
 
   // Each with whether it is cached — read from the store, never from OneLake.
   async _tables(lh, list) {
-    const cached = await Promise.all(list.map(t => this.onelake.cached.rows(lh, t).catch(() => false)));
+    const cached = await Promise.all(list.map(t => this.tableLocal(lh, t).catch(() => false)));
     const notValid = await Promise.all(list.map(t => this.onelake.cached.notValid(lh, t).catch(() => null)));
     return list.map((t, i) => this._track(node('table', t.table,
       { ...lh, leaf: true, schema: t.schema || '', table: t.table, cached: cached[i], notValid: notValid[i] })));

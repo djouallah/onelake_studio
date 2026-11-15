@@ -117,3 +117,43 @@ test("a table's tooltip says how it is used, and is asked for when the pointer r
   assert.doesNotMatch(await said(), /Read whole|times in the last/);
   assert.match(await said(), /w\.i\.dbo\.t/);
 });
+
+test("a table's check is every file of it here, as the lake says, and is kept for the next start", async () => {
+  const { createLocalTables } = require("../../core/lake/localtables.js");
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "onelake-local-"));
+  const f = join(dir, "local-tables.json");
+  const T = "abfss://w@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Tables/dbo/t";
+  let rows = [{ folder: T, files: 10, remote: 3 }], changed = [];
+  const engine = { lakeLocal: async () => rows };
+  const local = createLocalTables({ file: () => f, engine: () => engine, onChange: c => { changed = c; } });
+  assert.equal(local.has(T), false, "nothing said yet");
+  await local.refresh();
+  assert.equal(local.has(T), false, "3 of its 10 files are still on OneLake");
+  rows = [{ folder: T, files: 10, remote: 0 }];
+  await local.refresh();
+  assert.equal(local.has(T), true);
+  assert.deepEqual(changed, [T.toLowerCase()]);
+  assert.equal(local.has(T.replace("abfss://", "abfs://").toUpperCase()), true, "abfs:// is the same place, any case");
+  // A new start, with no engine: what the lake last said.
+  const later = createLocalTables({ file: () => f, engine: () => null });
+  assert.equal(later.has(T), true);
+  rows = [{ folder: T, files: 11, remote: 1 }];
+  await local.refresh();
+  assert.equal(local.has(T), false, "a new snapshot's file not here yet");
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("the tree draws a table's check from tableLocal, not from whether it was read", async () => {
+  let here = false;
+  const onelake = { onChanged: () => () => {}, cached: { rows: async () => true, notValid: async () => null } };
+  const tree = new LakehouseTree({ onelake, isSignedIn: () => true, tableLocal: async () => here });
+  const [t] = await tree._tables({ workspace: "w", item: "i.Lakehouse" }, [{ schema: "dbo", table: "t" }]);
+  assert.equal(tree.getTreeItem(t).iconPath.id, "cloud", "read, but not every file here");
+  here = true;
+  tree.localChanged();
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(tree.getTreeItem(t).iconPath.id, "pass-filled");
+});

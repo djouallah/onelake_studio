@@ -41,7 +41,7 @@ const { sqlStr, quoteIdent, storedFault, ONELAKE_SCOPES, scopeOfUrl, oneLakeScop
 const { sqlName, sqlPart, itemPart, displayName, abfssUrl, MODEL_KIND, modelSqlName, ENGINE_DB } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
 const { mapPool } = require('../onelake/http');
-const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll } = require('../lake/onelaketable');
+const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, localAll } = require('../lake/onelaketable');
 const { createTableService, httpsDownload, openedSince, heldOn } = require('../lake/tableservice');
 const { tableReadCopies, TABLE_READ_FOLDER } = require('../lake/tableread');
 
@@ -783,6 +783,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
   // Every lake table and what it was last synced from: what the sync service watches.
   const lakeTablesHere = () => withConn(c => syncedAll(c), agentLive);
+  // Each lake table's folder and how many of its files are still only on OneLake: what the tree's check says.
+  const lakeLocalHere = () => withConn(c => localAll(c), agentLive);
   const lakeOf = which => (remote ? instance.lakeTable(which) : lakeTable(which));
   // The lake's name for a table it holds, or null: asks nothing of OneLake (health.js reads its files by it).
   const lakeName = async w => {
@@ -1786,6 +1788,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const lakeStats = () => init().then(() => (remote ? instance.lakeStats() : lakeService ? lakeService.stats() : null));
   // The sync service's (syncworker.js): the lake's tables, and one synced now.
   const lakeTables = () => init().then(() => (remote ? instance.lakeTables() : capabilities.lake ? lakeTablesHere() : []));
+  const lakeLocal = () => init().then(() => (remote ? instance.lakeLocal() : capabilities.lake ? lakeLocalHere() : []));
   // On this window's token, as a statement is: the server's secret may hold one that expired since its last statement.
   const syncLakeTable = which => init().then(() => withAuthRetry(() => (remote ? instance.lakeSync(which) : lakeSync(which))));
   // serve: the OneLake token a window sends, over the control pipe.
@@ -1982,7 +1985,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, health,
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeLocal, lakeStats, lakeFetch, lakeStop, keepWhole, logs, health,
                 icebergAttach: ({ warehouse }) => iceAttach(warehouse), icebergDetach: ({ name }) => iceDetach(name),
                 deltaAttach: ({ folder }) => deltaAttach(folder), deltaDetach: ({ name }) => deltaDetach(name) };
   return api;

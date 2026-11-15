@@ -425,10 +425,11 @@ The tree ([`extension/tree.js`](../extension/tree.js)) lists workspaces, then la
 mirrored databases, their tables and files, semantic models and apps. *Queries*, **Logs** and
 **Performance** come after them, and stay there when a listing fails or finds nothing. Workspaces can be pinned, and the tree can be filtered to one type.
 
-**A table's icon** says whether it is cached, as a model's does: a cloud until a statement has read its
-rows at its current snapshot, a check after (`cached.rows` in [`core/onelake/onelake.js`](../core/onelake/onelake.js)). What is
-kept is each file a statement opened, whole, so a check doesn't promise every file: a statement filtered to one
-partition brought that partition, not the table. A new snapshot goes back to the cloud. A table nothing was ever written to has a check, since it reads no file. **A file's icon** says the
+**A table's icon** says whether its data is on this machine: a check when every data file of its current snapshot is
+in the lake's copies, a cloud while any is only on OneLake. The lake says so (`localAll` in
+[`core/lake/onelaketable.js`](../core/lake/onelaketable.js)), asked every 5 s while an engine runs, and what it last said is kept beside
+the lake in `local-tables.json` ([`core/lake/localtables.js`](../core/lake/localtables.js)), so the tree draws it with no engine. A
+table nothing was ever written to has a check, since it has no file. **A file's icon** says the
 same, per version of the file (`cached.file`): a statement or a tab read it, or the host kept it whole, and a file
 rewritten in OneLake goes back to the cloud. A wildcard marks no one file. **A folder under `Tables/`** with neither a
 Delta log nor Iceberg metadata has a warning and says *not a valid table*. That is kept like any table's metadata, so it

@@ -12,10 +12,16 @@
   logged_at DESC LIMIT 1000`, run at once: what the engine ran, read only. Change it as you like, for the slowest
   statements or the errors; Run again for what ran since. Its own tab is gone: it was sent the latest 1,000 statements in
   full every few seconds, 18 MB on a busy log, and opening a line could hang it.
-- **A stuck engine is replaced.** A window asks its engine every 20 s whether it's there, and the engine checks its own
-  DuckDB every 30 s. With no answer for about a minute, or no DuckDB answer for 4 minutes and next to no CPU used,
-  the engine is stopped and the next table opened starts a new one. An engine busy on a long query is left alone.
-  An engine stuck on a statement left the window waiting for ever.
+- **A table's check means its data is here.** Green is every data file of the table on this machine, as the lake says,
+  and a cloud while any is still on OneLake. It meant only that a query had read it: SF100's lineitem was green while
+  one of its 8 files was still downloading.
+- **Desktop app: closing it stops its engine, and nothing else does.** The engine is the app's own: it goes with the
+  app, killed if it hasn't stopped in 5 s. The app has no check that stops an engine: if it looks stuck, close the app.
+- **VS Code: a stuck engine is replaced.** A window asks its engine every 20 s whether it's there, and the engine
+  checks its own DuckDB every 30 s. With no answer for about a minute, or no DuckDB answer for 4 minutes and next to
+  no CPU used, the engine is stopped and the next table opened starts a new one. A busy engine is left alone.
+- **An engine that stops ends at once.** It waited for DuckDB's threads, and one still running a query kept a stopped
+  engine, and the lake, held until it was killed by hand.
 - **The desktop app shares nothing with the extension.** It kept its files in VS Code's folder for the extension when
   there was one: two engines then wrote one log and one catalog. It keeps everything in its own folder now, its
   settings and sign-in too, so it asks you to sign in once.

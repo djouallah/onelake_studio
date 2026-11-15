@@ -432,6 +432,7 @@ async function activateInner(context) {
       redraw: () => tree.redraw(),
       queriesChanged: () => tree.queriesChanged(),
       modelChanged: n => tree.modelChanged(n),
+      tablesLocalChanged: () => tree.localChanged(),
       refresh: n => tree.refresh(n),
       opened: () => (explorerView && explorerView.visible ? tree.opened() : []),
       showOffline: reason => showOffline(reason),
@@ -491,6 +492,7 @@ async function activateInner(context) {
     cachedModel: n => cachedModel(n),
     queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
+    tableLocal: (lh, t) => core.tableLocal(lh, t),
     keepLimitBytes,
     internalTables: async () => {
       const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
@@ -1439,12 +1441,16 @@ async function activateInner(context) {
   core.start();
 }
 
-function deactivate() {
+// `stopEngine`: the desktop app, closing. Its engine is its own, with no other window on it, so it goes with the
+// app. A VS Code window leaves it to the others, and it stops a minute after the last one goes.
+async function deactivate({ stopEngine = false } = {}) {
   stopReadLog();
   if (engines) for (const f of engines.catalogFiles.values()) f.close();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
-  return engines && engines.current() ? engines.current().close() : undefined;
+  if (!engines) return;
+  if (stopEngine) await engines.resetEngine({ stop: true }).catch(() => {});
+  else if (engines.current()) await engines.current().close();
 }
 
 module.exports = { activate, deactivate };

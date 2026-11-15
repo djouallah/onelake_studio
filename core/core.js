@@ -19,7 +19,8 @@ const { createTableRead, TABLE_READ_FOLDER } = require('./lake/tableread');
 const { settleFileCache } = require('./lake/filecache');
 const { logFileOf } = require('./logfile');
 const { createOneLake } = require('./onelake/onelake');
-const { createSqlTables } = require('./sqltables');
+const { createSqlTables, deltaTableOf } = require('./sqltables');
+const { createLocalTables } = require('./lake/localtables');
 const { inTime } = require('./onelake/http');
 const { createFabric, modelAccountDir } = require('./models/fabric');
 const { modelSqlName } = require('./names');
@@ -226,6 +227,26 @@ function createCore({
     isOffline: () => connectivity.offline(),
   });
   mark('catalog ready');
+  // Which tables have every file on this machine, as the lake last said: the tree's check (localtables.js).
+  const localTables = createLocalTables({
+    file: () => {
+      const dir = settings.keepsDiskCache() ? engines.fileCacheDirFor(engines.cacheAccount()) : null;
+      return dir ? join(dir, 'local-tables.json') : null;
+    },
+    engine: () => (engines.resetting() ? null : engines.current()),
+    onChange: () => { if (view.tablesLocalChanged) view.tablesLocalChanged(); },
+    log,
+  });
+  localTables.start();
+  subscribe({ dispose: () => localTables.stop() });
+  // A table is here when every data file of its snapshot is: one with none is, from its metadata alone.
+  const tableLocal = async (lh, t) => {
+    const meta = (await onelake.cached.table(lh, t).catch(() => null))?.value;
+    if (!meta) return false;
+    if (meta.empty) return true;
+    if (!meta.metadataLocation) return false;
+    return localTables.has(deltaTableOf(meta) || String(meta.metadataLocation).replace(/\/metadata\/[^/]+$/, ''));
+  };
   // A table with OneLake security, read through OneLake's table read API, in the cache folder too (tableread.js).
   const tableRead = createTableRead({
     getToken: hostToken, onRequest: logRead, ttlMs: tableTtlMs, offlineReason: () => connectivity.reason(),
@@ -639,6 +660,7 @@ function createCore({
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,
     storeAccount: () => storeAccount, queryAccount: () => queryAccount,
+    tableLocal,
   };
 }
 

@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | othersRunning | logs | storageToken | lakeTable | lakeSync | lakeTables | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | deltaAttach | deltaDetach | listen }, answered { id, value | error }
+//   window -> server   { id, stats | othersRunning | logs | storageToken | lakeTable | lakeSync | lakeTables | lakeLocal | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | deltaAttach | deltaDetach | listen }, answered { id, value | error }
 //   server -> window   { reattach: true }   its own news, with no id
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
@@ -93,7 +93,9 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     if (keeper) { keeper.stop(); await keeper.flush().catch(() => {}); }
     if (state) await fsp.rm(state.tmpDir, { recursive: true, force: true }).catch(() => {});
     if (logs) logs.close();
-    process.exit(0);
+    // Ended at once, not with process.exit: that waits for DuckDB's threads, and a statement still running on one
+    // held a stopped server up, the lake with it, until it was killed by hand.
+    process.kill(process.pid, 'SIGKILL');
   }
   function watchIdle() {
     clearTimeout(idle);
@@ -146,6 +148,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     if (msg.lakeTable) return engine.lakeTable(msg.lakeTable);
     if (msg.lakeSync) return engine.lakeSync(msg.lakeSync);
     if (msg.lakeTables) return engine.lakeTables();
+    if (msg.lakeLocal) return engine.lakeLocal();
     if (msg.lakeStats) return engine.lakeStats();
     // A lake table's every file brought here whole, or the rest of them left (engine-host.js keepWhole).
     if (msg.lakeFetch) return engine.lakeFetch(String(msg.lakeFetch));
@@ -226,7 +229,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   // twice running, and next to no CPU used meanwhile, this server says so and goes, and its windows start another.
   // A query that keeps every core busy can make a SELECT 1 wait as long: that engine is working, not stuck.
   let cpuAt = process.cpuUsage();
-  watchdog({
+  if (options.selfCheck !== false) watchdog({
     check: () => engine.health().finally(() => { cpuAt = process.cpuUsage(); }),
     everyMs: 30_000, waitMs: 120_000, misses: 2,
     stuck: () => {
