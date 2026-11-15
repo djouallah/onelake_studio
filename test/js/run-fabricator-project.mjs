@@ -83,7 +83,8 @@ try {
     return r;
   };
   const html = await (await get("/", "the page")).text();
-  if (!/import \{ start \} from "\.\/app\.js"/.test(html)) fail(`the page is not the app's: ${html.slice(0, 300)}`);
+  // Vite adds its client and serves the inline module script from the page itself: the page's own footer is the mark.
+  if (!/<span id="build">build __BUILD__ · <\/span>Explore, exported from/.test(html)) fail(`the page is not the app's: ${html.slice(0, 1500)}`);
   await get("/app.js", "the app's script");
   await get("/report.json", "the Report");
   await get(`/vendor/npm/${WEBAPP.duckdbWasm}/dist/duckdb-base.wasm`, "DuckDB-WASM, from the file");

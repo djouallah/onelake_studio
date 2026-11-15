@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { createStore } = require("../../core/onelake/store.js");
 const { createOneLake } = require("../../core/onelake/onelake.js");
 const { PINS } = require("../../core/vendored.js");
-const { writeApp } = require("../../fabric_app/export/exportapp.js");
+const { writeApp, REPORT } = require("../../fabric_app/export/exportapp.js");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VENDOR = join(root, "vendor");
@@ -151,7 +151,7 @@ export async function seedAccount({ dataDir, home }) {
     { title: "Total by Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "stacked", sort: "desc", top: 5 } },
     { title: "Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "slicer", slicer: "list" } },
     { title: "Old", kind: "table", sql: 'SELECT 1 AS "x" FROM model' }];
-  await writeApp(report, new Map([["site/report.json", Buffer.from(JSON.stringify({ tiles }))]]), { e2e: true });
+  await writeApp(report, new Map([[REPORT, Buffer.from(JSON.stringify({ tiles }))]]), { e2e: true });
 
   return { saved, report, dbFile: { workspace: WORKSPACE, item: LAKEHOUSE.item, path: DB_FILE, bytes: dbBytes.length } };
 }
