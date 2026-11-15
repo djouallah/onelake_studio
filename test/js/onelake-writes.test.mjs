@@ -70,7 +70,10 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   // write's storage scopes need it. This table names the workspace either way (by GUID until 2026-11-15, by name
   // since); with no GUID on it, a table made below gives it.
   const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
-  let wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1] || null;
+  // Anywhere the catalog's answer says it: the metadata file's own place is by name since 2026-11-15, and the
+  // table's location inside it may still be by GUID.
+  const guidIn = answer => (/abfss?:\/\/([0-9a-f]{8}-[0-9a-f-]{27})@/i.exec(JSON.stringify(answer)) || [])[1] || null;
+  let wsId = guidIn(known);
   console.log(`prefix ${prefix}, workspace ${wsId || `by name only: ${known["metadata-location"]}`}`);
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
@@ -118,9 +121,9 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     const probe = `${run}_guid`;
     made.push(["test", probe]);
     await c.run(`CREATE TABLE back.test.${q(probe)} AS SELECT 1 AS one`);
-    const at = (await (await loadTable(prefix, "test", probe)).json())["metadata-location"];
-    wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(at) || [])[1] || null;
-    assert.ok(wsId, `a table the catalog made names its workspace by GUID: ${at}`);
+    const answer = await (await loadTable(prefix, "test", probe)).json();
+    wsId = guidIn(answer);
+    assert.ok(wsId, `a table the catalog made names its workspace by GUID somewhere: ${JSON.stringify(answer).slice(0, 1500)}`);
     console.log(`workspace ${wsId}, off a table the catalog made`);
   }
 

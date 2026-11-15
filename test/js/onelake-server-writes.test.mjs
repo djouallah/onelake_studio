@@ -161,7 +161,10 @@ async function server(t, prefix, wsId, more = {}) {
 test("a big write through the engine's server, and the server after it", { skip, timeout: 3_300_000 }, async t => {
   const prefix = await prefixOf();
   const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
-  let wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1] || null;
+  // Anywhere the catalog's answer says it: the metadata file's own place is by name since 2026-11-15, and the
+  // table's location inside it may still be by GUID.
+  const guidIn = answer => (/abfss?:\/\/([0-9a-f]{8}-[0-9a-f-]{27})@/i.exec(JSON.stringify(answer)) || [])[1] || null;
+  let wsId = guidIn(known);
   const run = `s${process.platform.slice(0, 3)}${Date.now().toString(36)}`;
   const lh = `${q(WS)}.${q(LH)}`;
   const tbl = name => `${lh}."test".${q(name)}`;
@@ -190,9 +193,9 @@ test("a big write through the engine's server, and the server after it", { skip,
     const probe = `${run}_guid`;
     made.push(probe);
     await c.run(`CREATE TABLE back.test.${q(probe)} AS SELECT 1 AS one`);
-    const at = (await (await loadTable(prefix, "test", probe)).json())["metadata-location"];
-    wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(at) || [])[1] || null;
-    assert.ok(wsId, `a table the catalog made names its workspace by GUID: ${at}`);
+    const answer = await (await loadTable(prefix, "test", probe)).json();
+    wsId = guidIn(answer);
+    assert.ok(wsId, `a table the catalog made names its workspace by GUID somewhere: ${JSON.stringify(answer).slice(0, 1500)}`);
     console.log(`workspace ${wsId}, off a table the catalog made`);
   }
 
