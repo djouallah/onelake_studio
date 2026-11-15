@@ -119,7 +119,7 @@ DROP is blocked
 statement error
 DROP SCHEMA cat1 CASCADE
 ----
-schema is named in its lakehouse
+a schema is made in a lakehouse
 
 statement error
 DETACH lakehouse

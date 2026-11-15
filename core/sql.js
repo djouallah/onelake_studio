@@ -386,7 +386,7 @@ function tokens(sql) {
 
 const notRun = refuse;
 const TABLE_SHAPE = 'a write goes to a lakehouse table: <workspace>.<lakehouse>.<schema>.<table>';
-const SCHEMA_SHAPE = 'a schema is named in its lakehouse: <workspace>.<lakehouse>.<schema>';
+const SCHEMA_SHAPE = 'a schema is made in a lakehouse: <workspace>.<lakehouse>.<schema>';
 const FILE_SHAPE = "COPY writes to a lakehouse's Files/: TO '<workspace>.<lakehouse>/Files/<path>'";
 
 /**
