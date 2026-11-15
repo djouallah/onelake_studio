@@ -989,6 +989,8 @@ async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
       setStatus(stoppedNote(e));
       return false;
     }
+    // The engine started again under the tab: its variables went with its session.
+    if (e.sessionCleared) variables.clear();
     // The whole message, where it can wrap: the status line holds one line of it.
     clearResults(e.message, { error: true });
     lastRun.error = e.message;

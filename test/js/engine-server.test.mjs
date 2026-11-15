@@ -701,3 +701,20 @@ async function sessionHolds(engine, stop) {
 test("on the shared server, a tab is one DuckDB session: variables, $name and temp tables last, a Stop clears them", async t => {
   await sessionHolds((await setup(t)).open(), LONG);
 });
+
+test("a tab whose session the server lost goes on: its statement runs again on a new one, or says what went", async t => {
+  const { open, secret, pipe } = await setup(t);
+  const a = open();
+  const plain = a.forTab(), holding = a.forTab();
+  await plain.call("query", ["SELECT 1"]);
+  await holding.call("query", ["SET VARIABLE kept = 5"]);
+  await restartListeners(pipe, secret());
+  // Nothing kept: the statement runs on a new session, with nothing said.
+  assert.deepEqual((await plain.call("query", ["SELECT 2 AS back"])).rows, [{ back: 2 }]);
+  // A variable kept: the tab is told it is gone, and its next statement runs.
+  const e = await holding.call("query", ["SELECT 3 AS next"]).then(() => null, x => x);
+  assert.ok(e && e.sessionCleared, `told: ${e && e.message}`);
+  assert.match(e.message, /temp tables and variables are gone/);
+  assert.doesNotMatch(e.message, /\.query\(/, "with no wrapper of ours in it");
+  assert.deepEqual((await holding.call("query", ["SELECT getvariable('kept') AS v, 4 AS next"])).rows, [{ v: null, next: 4 }]);
+});

@@ -311,7 +311,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         if (here && here.session === session) return fn(here.conn);
         const go = async () => {
           if (closed || !instance || ended) throw new Error('the engine was closed');
-          if (!open) open = await openSession();
+          if (!open) open = await openSession(session);
           const mine = open;
           const c = await mine.connect();
           owner.add(c);
@@ -343,8 +343,22 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     };
     return session;
   }
-  async function openSession() {
-    if (instance.session) return instance.session();
+  // The server lost the tab's session under it (engine-client.js session): the statement goes again on a new one,
+  // unless the old one kept something, which the tab is told is gone.
+  async function openSession(session) {
+    if (instance.session) {
+      return instance.session({
+        lost() {
+          const kept = session.kept;
+          session.kept = false;
+          session.duckNames = null;
+          if (kept) {
+            throw Object.assign(new Error("The engine started again, so this tab's temp tables and variables are gone. Run the statement again."),
+              { sessionCleared: true });
+          }
+        },
+      });
+    }
     const c = await instance.connect();
     // Kept open between statements: closeSync is the session's, at its end.
     const kept = new Proxy(c, { get: (t, k) => (k === 'closeSync' ? () => {} : typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });

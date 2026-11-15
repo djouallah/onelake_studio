@@ -182,7 +182,7 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
 function clean(e) {
   if (!e || typeof e.message !== 'string') throw e;
   const message = e.message
-    .replace(/\s*LINE \d+: SELECT \* FROM (?:quack_query|r\d+\.query)\([\s\S]*$/, '')
+    .replace(/\s*LINE \d+: SELECT \* FROM (?:quack_query|[rt]\d+\.query)\([\s\S]*$/, '')
     .replace(/\s*\/\*onelake:[^*]*\*\//g, '');
   if (message !== e.message) {
     try { e.message = message; } catch (_) { throw Object.assign(new Error(message), { cancelled: e.cancelled }); }
@@ -507,8 +507,9 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     }
 
     // A connection of this window's DuckDB whose statements go to the server: `routeOf` says down which attach
-    // each one goes. `again`: a statement that found the listener gone is sent again once it is back.
-    async function wrap(routeOf, { again: goAgain = true } = {}) {
+    // each one goes. A statement that found the listener gone is sent again once it is back, after `recovered`
+    // (a tab's session attaches again there), unless `recovered` says it can't be.
+    async function wrap(routeOf, { recovered = async () => {} } = {}) {
       const c = await local.connect();
       let tag = null, way = null, stopped = false;
       const done = () => { if (way) { if (stopped) way.retire(); else way.release(); } way = null; };
@@ -521,9 +522,10 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       };
       // Nothing has come back yet when these fail, so going again repeats nothing.
       const again = (go, sql) => go(wrapped(sql)).catch(async e => {
-        if (closing || !goAgain || !LOST.test(String(e && e.message))) throw e;
+        if (closing || !LOST.test(String(e && e.message))) throw e;
         done();
         await recover();
+        await recovered();
         // A Stop that came while this recovered: there is no statement to go again.
         if (stopped) throw new Error('INTERRUPT Error: Interrupted!');
         return go(wrapped(sql));
@@ -574,16 +576,21 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       clearLogs: () => ask({ clearLogs: true }),
       async connect() { return wrap(sql => route(sql)); },
       /**
-       * A tab's own session on the server (engine-host.js session): `connect()` gives what connect() does, its
+       * A tab's own session on the server (engine-host.js tabSession): `connect()` gives what connect() does, its
        * statements sent down the session's one attach. `close()` ends the session, and what it kept goes with it.
-       * A statement that finds the server's listener gone fails, the session with it: what it kept is lost, so it
-       * isn't sent again on a new one as if nothing had happened.
+       * When the server lost it (its listener started again, a new server after an update), the session attaches
+       * again, as a new one, and `lost()` decides: it throws when what the old one kept matters, and the statement
+       * goes again on the new one when it doesn't.
        */
-      async session() {
-        const way = await dedicated();
+      async session({ lost = () => {} } = {}) {
+        let way = await dedicated();
         let ended = false;
+        const recovered = async () => {
+          way = await dedicated();
+          lost();
+        };
         return {
-          connect: () => wrap(sql => ({ text: way.text(sql), release() {}, retire() {} }), { again: false }),
+          connect: () => wrap(sql => ({ text: way.text(sql), release() {}, retire() {} }), { recovered }),
           close() { if (ended) return; ended = true; way.detach().catch(() => {}); },
         };
       },
