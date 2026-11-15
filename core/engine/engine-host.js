@@ -326,7 +326,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           } finally {
             owner.delete(c);
             try { c.closeSync(); } catch (_) {}
-            if (stopped && open === mine) { open = null; session.kept = false; mine.close(); }
+            if (stopped && open === mine) { open = null; session.kept = false; session.duckNames = null; mine.close(); }
           }
         };
         const run = chain.then(go, go);
@@ -1221,12 +1221,24 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // engine's own names are asked where the statement runs: a file's view is the shared engine's.
   async function namespaced(sql, ns, owner, { write = false } = {}) {
     if (!ns) return sql;
+    const isListed = name => listed.has(name.toLowerCase()) || made.has(name.toLowerCase());
+    if (write) return writeWithNamespace(sql, ns, serialize, await duckNames(owner), isListed);
+    // A read with no bare name has nothing to ask DuckDB about.
+    const bare = await bareNames(sql, serialize);
+    const none = { databases: new Set(), schemas: new Set(), objects: new Set() };
+    return withNamespace(sql, bare, ns, bare.length ? await duckNames(owner) : none, isListed);
+  }
+  // DuckDB's own names (sql.js DUCK_NAMES), asked once and kept by a tab's session until the tab changes what it
+  // holds (forgetDuckNames): a temporary table or view, a file's view, a database file attached or let go.
+  async function duckNames(owner) {
+    const s = owner && owner.session;
+    if (s && s.duckNames) return s.duckNames;
     const r = await withConn(c => c.runAndReadAll(DUCK_NAMES), owner);
     const duck = duckNamesOf(r.getRowObjectsJson());
-    const isListed = name => listed.has(name.toLowerCase()) || made.has(name.toLowerCase());
-    if (write) return writeWithNamespace(sql, ns, serialize, duck, isListed);
-    return withNamespace(sql, await bareNames(sql, serialize), ns, duck, isListed);
+    if (s) s.duckNames = duck;
+    return duck;
   }
+  const forgetDuckNames = owner => { if (owner && owner.session) owner.session.duckNames = null; };
 
   // ---------------------------------------------------------------------------
   // Writes: a lakehouse's Tables, Iceberg through its catalog and Delta by folder, and its Files/
@@ -1549,11 +1561,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         return { done: true, numRows: await withConn(c => runStreaming(c, run, emit), owner) };
       }, undefined, { signal }));
       owner.session.kept = true;
+      forgetDuckNames(owner);
       return res;
     });
     // What this tab made, the only things it may take away.
     const views = new Set(), attached = new Set();
     async function release({ views: goingViews = [], attached: goingAttached = [] } = {}) {
+      forgetDuckNames(owner);
       const drop = async (kept, name, statement) => {
         if (!kept.delete(String(name))) return;
         await withConn(c => c.run(statement), owner).catch(() => {});
@@ -1611,6 +1625,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           const read = await checkedRead(source, serialize, { strict: true });
           const done = await streamed(`CREATE OR REPLACE VIEW ${quoteIdent(view)} AS ${read}`, emit, begin, signal);
           views.add(view);
+          forgetDuckNames(owner);
           return done;
         });
       },
@@ -1658,6 +1673,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
             throw e;
           }
           attached.add(as);
+          forgetDuckNames(owner);
           attachedFiles.add(as.toLowerCase());
           return as;
         });

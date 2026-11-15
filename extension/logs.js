@@ -115,6 +115,9 @@ const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag)
 const COLS = [['at', 'When'], ['status', 'Status'], ['ms', 'ms', 'n'], ['sql', 'Statement']];
 let rows = [], shown = 0, sort = { col: 'at', desc: true };
 const open = new Set();
+// A closed row's statement: its start, on one line. A statement can be megabytes, and every row's whole text laid
+// out at each redraw, clipped or not, made a click on a row take seconds.
+const preview = s => { const all = String(s), t = all.slice(0, 400).replace(/\\s+/g, ' '); return all.length > 400 ? t + ' …' : t; };
 // A double click is one click, as in the tree.
 document.addEventListener('click', e => {
   if (e.detail > 1 && !e.target.closest('input, textarea, select')) { e.preventDefault(); e.stopPropagation(); }
@@ -127,7 +130,7 @@ function visible() {
   const text = $('filter').value.trim().toLowerCase();
   return rows.filter(r => ($('setup').checked || !r.setup)
     && (!$('errors').checked || r.status === 'error')
-    && (!text || r.sql.toLowerCase().includes(text) || (r.source || '').toLowerCase().includes(text) || (r.error || '').toLowerCase().includes(text)));
+    && (!text || r.hay.includes(text)));
 }
 function draw() {
   const list = visible();
@@ -151,7 +154,8 @@ function draw() {
       const key = r.at + r.sql;
       // A semantic model's query: the statement as written, and what dax-sql compiled it to when it is open.
       const written = r.source ?? r.sql;
-      const sql = el('td', { className: 'sql', title: 'Click to see all of it' }, el('span', { className: 'one', textContent: written }));
+      const one = el('span', { className: 'one', textContent: open.has(key) ? written : preview(written) });
+      const sql = el('td', { className: 'sql', title: 'Click to see all of it' }, one);
       if (r.source != null) {
         const copy = el('button', { textContent: 'Copy', onclick: e => { e.stopPropagation(); vs.postMessage({ copy: r.sql }); } });
         const lines = r.sql.split('\\n').length;
@@ -168,7 +172,14 @@ function draw() {
         el('td', {},
           el('button', { textContent: 'Open', title: 'A new tab with this SQL in its box, not run', onclick: () => vs.postMessage({ open: written }) }), ' ',
           el('button', { textContent: 'Copy', onclick: () => vs.postMessage({ copy: written }) })));
-      sql.onclick = () => { if (open.has(key)) open.delete(key); else open.add(key); draw(); };
+      // Only this row changes: the table isn't drawn again.
+      sql.onclick = () => {
+        const now = !open.has(key);
+        if (now) open.add(key); else open.delete(key);
+        tr.classList.toggle('open', now);
+        one.textContent = now ? written : preview(written);
+        for (const d of sql.querySelectorAll('.compiled, .error')) d.hidden = !now;
+      };
       return tr;
     }))));
 }
@@ -180,7 +191,8 @@ addEventListener('message', e => {
   const m = e.data;
   $('down').hidden = !m.down;
   $('down').textContent = m.down || '';
-  if (m.rows) { rows = m.rows; shown = m.shown; draw(); }
+  // What the filter looks in, lowercased once per answer rather than at each key.
+  if (m.rows) { rows = m.rows.map(r => ({ ...r, hay: [r.sql, r.source || '', r.error || ''].join(' ').toLowerCase() })); shown = m.shown; draw(); }
 });
 vs.postMessage({ ready: true });
 </script></body></html>`;

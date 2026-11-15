@@ -1688,12 +1688,18 @@ async function runBox({ plan = false } = {}) {
   const parts = statements(text.slice(span.start, span.end)).map(p => ({ start: span.start + p.start, end: span.start + p.end }));
   if (parts.length <= 1) return runOne(parts[0] || span, { plan, text });
   if (plan) { setStatus('Plan shows one statement: put the cursor in one, or select only that one.', 'warn'); return; }
+  const t0 = performance.now();
   try {
     for (let i = 0; i < parts.length; i++) {
       stepNote = `${i + 1}/${parts.length}`;
       if (!await runOne(parts[i], { text })) return;
     }
   } finally { stepNote = ''; }
+  // All of them ran: the last one's line, and how long the whole run took.
+  const ms = performance.now() - t0;
+  const took = ms < 1000 ? `${Math.round(ms)} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
+  const status = $('status');
+  status.textContent = status.title = `${status.textContent} · all ${parts.length} in ${took}`;
 }
 // One statement of the box, `span` of `text`: true when it ran.
 async function runOne(span, { plan = false, text }) {
