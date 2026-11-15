@@ -190,7 +190,7 @@ try {
     await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1::BIGINT AS n");  // as Select Top Rows sends it
     // The previous result also has a "1" in it, so wait for THIS result's header.
     await page.waitForFunction(
-      () => /n/.test((document.querySelector("#resultsTable thead") || {}).textContent || ""),
+      () => /\bn\b/.test((document.querySelector("#resultsTable thead") || {}).textContent || ""),
       { timeout: 30000 }).catch(() => {});
     const head = await page.evaluate(() =>
       (document.querySelector("#resultsTable thead") || {}).textContent || "");
