@@ -728,7 +728,17 @@ function on(m) {
 // ---------------------------------------------------------------------------
 const events = new EventSource('/events');
 let lostTimer = null;
-events.onmessage = e => { try { on(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+// A tab's messages wait for `boot`, which says where its page is: a file that started the app opened its tab before
+// the window had it, and the tab stayed blank. They go in the order they came once it's here. The rest are drawn
+// again from `boot` anyway.
+const beforeBoot = [];
+const NEEDS_BOOT = /^(tab-|text-tab$|open-settings$)/;
+const handle = m => { try { on(m); } catch (err) { console.error(err); } };
+events.onmessage = e => {
+  let m;
+  try { m = JSON.parse(e.data); } catch (err) { console.error(err); return; }
+  if (!boot && m && NEEDS_BOOT.test(m.t)) beforeBoot.push(m); else handle(m);
+};
 events.onopen = () => { clearTimeout(lostTimer); $('lost').hidden = true; };
 events.onerror = () => {
   clearTimeout(lostTimer);
@@ -748,6 +758,7 @@ ui = { ...ui, ...boot.window };
 drawStatus();
 drawHeader();
 reload();
+for (const m of beforeBoot.splice(0)) handle(m);
 
 $('empty-query').addEventListener('click', () => runCommand('onelakeStudio.newQuery'));
 

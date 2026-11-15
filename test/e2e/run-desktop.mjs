@@ -55,6 +55,22 @@ try {
   let { url } = await proc.ready;
   let page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
 
+  await step("a .sql file that started the app, signed out, opens in its tab, before the window was there", async () => {
+    // A double-click on a .sql file with the app closed: the file is asked for as the app starts, and its tab is
+    // made before the window has loaded. It stayed blank. Signed out, it asks for no sign-in.
+    const file = join(home, "from disk.sql");
+    await writeFile(file, "SELECT 'opened from disk' AS said;\n");
+    proc.child.stdin.write(`${JSON.stringify({ open: file })}\n`);
+    await page.waitForTimeout(3_000);
+    await page.goto(url);
+    await page.locator(".tab", { hasText: "from disk.sql" }).waitFor({ timeout: 30_000 });
+    const box = page.frameLocator("#pages iframe").first().locator("#sqlEditor");
+    await box.waitFor({ timeout: 60_000 });
+    assert.match(await box.inputValue(), /opened from disk/);
+    await page.screenshot({ path: join(shots, "1a-file-from-disk.png") });
+    await page.locator(".tab", { hasText: "from disk.sql" }).locator("button.close").click();
+  });
+
   await step("signed out, the window offers a sign-in, and says which build it is", async () => {
     await page.goto(url);
     await page.getByRole("button", { name: "Sign in to OneLake" }).waitFor({ timeout: 30_000 });

@@ -6,6 +6,8 @@
   is what needs an account. It asked for a sign-in first, and in the desktop app a file that started the app signed
   out never opened again: its sign-in in the browser waited for ever beside the tree's. There is one sign-in in the
   browser at a time now, which every asker waits for, given up after 5 minutes.
+- **Fixed (desktop app): a file that started the app opened a blank tab.** Its tab was made before the window had
+  loaded, and the window couldn't yet say where the tab's page was.
 - **Every statement's result in a run of several.** The last one's result shows, and a selector above the grid
   switches to any statement of the run, its status line with it. The last 30 results are kept.
 - **Logs is a query.** It opens a tab like any other with `SELECT … FROM onelake_logs WHERE NOT setup ORDER BY
