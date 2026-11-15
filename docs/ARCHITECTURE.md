@@ -12,6 +12,7 @@ queried with SQL.
   all send the same SQL over the same names. A Power BI semantic model is one more table: `AGG("measure")`
   computes its measure, compiled from its DAX by [dax-sql](https://github.com/djouallah/dax-sql).
 - **Runs on your machine.** DuckDB in a process of its own reads OneLake directly, with your own token.
+  What DuckDB makes us work around is in [DUCKDB.md](DUCKDB.md).
 - **Works offline.** This is a must, not a fallback. Everything you have read keeps working with no
   internet and no sign-in: browsing, SQL, a model's Explore and its Visual.
 - **Agents get the same access.** An agent asks through the command line, on the same sign-in, cache

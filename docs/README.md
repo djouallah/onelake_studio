@@ -12,4 +12,5 @@ gets the same access as a person.
 | [NAMING.md](NAMING.md) | The contract: `<workspace>.<lakehouse>.<schema>.<table>` for a lakehouse table, `<workspace>.<item>_<kind>.<schema>.<table>` for another item's, `<workspace>.<model>_semanticmodel` for a semantic model, `<workspace>.<lakehouse>/Files/<path>` for a file, and why. Everything else depends on it. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The rules every change keeps, what is out of scope, how a statement runs, each feature, and where the code is. |
 | [CATALOG.md](CATALOG.md) | The specification of the local metadata catalog: what it holds, and how it stays current. |
+| [DUCKDB.md](DUCKDB.md) | What DuckDB and its extensions make us work around, each with what we do instead. |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes, newest first. It is also the Marketplace page's Changelog tab. |
