@@ -1,7 +1,7 @@
 # What DuckDB makes us work around
 
 Each item is a limitation or a bug of DuckDB 2.0 or one of its extensions, and what OneLake Studio does instead.
-What only looks like one (a choice of ours, or OneLake's, VS Code's or Windows' doing) is listed at the end. When
+What only looks like one (a choice of ours, or Windows' doing) is listed at the end. When
 DuckDB fixes one, the workaround can go.
 
 ## No setting limits where a statement writes
@@ -149,9 +149,6 @@ OneLake names a table `workspace.lakehouse.schema.table`, and DuckDB's names hav
 
 ## Not DuckDB's
 
-- **Fabric's Iceberg conversion:** its column ids disagree with the files', so Delta is never read through it
-  (Fabric).
-- **The table read API**, for a table with OneLake security (OneLake).
 - **The engine watchdog:** an engine stopped answering, with no bug found. It is a safety net.
 - **The `setup` column in `onelake_logs`:** it marks our own thousands of views.
 - **Windows:**
