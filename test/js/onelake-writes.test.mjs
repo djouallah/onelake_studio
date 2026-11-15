@@ -66,11 +66,11 @@ function resolverFor(prefix) {
 
 test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { skip, timeout: 900_000 }, async t => {
   const prefix = await prefixOf();
-  // The workspace's GUID, off a table of it, as sqltables.js lakehouseOf reads it: the catalog has written there.
-  // It names the workspace either way (by GUID until 2026-11-15, by name since), and with no GUID to read the
-  // scopes are the name's alone, as lakehouseOf's are.
+  // The workspace's GUID, off a table of it, as sqltables.js lakehouseOf reads it: the catalog writes there, so a
+  // write's storage scopes need it. This table names the workspace either way (by GUID until 2026-11-15, by name
+  // since); with no GUID on it, a table made below gives it.
   const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
-  const wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1] || null;
+  let wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1] || null;
   console.log(`prefix ${prefix}, workspace ${wsId || `by name only: ${known["metadata-location"]}`}`);
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
@@ -113,6 +113,16 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   await c.run(`ATTACH ${lit(WAREHOUSE)} AS back (TYPE iceberg, URI ${lit(ICEBERG)}, SECRET ice,
     ACCESS_DELEGATION_MODE 'none', STAGE_CREATE_TABLES false, SKIP_CREATE_TABLE_METADATA_UPDATES true, DEFAULT_SCHEMA 'dbo')`);
   const back = async sql => (await c.runAndReadAll(sql)).getRowObjectsJson();
+  // A table Delta made names its workspace as it was uploaded; one the catalog makes says where the catalog writes.
+  if (!wsId) {
+    const probe = `${run}_guid`;
+    made.push(["test", probe]);
+    await c.run(`CREATE TABLE back.test.${q(probe)} AS SELECT 1 AS one`);
+    const at = (await (await loadTable(prefix, "test", probe)).json())["metadata-location"];
+    wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(at) || [])[1] || null;
+    assert.ok(wsId, `a table the catalog made names its workspace by GUID: ${at}`);
+    console.log(`workspace ${wsId}, off a table the catalog made`);
+  }
 
   t.after(async () => {
     for (const [s, n] of made) await c.run(`DROP TABLE IF EXISTS back.${q(s)}.${q(n)}`).catch(e => console.log(`left ${s}.${n}: ${e.message}`));

@@ -204,24 +204,27 @@ jobs:
         env:
           NO_SKIP: 1
       # engine-host.test.mjs's process has died with no word, four times in about fifteen runs, on Windows and Linux,
-      # always right after "the internet going during a read": the test runner says only "test failed". Run in
-      # the job's own process, three times, it says how it ended: its exit code (a signal, an access violation) and
-      # what it wrote last.
+      # always right after "the internet going during a read": the test runner says only "test failed". And
+      # engine-server.test.mjs's the same way, on Linux, as its windows' statements all ran at once (2026-11-15).
+      # Each run in the job's own process, three times, says how it ended: its exit code (a signal, an access
+      # violation) and what it wrote last.
       - name: How the engine's test process ended
         if: failure()
         shell: bash
         env:
           NO_SKIP: 1
         run: |
-          for i in 1 2 3; do
-            # The step's shell stops at the first command that fails, which is the one being asked about.
-            code=0
-            node test/js/engine-host.test.mjs > "$RUNNER_TEMP/engine-host-$i.log" 2>&1 || code=$?
-            echo "::group::run $i: exit code $code"
-            grep -E "^(not )?ok |^# |Error|error|signal|abort|Assertion" "$RUNNER_TEMP/engine-host-$i.log" | tail -40 || true
-            echo "--- its last lines"
-            tail -25 "$RUNNER_TEMP/engine-host-$i.log"
-            echo "::endgroup::"
+          for f in engine-host engine-server; do
+            for i in 1 2 3; do
+              # The step's shell stops at the first command that fails, which is the one being asked about.
+              code=0
+              node test/js/$f.test.mjs > "$RUNNER_TEMP/$f-$i.log" 2>&1 || code=$?
+              echo "::group::$f, run $i: exit code $code"
+              grep -E "^(not )?ok |^# |Error|error|signal|abort|Assertion" "$RUNNER_TEMP/$f-$i.log" | tail -40 || true
+              echo "--- its last lines"
+              tail -25 "$RUNNER_TEMP/$f-$i.log"
+              echo "::endgroup::"
+            done
           done
       # test/sql/*.test (sqllogictest) through the command line's sql: needs dax-sql (vendor/),
       # the tree the prepare job keeps in the cache.

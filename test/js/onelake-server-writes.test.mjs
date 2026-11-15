@@ -161,7 +161,7 @@ async function server(t, prefix, wsId, more = {}) {
 test("a big write through the engine's server, and the server after it", { skip, timeout: 3_300_000 }, async t => {
   const prefix = await prefixOf();
   const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
-  const wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1] || null;
+  let wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1] || null;
   const run = `s${process.platform.slice(0, 3)}${Date.now().toString(36)}`;
   const lh = `${q(WS)}.${q(LH)}`;
   const tbl = name => `${lh}."test".${q(name)}`;
@@ -185,6 +185,16 @@ test("a big write through the engine's server, and the server after it", { skip,
     await fetch(`https://${DFS}/${WS}/${ITEM}/Files/${file}`, { method: "DELETE", headers: { ...auth, "x-ms-version": "2023-11-03" } }).catch(() => {});
     c.closeSync();
   });
+  // A table Delta made names its workspace as it was uploaded; one the catalog makes says where the catalog writes.
+  if (!wsId) {
+    const probe = `${run}_guid`;
+    made.push(probe);
+    await c.run(`CREATE TABLE back.test.${q(probe)} AS SELECT 1 AS one`);
+    const at = (await (await loadTable(prefix, "test", probe)).json())["metadata-location"];
+    wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(at) || [])[1] || null;
+    assert.ok(wsId, `a table the catalog made names its workspace by GUID: ${at}`);
+    console.log(`workspace ${wsId}, off a table the catalog made`);
+  }
 
   // The Parquet a table is made of, read from its files' footers: printed, and its rows counted.
   const layout = async name => {
