@@ -175,6 +175,19 @@ function spawnServer({ script, token, pipe, options, logFile, idleMs, logsFile, 
 }
 
 // The running server for this key, started if there is none.
+// The last lines of a server's log, or what kept them from being read.
+function logTail(file, bytes = 2048) {
+  try {
+    const size = fs.statSync(file).size;
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(Math.min(bytes, size));
+      fs.readSync(fd, buf, 0, buf.length, size - buf.length);
+      return buf.toString('utf8').split('\n').slice(size > bytes ? 1 : 0).join('\n').trim();
+    } finally { fs.closeSync(fd); }
+  } catch (e) { return `(${e.message})`; }
+}
+
 async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
   const known = await getToken();
   if (known) {
@@ -201,7 +214,8 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
     }
     if (said.taken) throw new Error('an engine with another session is still running: try again in a minute');
     const up = await connectControl(pipe, token, window);
-    if (!up) throw new Error('the engine started and then refused this window');
+    // What the server said of itself, its log's last lines: why it went, or what it was doing.
+    if (!up) throw new Error(`the engine started and then refused this window. Its log ends:\n${logTail(server.logFile)}`);
     return { ...up, token };
   });
 }
