@@ -13,7 +13,8 @@ import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
-        appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges } = require("../../fabric_app/export/exportapp.js");
+        appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT,
+        setPackages, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 
@@ -57,7 +58,7 @@ test("a model file from disk plans as a OneLake file does, named by its workspac
   assert.equal(plan.workspace, WS);
   assert.equal(plan.lakehouse, LH);
   assert.equal(plan.modelPath, "power bi/sales.ossie.yaml");
-  // Exported again from its .fabricapp: the name its export.json kept, whatever the copy inside is called.
+  // Exported again from its .fabricator: the name its record kept, whatever the copy inside is called.
   const again = planExport(OSSIE, "model.ossie.yaml", "sales", mods(bimOf(URL_)), { workspace: "power bi", onDisk: true, path: "sales.ossie.yaml" });
   assert.equal(again.modelPath, plan.modelPath);
   assert.throws(() => planExport(OSSIE, "sales.ossie.yaml", "sales", mods(bimOf("https://example.com/x")), { workspace: "w", onDisk: true }), /names no lakehouse/);
@@ -189,6 +190,8 @@ async function fixture(root) {
     "fabric_app/site/storage/modelrows.js": "// modelrows\n",
     "fabric_app/rayfin/rayfin.yml": "id: explore\nname: explore\nservices:\n  auth:\n    allowedRedirectUris:\n      - http://localhost:5173\n",
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
+    "fabric_app/project/gitignore": "node_modules\n",
+    "fabric_app/project/vite.config.mjs": "export default {};\n",
     "daxsql/src/index.js": "// dax-sql\n",
     "daxsql/src/dialects/duckdb.js": "// dialect\n",
     "daxsql/formats/tmsl.js": "// tmsl\n",
@@ -283,12 +286,12 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     const text = p => files.get(p).toString("utf8");
     assert.equal(engineOf(files, { engine }), engine);
     assert.equal(engineOf(files, {}), "semanticModel", "a marker that doesn't say: the site does");
-    assert.deepEqual(JSON.parse(text("site/engine.json")), { engine: "semanticModel", name: "sales" });
-    assert.deepEqual(JSON.parse(text("site/model.json")), doc());
-    for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js", "site/storage/auth.js", "site/app.js", "site/explore/view.js"]) {
+    assert.deepEqual(JSON.parse(text("site/public/engine.json")), { engine: "semanticModel", name: "sales" });
+    assert.deepEqual(JSON.parse(text("site/public/model.json")), doc());
+    for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js", "site/public/storage/auth.js", "site/public/app.js", "site/public/explore/view.js"]) {
       assert.ok(files.has(p), p);
     }
-    assert.ok(![...files.keys()].some(f => /^site\/storage\/(data|catalog)\.js$|vendor\//.test(f)), "no DuckDB data source, and no packages in the zip");
+    assert.ok(![...files.keys()].some(f => /^site\/public\/storage\/(data|catalog)\.js$|vendor\//.test(f)), "no DuckDB data source, and no packages yet (setPackages)");
     // The packages added at publish: the connector and its own Arrow, and not DuckDB's.
     const vendor = await vendorFiles(dirs.webappDir, engine);
     assert.deepEqual([...vendor.keys()].sort(), ["vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "vendor/npm/apache-arrow@21.2.0/+esm.js"]);
@@ -296,7 +299,7 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     const agents = text("AGENTS.md");
     assert.match(agents, /Semantic model: `sales`, as it is in Fabric: the export changed nothing in it/);
     assert.match(agents, /as the viewer/);
-    assert.match(agents, /as it was when exported[\s\S]*`site\/model\.json`[\s\S]*when it is\s+exported again/);
+    assert.match(agents, /as it was when exported[\s\S]*`site\/public\/model\.json`[\s\S]*when it is\s+exported again/);
     assert.match(agents, /The page turns it into DAX and runs it on the semantic model\./);
     assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
 
@@ -304,14 +307,14 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.ok(!files.has("model.ossie.yaml") && !files.has("model.bim"), "a semantic model's app names the model, and holds no copy");
     const duck = await appFiles({ plan: { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), engine: "duckdb" },
                                   state: null, model, modelText: OSSIE, modelFile: "sales.yaml", ...dirs });
-    assert.ok(duck.has("site/storage/data.js"));
+    assert.ok(duck.has("site/public/storage/data.js"));
     // engine.json always: the hosting answers a file a site lacks with its index.html.
-    assert.deepEqual(JSON.parse(duck.get("site/engine.json")), { engine: "duckdb" });
+    assert.deepEqual(JSON.parse(duck.get("site/public/engine.json")), { engine: "duckdb" });
     assert.equal(engineOf(new Map(), {}), "duckdb", "an older client-side site, with no engine.json");
-    for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js"]) assert.ok(!duck.has(p), p);
+    for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js"]) assert.ok(!duck.has(p), p);
     // Client side the app runs on its own model: the file's model.yaml, and the site's model.json made from it.
     assert.equal(duck.get("model.ossie.yaml").toString(), OSSIE);
-    assert.deepEqual(JSON.parse(duck.get("site/model.json")), model);
+    assert.deepEqual(JSON.parse(duck.get("site/public/model.json")), model);
     assert.equal(engineOf(duck, {}), "duckdb");
     assert.doesNotMatch(duck.get("rayfin/rayfin.yml").toString(), /^connectors:/m);
     assert.match(duck.get("AGENTS.md").toString(), /app item's owner/);
@@ -331,21 +334,33 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     const state = { v: 2, rows: ["dim_region.Region"], cols: [], values: ["Revenue"], filters: [], mark: "bar" };
     const files = await appFiles({ plan, state, model: doc(), modelText: OSSIE, modelFile: "ossie.yaml",
                                    redirects: ["https://x.webapp.fabricapps.net"], ...dirs });
-    for (const p of ["site/index.html", "site/app.js", "site/storage/data.js", "site/storage/catalog.js",
-                     "site/explore/view.js", "site/explore/model.js", "site/explore/explore.css", "site/paths.js",
-                     "site/semantic/src/dialects/duckdb.js", "site/semantic/formats/ossie.js", "site/report.json",
-                     "rayfin/functions/src/function_app.ts", "AGENTS.md", "model.ossie.yaml", "site/model.json"]) {
+    for (const p of ["site/public/index.html", "site/public/app.js", "site/public/storage/data.js", "site/public/storage/catalog.js",
+                     "site/public/explore/view.js", "site/public/explore/model.js", "site/public/explore/explore.css", "site/public/paths.js",
+                     "site/public/semantic/src/dialects/duckdb.js", "site/public/semantic/formats/ossie.js", "site/public/report.json",
+                     "rayfin/functions/src/function_app.ts", "AGENTS.md", "model.ossie.yaml", "site/public/model.json"]) {
       assert.ok(files.has(p), p);
     }
-    assert.ok(![...files.keys()].filter(p => p !== "model.ossie.yaml").some(p => /vendor\/|node_modules|ossie\.(json|yaml)$|^model\/|^dist\/|\.gitignore/.test(p)),
-      `no packages, no build, no model but model.ossie.yaml: ${[...files.keys()].join(", ")}`);
-    assert.deepEqual(JSON.parse(files.get("site/explore.json")), state);
+    assert.ok(![...files.keys()].filter(p => p !== "model.ossie.yaml").some(p => /vendor\/|node_modules|ossie\.(json|yaml)$|^model\/|dist\//.test(p)),
+      `no packages yet, no build, no model but model.ossie.yaml: ${[...files.keys()].join(", ")}`);
+    // The project around it, as the Rayfin CLI's template has one: Fabricator installs it and runs its Vite.
+    const pkg = JSON.parse(files.get("package.json"));
+    assert.equal(pkg.name, "sales-model-explore");
+    assert.deepEqual(pkg.workspaces, ["rayfin/functions"]);
+    assert.equal(pkg.scripts.dev, "rayfin dev");
+    assert.deepEqual(pkg.devDependencies, PROJECT_PACKAGES);
+    for (const [name, v] of Object.entries(PROJECT_PACKAGES)) assert.match(v, /^\d+\.\d+\.\d+$/, `${name} is pinned`);
+    assert.equal(PROJECT_PACKAGES["@microsoft/rayfin-core"], require("../../core/vendored.js").WEBAPP.rayfinClient.split("@").pop(),
+      "the Rayfin the page's SDK is");
+    assert.equal(files.get(".gitignore").toString(), "node_modules\n");
+    assert.equal(files.get("site/vite.config.mjs").toString(), "export default {};\n");
+    assert.deepEqual(JSON.parse(files.get("site/public/explore.json")), state);
     assert.match(files.get("rayfin/rayfin.yml").toString(), /^id: sales-model-explore$/m);
     assert.match(files.get("rayfin/rayfin.yml").toString(), /- https:\/\/x\.webapp\.fabricapps\.net/);
     const agents = files.get("AGENTS.md").toString();
     assert.match(agents, /- `fct_sales` ← `mart\.fct_sales`/);
     assert.match(agents, /power bi\/nem\.Lakehouse\/Files\/semantic_model\/ossie\.yaml/);
-    assert.match(agents, /## The Report: yours to grow[\s\S]*`site\/report\.json`[\s\S]*no tile holds SQL/);
+    assert.match(agents, /## The Report: yours to grow[\s\S]*`site\/public\/report\.json`[\s\S]*no tile holds SQL/);
+    assert.match(agents, /Fabricator imports this file/);
     assert.match(agents, /```json\n([\s\S]*?)\n```/);
     const example = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(agents)[1]);
     assert.deepEqual(example.pages[0].tiles[1].pivot.rows, ["dim_region.Region"], "its example is JSON");
@@ -358,10 +373,13 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     await writeApp(zipPath, files, { itemId: "item", model: plan.modelPath });
     assert.deepEqual(await readdir(join(root, "out")), [`${plan.name}.zip`], "one file, nothing beside it");
     const back = await readApp(zipPath);
-    assert.deepEqual(back.marker, { itemId: "item", model: plan.modelPath });
+    assert.deepEqual(back.marker, { itemId: "item", model: plan.modelPath, format: FORMAT });
     assert.deepEqual([...back.files.keys()].sort(), [...files.keys()].sort());
     for (const [p, b] of files) assert.ok(back.files.get(p).equals(b), p);
-    assert.ok(unzip(await readFile(zipPath)).has(MARKER));
+    const raw = unzip(await readFile(zipPath));
+    assert.ok(raw.has(MARKER));
+    assert.deepEqual(JSON.parse(raw.get(FABRICATOR_RECORD)), { format: 1, name: "", history: false, deployment: true },
+      "what Fabricator's Import window reads");
 
     // Re-zipped by hand: a folder zipped whole, backslashes in its names, still the app.
     const byHand = new Map([...back.files, [MARKER, Buffer.from("{}")]].map(([p, b]) => [`sales-model-explore\\${p.split("/").join("\\")}`, b]));
@@ -383,7 +401,7 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     const config = { apiUrl: "https://backend", publishableKey: "pk-1", workspaceId: WS, itemId: "item" };
     const up = buildDist(files, config, vendor, "20261028-120000");
     assert.deepEqual(JSON.parse(up.get("rayfin.config.json")), config);
-    assert.ok(!up.has("AGENTS.md") && !up.has("rayfin/rayfin.yml") && !up.has("site/index.html"), "the site only, at the root");
+    assert.ok(!up.has("AGENTS.md") && !up.has("rayfin/rayfin.yml") && !up.has("site/public/index.html"), "the site only, at the root");
     assert.match(up.get("index.html").toString(), /import \{ start \} from "\.\/app\.js\?v=20261028-120000"/);
     assert.match(up.get("index.html").toString(), /href="\.\/explore\/explore\.css\?v=20261028-120000"/);
     assert.match(up.get("index.html").toString(), /build 20261028-120000/);
@@ -401,7 +419,7 @@ test("the local copy is one zip: the whole app but its packages, written and rea
   }
 });
 
-test("site/report.json: no tiles at first, kept by every export; never a local change", async () => {
+test("site/public/report.json: no tiles at first, kept by every export; never a local change", async () => {
 
   const root = await mkdtemp(join(tmpdir(), "export-"));
   try {
@@ -418,12 +436,12 @@ test("site/report.json: no tiles at first, kept by every export; never a local c
     assert.ok(!(REPORT in marker.files) && !(MARKER in marker.files));
     assert.deepEqual(localChanges(again, marker), []);
     const edited = new Map(first);
-    edited.set("site/app.js", Buffer.from("// an agent's edit"));
-    edited.set("site/chart.js", Buffer.from("new"));
+    edited.set("site/public/app.js", Buffer.from("// an agent's edit"));
+    edited.set("site/public/chart.js", Buffer.from("new"));
     edited.delete("AGENTS.md");
     // The model the app runs on is one of its files: an edit to it is a local change, published As Is.
     edited.set("model.yaml", Buffer.from("version: 1\ndatasets: []\n"));
-    assert.deepEqual(localChanges(edited, marker), ["AGENTS.md", "model.yaml", "site/app.js", "site/chart.js"]);
+    assert.deepEqual(localChanges(edited, marker), ["AGENTS.md", "model.yaml", "site/public/app.js", "site/public/chart.js"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -481,4 +499,96 @@ test("the shipped page and its data source parse; the page reads its model from 
   const html = await readFile(new URL("../../fabric_app/site/index.html", import.meta.url), "utf8");
   assert.match(html, /color-scheme: dark/);
   assert.doesNotMatch(html, /prefers-color-scheme: light|#fff\b|#ffffff|white/i, "black, always");
+});
+
+test("an earlier export's .fabricapp reads laid out as a .fabricator: site/ is site/public/, its record moves, its hashes follow", async () => {
+  const root = await mkdtemp(join(tmpdir(), "export-legacy-"));
+  try {
+    const old = join(root, "sales.fabricapp");
+    const marker = { itemId: "item", name: "sales-model-explore", files: { "site/app.js": "h1", "AGENTS.md": "h2" } };
+    await writeFile(old, await zip([["AGENTS.md", Buffer.from("# a")], ["site/app.js", Buffer.from("// app")],
+                                    ["site/report.json", Buffer.from("{}")], ["export.json", Buffer.from(JSON.stringify(marker))]]));
+    const back = await readApp(old);
+    assert.deepEqual([...back.files.keys()].sort(), ["AGENTS.md", `${SITE}app.js`, `${SITE}report.json`]);
+    assert.deepEqual(back.marker.files, { [`${SITE}app.js`]: "h1", "AGENTS.md": "h2" });
+    assert.equal(back.marker.itemId, "item");
+    // Written again, it is a .fabricator: the record in its folder, Fabricator's beside it, nothing at the root.
+    await writeApp(old, back.files, back.marker);
+    const raw = unzip(await readFile(old));
+    assert.ok(raw.has(MARKER) && raw.has(FABRICATOR_RECORD) && !raw.has("export.json") && !raw.has("site/app.js"));
+    assert.equal(JSON.parse(raw.get(MARKER)).format, FORMAT);
+    assert.deepEqual(JSON.parse(raw.get(FABRICATOR_RECORD)), { format: 1, name: "sales-model-explore", history: false, deployment: true });
+    assert.deepEqual([...(await readApp(old)).files.keys()].sort(), [...back.files.keys()].sort());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a file a later OneLake Studio wrote is refused, never read as this one", async () => {
+  const root = await mkdtemp(join(tmpdir(), "export-format-"));
+  try {
+    const later = join(root, "sales.fabricator");
+    await writeFile(later, await zip([[`${SITE}app.js`, Buffer.from("x")], [MARKER, Buffer.from(JSON.stringify({ format: FORMAT + 1 }))]]));
+    await assert.rejects(readApp(later), /written by a later OneLake Studio \(its format is 2\): update OneLake Studio to open it/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the packages are in the file, the extension's own over the file's; the upload takes the extension's and this publish's backend", async () => {
+  const files = new Map([[`${SITE}index.html`, Buffer.from("<footer><span id=\"build\">build __BUILD__ · </span></footer>")],
+                         [`${SITE}vendor/npm/old@1.0.0/+esm.js`, Buffer.from("old")],
+                         [CONFIG, Buffer.from('{"apiUrl":"https://before"}')]]);
+  const vendor = new Map([["vendor/npm/new@2.0.0/+esm.js", Buffer.from("new")]]);
+  setPackages(files, vendor);
+  assert.ok(!files.has(`${SITE}vendor/npm/old@1.0.0/+esm.js`), "a package the extension no longer pins is gone");
+  assert.equal(files.get(`${SITE}vendor/npm/new@2.0.0/+esm.js`).toString(), "new");
+  const up = buildDist(files, { apiUrl: "https://now" }, vendor, "20261115-120000");
+  assert.deepEqual([...up.keys()].sort(), ["index.html", "rayfin.config.json", "vendor/npm/new@2.0.0/+esm.js"]);
+  assert.deepEqual(JSON.parse(up.get("rayfin.config.json")), { apiUrl: "https://now" }, "this publish's backend, not the file's");
+  assert.match(up.get("index.html").toString(), /build 20261115-120000/);
+  // Neither the packages nor the backend is a local change: every export writes them again.
+  assert.deepEqual(Object.keys(fingerprint(files)), [`${SITE}index.html`]);
+});
+
+test("the function's settings: client side only, a URL and table names, where rayfin up and a local run read them", () => {
+  const none = new Map();
+  setSecrets(none, { catalogUrl: null, tables: null });
+  assert.equal(none.size, 0, "on a semantic model there is no function");
+  const files = new Map();
+  setSecrets(files, { catalogUrl: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/${LH}`, tables: "mart.fct_sales,mart.dim_region" });
+  assert.equal(files.get("rayfin/.env.secrets").toString(),
+    `CATALOG_URL=https://onelake.table.fabric.microsoft.com/iceberg/${WS}/${LH}\nTABLES=mart.fct_sales,mart.dim_region\n`);
+  assert.deepEqual(JSON.parse(files.get("rayfin/functions/local.settings.json")).Values,
+    { FUNCTIONS_WORKER_RUNTIME: "node", CATALOG_URL: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/${LH}`, TABLES: "mart.fct_sales,mart.dim_region" });
+  assert.deepEqual(Object.keys(fingerprint(files)), []);
+});
+
+test("once published, the app as rayfin up records it: its next publish, Fabricator's, updates this app", () => {
+  const config = { apiUrl: "https://backend", publishableKey: "pk-1", workspaceId: WS, itemId: "item-1",
+                   portalUrl: "https://app.fabric.microsoft.com/", tenantId: "t-1" };
+  const files = new Map([[DEPLOYMENTS, Buffer.from(JSON.stringify({ active: "other", deployments: { other: { fabricItemId: "x" } } }))]]);
+  setDeployment(files, { config, name: "sales-model-explore", workspace: "Power BI_Sales", hostingUrl: "https://x.fabricapps.net", deployedAt: "2026-11-15T00:00:00Z" });
+  assert.equal(workspaceKey("Power BI_Sales"), "power-bi-sales", "as the Rayfin CLI keys a workspace");
+  const reg = JSON.parse(files.get(DEPLOYMENTS));
+  assert.equal(reg.active, "power-bi-sales");
+  assert.deepEqual(reg.deployments.other, { fabricItemId: "x" }, "another workspace's deployment stays");
+  assert.deepEqual(reg.deployments["power-bi-sales"], {
+    fabricItemId: "item-1", itemName: "sales-model-explore", fabricApiUrl: "https://backend", fabricWorkspaceId: WS, fabricTenantId: "t-1",
+    publishableKey: "pk-1", hostingUrl: "https://x.fabricapps.net",
+    fabricDeepLink: `https://app.fabric.microsoft.com/groups/${WS}/appbackends/item-1?ctid=t-1`, deployedAt: "2026-11-15T00:00:00Z",
+  });
+  assert.deepEqual(JSON.parse(files.get(CONFIG)), config, "the site's backend, which rayfin up keeps and Vite serves");
+});
+
+test("the project's dev server and ignore list ship, and rayfin.yml serves site/public as it is", async () => {
+  const vite = await readFile(new URL("../../fabric_app/project/vite.config.mjs", import.meta.url), "utf8");
+  assert.match(vite, /root: resolve\(import\.meta\.dirname, 'public'\)/);
+  assert.match(vite, /publicDir: false/);
+  assert.match(vite, /rayfinLocalDev\(\)/);
+  const ignore = await readFile(new URL("../../fabric_app/project/gitignore", import.meta.url), "utf8");
+  assert.match(ignore, /^node_modules$/m);
+  const yml = await readFile(new URL("../../fabric_app/rayfin/rayfin.yml", import.meta.url), "utf8");
+  assert.match(yml, /^  staticHosting:\n    enabled: true\n    path: site\n    folder: public\n/m);
+  assert.doesNotMatch(yml.split("staticHosting:")[1].split("storage:")[0], /buildCommand/, "no build: the site is uploaded as it is");
 });

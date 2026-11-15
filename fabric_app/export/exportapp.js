@@ -5,39 +5,53 @@
 // Explore's button (page/explore/view.js) hands the host the model's text (to check it), where
 // it lives in OneLake (for a model opened from its local copy, where the export writes it), and
 // the shelves on screen. The local copy — the whole app, an agent's to grow later — is one zip on
-// this machine, <app>.zip, and what is published is built from it (buildDist, fabricapp.js):
-//   site/            fabric_app/site: the page (index.html, app.js) and its data source
-//                    (storage/: Fabric sign-in, the function's answer, DuckDB-WASM reading the
-//                    tables in the browser as views v_<table>)
-//   site/explore/    Studio's Explore (page/explore/), the same files the panel runs
-//   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
-//   site/report.json the Report the app opens on (page/explore/report.js draws it): Studio's Report
+// this machine, <model>.fabricator, and what is published is built from it (buildDist, fabricapp.js).
+// It is a Rayfin project as the Rayfin CLI lays one out, so Fabricator imports it (a .fabricator is
+// its own project file), installs its packages, previews it with its own Vite and publishes it with
+// `rayfin up`, over the same app this export made:
+//   package.json     the project (projectPackage): Vite, the Rayfin CLI and its local-dev plugin, which
+//                    Fabricator and rayfin-local run; rayfin/functions is its workspace
+//   .gitignore       fabric_app/project/gitignore
+//   site/vite.config.mjs  fabric_app/project: Vite serves site/public/ as it is, no build
+//   site/public/     the page, as it is uploaded but its build stamp (SITE):
+//     index.html, app.js, storage/  fabric_app/site: the page and its data source (storage/: Fabric
+//                    sign-in, the function's answer, DuckDB-WASM reading the tables in the browser as
+//                    views v_<table>)
+//     explore/       Studio's Explore (page/explore/), the same files the panel runs
+//     semantic/      dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
+//     vendor/        every package the page runs (vendorFiles: DuckDB-WASM and its extensions, Arrow,
+//                    the Rayfin SDK, ECharts; nothing from a CDN), the extension's own, written again
+//                    by every export
+//     report.json    the Report the app opens on (page/explore/report.js draws it): Studio's Report
 //                    tab's tiles (none at first), written once, then the zip's (Studio's Add to
 //                    report writes it too), and kept by every export
-//   site/explore.json  the shelves the first view shows
-//   site/engine.json   what the page runs on, { engine: 'duckdb' } or { engine: 'semanticModel', name }, and maxRows:
+//     explore.json   the shelves the first view shows
+//     engine.json    what the page runs on, { engine: 'duckdb' } or { engine: 'semanticModel', name }, and maxRows:
 //                    on a semantic model the page runs no DuckDB (storage/modeldata.js: it queries the
-//                    semantic model), and site/ holds neither DuckDB, its extensions, Arrow nor the data
+//                    semantic model), and the site holds neither DuckDB, its extensions, Arrow nor the data
 //                    source that reads the tables in the browser. Always written: the hosting answers a
 //                    file a site lacks with its index.html
-//   site/model.json    the model the page runs on: client side, model.yaml as JSON; on a semantic model,
+//     model.json     the model the page runs on: client side, model.yaml as JSON; on a semantic model,
 //                    its local copy, which the page writes its DAX from
+//     rayfin.config.json  the backend the browser talks to, once published (`rayfin up` keeps one it finds)
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
-//                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
-//                    builds it)
+//                    (built at package time too, by scripts/function-bundle.mjs, for the extension's publish)
+//   rayfin/.deployments.json  once published: the app, as `rayfin up` records it, so its publishes update it
+//   rayfin/.env.secrets, rayfin/functions/local.settings.json  client side: the function's CATALOG_URL and
+//                    TABLES (a URL and table names, no credential), for `rayfin up` and a local run
 //   model.ossie.yaml client side only: the model the app runs on (model.bim for a .bim), the model as
-//                    exported. Each publish makes site/model.json from it, so an edit here (an
+//                    exported. Each publish makes model.json from it, so an edit here (an
 //                    agent's) is published by opening the file and exporting it. A semantic model's app has none:
 //                    its record names the semantic model.
 //   AGENTS.md        how the app is made, and how to grow its report
-//   export.json      what was published: the app item, its redirects, the entries' hashes
-// Not in the zip: vendor/, every package the page runs (vendor/webapp: DuckDB-WASM and its
-// extensions, Arrow, the Rayfin SDK, ECharts; nothing from a CDN), the extension's own, added
-// as site/vendor/ when publishing; and the upload itself, site/ stamped with the build plus
-// rayfin.config.json (the backend the browser talks to), built in memory.
+//   .fabricator/export.json   what Fabricator's Import window shows: the project's name, who exported it, when
+//   .onelake-studio/export.json  our record (MARKER): the app item, its redirects, the entries' hashes
+// The upload is the site stamped with the build, its packages and rayfin.config.json, built in memory.
+// An earlier export's .fabricapp (site/ at the top, export.json at the root, no packages) still reads:
+// readApp lays it out as above, and its next save writes it so (exportflow.js).
 // The app runs on the model as exported, never the lakehouse's file as it is now: client side the
-// page reads site/model.json, made from the file's model.yaml, and its function signs only the
-// tables that model names (TABLES); on a semantic model the page writes its DAX from site/model.json
+// page reads model.json, made from the file's model.yaml, and its function signs only the
+// tables that model names (TABLES); on a semantic model the page writes its DAX from model.json
 // and queries the model. The lakehouse its Direct Lake expression holds is the catalog
 // (CATALOG_URL). Nothing here is AI.
 // No `vscode` import: the extension passes in what it owns.
@@ -54,12 +68,27 @@ const { dfsFileUrl, stripBom } = require('../../core/names');
 const { PINS, WEBAPP } = require('../../core/vendored');
 const { modelConnector, MODEL_CONNECTOR } = require('./fabricapp');
 
-// The zip's record of what was published, and the Report: written when the zip has none, and
-// kept from then on by every export.
-const MARKER = 'export.json';
-const REPORT = 'site/report.json';
-// The local copy's own extension: a zip inside, as a .vsix is, so a double-click opens OneLake Studio.
-const APP_EXT = '.fabricapp';
+// Where the page is in the project: what Vite serves and `rayfin up` uploads (staticHosting's path
+// site, folder public, in fabric_app/rayfin/rayfin.yml).
+const SITE = 'site/public/';
+// The zip's record of what was published, in a folder of its own as Fabricator keeps its own, and
+// the Report: written when the zip has none, and kept from then on by every export.
+const MARKER = '.onelake-studio/export.json';
+const REPORT = `${SITE}report.json`;
+// What Fabricator's Import window reads (its Manifest): written by every export.
+const FABRICATOR_RECORD = '.fabricator/export.json';
+// Where `rayfin up` records the app it published, which its next publish updates.
+const DEPLOYMENTS = 'rayfin/.deployments.json';
+const CONFIG = `${SITE}rayfin.config.json`;
+const VENDOR = `${SITE}vendor/`;
+// The record's format: a file of a later one is never read as this one, nor written over.
+const FORMAT = 1;
+// The local copy's own extension, Fabricator's project file: a zip inside. An earlier export's
+// .fabricapp still opens (LEGACY_EXT), and its next save writes a .fabricator beside it.
+const APP_EXT = '.fabricator';
+const LEGACY_EXT = '.fabricapp';
+const OLD_MARKER = 'export.json';
+const OLD_SITE = 'site/';
 // Client side, the model the app runs on, in its own format, at the file's root.
 // model.ossie.yaml, as Ossie's own tools name a model; model.yaml from an earlier export still reads.
 const MODEL_COPIES = ['model.ossie.yaml', 'model.yaml', 'model.bim'];
@@ -251,21 +280,26 @@ function rayfinYml(text, name, redirects = [], semanticModel = null) {
 const agentsMd = plan => `# ${plan.title} — its Report, as a Fabric app
 
 Written by OneLake Studio's **Export to Fabric**, and deployed by it over the Fabric REST API (item
-type \`AppBackend\`, named \`${plan.name}\`): no CLI. The site is **protected** — only people who may
+type \`AppBackend\`, named \`${plan.name}\`). The site is **protected** — only people who may
 open the app item can load it.
 
+This is a Rayfin project. Fabricator imports this file (a \`.fabricator\` is its project file),
+previews it and publishes it; outside it, \`npm install\`, then \`npm run dev:frontend\` serves the page on
+http://localhost:5173 and \`npx rayfin up\` publishes it. Once OneLake Studio has published it,
+\`rayfin/.deployments.json\` names the app, so either one updates that same app.
+
 ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in Fabric: the export changed nothing in it. The page
-  reads its definition as it was when exported, \`site/model.json\`; a change to the semantic model reaches the app
+  reads its definition as it was when exported, \`site/public/model.json\`; a change to the semantic model reaches the app
   when it is exported again. It is the app's \`${MODEL_CONNECTOR}\` connector (\`connectors:\` in \`rayfin/rayfin.yml\`).
 - Engine: **the semantic model, as the viewer.** The page turns each of Explore's queries over the model into DAX
   (dax-sql) and runs it through that connector, which is delegated: as the person signed in, so each viewer needs
   Read on the semantic model. Build is needed to publish the app, not to view it: a workspace Viewer, with Read and
   no Build, was answered through the connector (tried 2026-11-11), whatever
   https://learn.microsoft.com/en-us/fabric/apps/connectors says of Build. The tenant must have the
-  Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/engine.json\`,
-  \`site/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
+  Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/public/engine.json\`,
+  \`site/public/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
 ` : `- Model: \`model.ossie.yaml\` in this file (\`model.bim\` for a .bim), exported from \`${plan.modelPath}\`: the app
-  runs on it, as \`site/model.json\`, made from it at each publish. An edit to it is published by opening this file in OneLake Studio and exporting it;
+  runs on it, as \`site/public/model.json\`, made from it at each publish. An edit to it is published by opening this file in OneLake Studio and exporting it;
   a change to the lakehouse's file reaches the app when it is exported again.
 - Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
   function's \`CATALOG_URL\`: ${plan.catalogUrl}
@@ -275,7 +309,7 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in
 `}
 ## The Report: yours to grow
 
-The app is its Report, \`site/report.json\`, and nothing else. The first export wrote
+The app is its Report, \`site/public/report.json\`, and nothing else. The first export wrote
 it with the tiles built in OneLake Studio's Report tab (none, if it had none), and no export writes it
 again: edit it freely, then export again to publish it. Delete it and the next export writes a new one. OneLake Studio's Report tab, after Model and Visual,
 draws this same file from this zip, and draws it again when the zip changes; its Visual's **Add to report**
@@ -344,26 +378,27 @@ tables, columns and measures a tile can name.
   value of any column (a fuel, a region) the same colour in every tile.
 - \`filters\`, beside \`pages\`: the filter bar over every page, each \`{ "field": "table.column", "style": "dropdown" |
   "list" | "dates" }\`. What a viewer picks in it filters every tile, but those whose \`ignore\` names it.
-- This is a zip: unzip it, edit, and zip it again with the same entries at its root.
+- This file is a zip: unzip it, edit, and zip it again with the same entries at its root, or edit the project
+  Fabricator unpacked it into.
 
 ## Layers
 
 | Layer | Path | |
 |---|---|---|
-| Report | \`site/report.json\` | the pages the app shows: yours, kept by every export |
-| Page | \`site/index.html\`, \`site/app.js\` | the Report over the data source |
-| Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report, with Visual's drawing for a pivot tile |
-| Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
-| Packages | \`site/vendor/\`, not in this zip | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: OneLake Studio's own, added when it publishes; nothing from a CDN |
-| Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads into the browser (OPFS) what the Report reads of the tables (of a large one, only the columns it reads: \`storage/ranges.js\`), DuckDB-WASM |
+| Report | \`site/public/report.json\` | the pages the app shows: yours, kept by every export |
+| Page | \`site/public/index.html\`, \`site/public/app.js\` | the Report over the data source |
+| Explore | \`site/public/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report, with Visual's drawing for a pivot tile |
+| Compiler | \`site/public/semantic/src/\`, \`site/public/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
+| Packages | \`site/public/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: OneLake Studio's own, written again by every export; nothing from a CDN, and no build |
+| Data source | \`site/public/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads into the browser (OPFS) what the Report reads of the tables (of a large one, only the columns it reads: \`storage/ranges.js\`), DuckDB-WASM |
 | Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\`; on a semantic model it is not deployed |
 
 Tables the app reads (\`v_<table>\` ← \`schema.table\`):
 
 ${plan.tables.map(([n, s]) => `- \`${n}\` ← \`${s}\``).join('\n')}
 
-Exporting again from OneLake Studio rewrites every entry of this zip but \`site/report.json\`, and updates the
-same app; \`export.json\` is its record of what was published.
+Exporting again from OneLake Studio rewrites every entry of this zip but \`site/public/report.json\`, and updates the
+same app; \`.onelake-studio/export.json\` is its record of what was published.
 
 The workspace must allow **OneLake user-delegated SAS tokens** (workspace settings → OneLake): the
 function signs one. The page needs a browser with OPFS shared access handles (Chrome or Edge 121+).
@@ -414,7 +449,7 @@ function unzip(buf, { maxTotal = MAX_TOTAL_BYTES, maxEntries = MAX_ENTRIES } = {
   }
   const tops = new Set([...out.keys()].map(p => (p.includes('/') ? p.slice(0, p.indexOf('/') + 1) : '')));
   let files = out;
-  if (tops.size === 1 && ![...tops][0].match(/^(|site\/|rayfin\/)$/)) {
+  if (tops.size === 1 && ![...tops][0].match(/^(|site\/|rayfin\/|\.onelake-studio\/|\.fabricator\/)$/)) {
     const [top] = tops;
     files = new Map([...out].map(([p, b]) => [p.slice(top.length), b]));
   }
@@ -430,27 +465,58 @@ function unzip(buf, { maxTotal = MAX_TOTAL_BYTES, maxEntries = MAX_ENTRIES } = {
 
 /**
  * The local copy, read: { files: Map(path -> bytes), marker }; null when there is no such file.
- * Throws for a file that is not an app Export to Fabric wrote, which is never written over.
+ * Throws for a file that is not an app Export to Fabric wrote, which is never written over, and for one a
+ * later OneLake Studio wrote (its record's format). An earlier export's .fabricapp is answered laid out as
+ * a .fabricator is (fromLegacy), so the next write writes it so.
  */
 async function readApp(zipPath) {
   const bytes = await fsp.readFile(zipPath).catch(e => (e.code === 'ENOENT' ? null : Promise.reject(e)));
   if (!bytes) return null;
   let files;
   try { files = unzip(bytes); } catch (e) { throw new Error(`${zipPath} is not a zip Export to Fabric can read: ${e.message}`); }
+  const legacy = !files.has(MARKER) && files.has(OLD_MARKER);
   let marker = null;
-  try { marker = JSON.parse(files.get(MARKER).toString('utf8')); } catch { /* not ours */ }
+  try { marker = JSON.parse(files.get(legacy ? OLD_MARKER : MARKER).toString('utf8')); } catch { /* not ours */ }
   if (!marker || typeof marker !== 'object') throw new Error(`${zipPath} was not written by Export to Fabric: rename it, or choose another folder`);
+  if (Number(marker.format) > FORMAT) {
+    throw new Error(`${zipPath} was written by a later OneLake Studio (its format is ${marker.format}): update OneLake Studio to open it`);
+  }
   files.delete(MARKER);
+  files.delete(FABRICATOR_RECORD);
+  if (legacy) return fromLegacy(files, marker);
   return { files, marker };
+}
+
+// An earlier export's .fabricapp, as a .fabricator lays it out: its site/ is site/public/, its record at the
+// root is MARKER, and its record's hashes name the entries where they are now. It has no packages: the next
+// export writes them, as it does for every file.
+function fromLegacy(files, marker) {
+  const move = p => (p.startsWith(OLD_SITE) ? SITE + p.slice(OLD_SITE.length) : p);
+  const out = new Map([...files].filter(([p]) => p !== OLD_MARKER).map(([p, b]) => [move(p), b]));
+  const was = marker.files && typeof marker.files === 'object' ? marker.files : null;
+  return { files: out, marker: was ? { ...marker, files: Object.fromEntries(Object.entries(was).map(([p, h]) => [move(p), h])) } : marker };
 }
 
 // A zip's entries in path order, as every export writes, hashes and uploads them.
 const byPath = files => [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
-/** Writes the local copy, its entries sorted and its marker last: beside it first, then renamed into place. */
+// What Fabricator's Import window shows of the project (its Manifest, format 1), from our record: its name, when
+// it was exported, and the workspace its publishes go to, when it is published (rayfin/.deployments.json).
+const fabricatorRecord = marker => ({
+  format: 1, name: String(marker.name || ''),
+  ...(marker.exportedAt ? { createdAt: marker.exportedAt } : {}),
+  history: false, deployment: !!marker.itemId,
+  ...(marker.itemId && marker.report && marker.report.workspace ? { workspace: String(marker.report.workspace) } : {}),
+});
+
+/**
+ * Writes the local copy, its entries sorted, then Fabricator's record and ours last: beside it first, then
+ * renamed into place.
+ */
 async function writeApp(zipPath, files, marker) {
-  const all = byPath(files).filter(([p]) => p !== MARKER);
-  all.push([MARKER, Buffer.from(JSON.stringify(marker, null, 2) + '\n', 'utf8')]);
+  const all = byPath(files).filter(([p]) => p !== MARKER && p !== FABRICATOR_RECORD);
+  const json = o => Buffer.from(JSON.stringify(o, null, 2) + '\n', 'utf8');
+  all.push([FABRICATOR_RECORD, json(fabricatorRecord(marker))], [MARKER, json({ ...marker, format: FORMAT })]);
   await fsp.mkdir(dirname(zipPath), { recursive: true });
   // A name of this write's own: two writes of one file at once (a publish, and a tile added meanwhile)
   // would otherwise write into each other's.
@@ -475,12 +541,80 @@ async function filesOf(root, to, skip = () => false) {
   return out;
 }
 
+// The Rayfin version the project's packages are: the one the page's SDK is (core/vendored.js), which
+// fabricapp.js speaks to Fabric too.
+const RAYFIN_VERSION = WEBAPP.rayfinClient.split('@').pop();
+// What the project installs, as the Rayfin CLI's Universal App template does, pinned: Fabricator previews a
+// project with its own Vite and publishes it with its own Rayfin CLI; rayfin-local runs it with its own
+// @microsoft/rayfin-core; the local-dev plugin (site/vite.config.mjs) serves the page the local backend's
+// rayfin.config.json. None of them is in the page: it runs its own packages, site/public/vendor/.
+const PROJECT_PACKAGES = {
+  '@microsoft/rayfin-cli': RAYFIN_VERSION,
+  '@microsoft/rayfin-core': RAYFIN_VERSION,
+  '@microsoft/rayfin-local-dev': RAYFIN_VERSION,
+  typescript: '5.7.3',
+  vite: '8.3.6',
+};
+/** The project's package.json: `npm run dev` as the template's, and the function its workspace. */
+const projectPackage = name => JSON.stringify({
+  name, private: true, version: '0.0.0', type: 'module',
+  workspaces: ['rayfin/functions'],
+  scripts: { dev: 'rayfin dev', 'dev:frontend': 'vite site', 'rayfin:up': 'rayfin up' },
+  devDependencies: PROJECT_PACKAGES,
+}, null, 2) + '\n';
+
+/** The page's packages in the app's entries: the extension's own, written again over what the file had. */
+function setPackages(files, vendor) {
+  for (const p of [...files.keys()]) if (p.startsWith(VENDOR)) files.delete(p);
+  for (const [p, bytes] of vendor) files.set(SITE + p, bytes);
+}
+
 /**
- * The app's entries, path -> bytes, as the local copy holds them: no packages (vendorFiles).
- * `kept`: the zip's own site/report.json, which no export writes over, or the one Studio kept
+ * Client side, the function's two settings, where `rayfin up` (rayfin/.env.secrets) and a local run
+ * (rayfin/functions/local.settings.json) read them. Neither is a credential: the catalog's URL and the
+ * tables it may sign for. On a semantic model there is no function: neither is written.
+ */
+function setSecrets(files, { catalogUrl, tables }) {
+  if (!catalogUrl) return;
+  files.set('rayfin/.env.secrets', Buffer.from(`CATALOG_URL=${catalogUrl}\nTABLES=${tables}\n`, 'utf8'));
+  files.set('rayfin/functions/local.settings.json', Buffer.from(JSON.stringify({
+    IsEncrypted: false, Values: { FUNCTIONS_WORKER_RUNTIME: 'node', CATALOG_URL: catalogUrl, TABLES: tables },
+  }, null, 2) + '\n', 'utf8'));
+}
+
+// The workspace's key in rayfin/.deployments.json, as the Rayfin CLI makes it (sanitizeWorkspaceName).
+const workspaceKey = name => String(name).slice(0, 200).toLowerCase().replace(/[\s_]+/g, '-')
+  .replace(/[^a-z0-9-]/g, '').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+
+/**
+ * Once published, the app as `rayfin up` records it (rayfin/.deployments.json) and its site's
+ * rayfin.config.json, so Fabricator's and `rayfin up`'s publishes update this app, not a new one.
+ * `config`: the site's (fabricapp.js publish); `workspace`: the workspace's name.
+ */
+function setDeployment(files, { config, name, workspace, hostingUrl, deployedAt }) {
+  const key = workspaceKey(workspace) || config.workspaceId;
+  const portal = String(config.portalUrl || '').replace(/\/+$/, '');
+  const record = {
+    fabricItemId: config.itemId, itemName: name, fabricApiUrl: config.apiUrl, fabricWorkspaceId: config.workspaceId,
+    ...(config.tenantId ? { fabricTenantId: config.tenantId } : {}),
+    publishableKey: config.publishableKey, ...(hostingUrl ? { hostingUrl } : {}),
+    fabricDeepLink: `${portal}/groups/${config.workspaceId}/appbackends/${config.itemId}${config.tenantId ? `?ctid=${config.tenantId}` : ''}`,
+    deployedAt,
+  };
+  let was = {};
+  try { was = JSON.parse(files.get(DEPLOYMENTS).toString('utf8')); } catch { /* none yet */ }
+  const deployments = was && typeof was.deployments === 'object' && was.deployments ? was.deployments : {};
+  files.set(DEPLOYMENTS, Buffer.from(JSON.stringify({ active: key, deployments: { ...deployments, [key]: record } }, null, 2) + '\n', 'utf8'));
+  files.set(CONFIG, Buffer.from(JSON.stringify(config, null, 2) + '\n', 'utf8'));
+}
+
+/**
+ * The app's entries, path -> bytes, as the local copy holds them, but its packages (setPackages) and,
+ * once published, its deployment (setDeployment).
+ * `kept`: the zip's own report.json, which no export writes over, or the one Studio kept
  * before the first export (else a Report with no tiles);
  * `redirects`: the app's sign-in redirects so far.
- * `model`: the model the page runs on, read (modelDoc's doc): site/model.json.
+ * `model`: the model the page runs on, read (modelDoc's doc): model.json.
  * `modelText`, `modelFile`: client side, the model's text and its file's name, kept as model.ossie.yaml (setModelCopy).
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (page/, or
  * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>.
@@ -490,24 +624,28 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
   const sql = onModel(plan);
   const text = s => Buffer.from(s, 'utf8');
   const files = new Map([
-    ...await filesOf(join(fabricAppDir, 'site'), 'site/', rel => (sql ? DUCKDB_ONLY.site : MODEL_ONLY).includes(rel)),
-    ...await filesOf(join(appDir, 'explore'), 'site/explore/'),
-    ['site/paths.js', await fsp.readFile(join(appDir, 'paths.js'))],
+    ...await filesOf(join(fabricAppDir, 'site'), SITE, rel => (sql ? DUCKDB_ONLY.site : MODEL_ONLY).includes(rel)),
+    ...await filesOf(join(appDir, 'explore'), `${SITE}explore/`),
+    [`${SITE}paths.js`, await fsp.readFile(join(appDir, 'paths.js'))],
     // As the package lays them out: formats/ imports ../src/.
-    ...await filesOf(join(daxSqlDir, 'src'), 'site/semantic/src/'),
-    ...await filesOf(join(daxSqlDir, 'formats'), 'site/semantic/formats/'),
+    ...await filesOf(join(daxSqlDir, 'src'), `${SITE}semantic/src/`),
+    ...await filesOf(join(daxSqlDir, 'formats'), `${SITE}semantic/formats/`),
     ...await filesOf(join(fabricAppDir, 'rayfin'), 'rayfin/', rel => rel.split('/').includes('node_modules')),
+    // The project around it, as the Rayfin CLI's template has one: what Fabricator and rayfin-local run.
+    ['package.json', text(projectPackage(plan.name))],
+    ['.gitignore', await fsp.readFile(join(fabricAppDir, 'project', 'gitignore'))],
+    ['site/vite.config.mjs', await fsp.readFile(join(fabricAppDir, 'project', 'vite.config.mjs'))],
   ]);
   files.set('rayfin/rayfin.yml', text(rayfinYml(files.get('rayfin/rayfin.yml').toString('utf8'), plan.name, redirects,
                                                 sql ? plan.semanticModel : null)));
   files.set(REPORT, kept ?? text(EMPTY_REPORT));
-  files.set('site/explore.json', text(JSON.stringify(state || null)));
+  files.set(`${SITE}explore.json`, text(JSON.stringify(state || null)));
   setModel(files, model);
   if (!sql && modelText != null) setModelCopy(files, modelFile, modelText);
   // On a semantic model, its name: what the page says when it refuses the person signed in.
   // And the most rows a visual asks for: maxResultRows as it was at the export.
   const limit = Number.isInteger(maxRows) && maxRows > 0 ? { maxRows } : {};
-  files.set('site/engine.json', text(JSON.stringify(sql
+  files.set(`${SITE}engine.json`, text(JSON.stringify(sql
     ? { engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}), ...limit } : { engine: 'duckdb', ...limit })));
   files.set('AGENTS.md', text(agentsMd(plan)));
   return files;
@@ -518,13 +656,13 @@ const onModel = plan => plan.engine === 'semanticModel';
 
 // site/model.json, the model the page runs on: client side model.yaml read, on a semantic model its
 // local copy, which the page writes its DAX from (storage/modeldata.js). Written at each export, As Is too.
-const setModel = (files, model) => files.set('site/model.json', Buffer.from(JSON.stringify(model), 'utf8'));
+const setModel = (files, model) => files.set(`${SITE}model.json`, Buffer.from(JSON.stringify(model), 'utf8'));
 
 // What a zip's site runs on: its marker's engine ('duckdb', 'semanticModel', or an older 'directLake',
 // 'directQuery'), else its engine.json's; a site with none (an older client-side one) is DuckDB.
 function engineOf(files, marker) {
   if (marker && marker.engine) return marker.engine;
-  const said = files.get('site/engine.json');
+  const said = files.get(`${SITE}engine.json`);
   if (!said) return 'duckdb';
   try { return JSON.parse(said.toString('utf8')).engine || 'semanticModel'; } catch { return 'semanticModel'; }
 }
@@ -567,10 +705,13 @@ function vendorSize(vendor) {
 
 // The zip's entries — what an export writes and an agent edits — as { 'a/b': sha256 }. The
 // Report isn't counted: no export rewrites it, so an edit to it is never at risk and never asked about.
+// Nor what every export writes again whatever the file held: the records, the packages, the deployment
+// and the function's settings.
+const UNCOUNTED = new Set([REPORT, MARKER, FABRICATOR_RECORD, DEPLOYMENTS, CONFIG, 'rayfin/.env.secrets', 'rayfin/functions/local.settings.json']);
 function fingerprint(files) {
   const out = {};
   for (const [p, bytes] of byPath(files)) {
-    if (p !== REPORT && p !== MARKER) out[p] = createHash('sha256').update(bytes).digest('hex');
+    if (!UNCOUNTED.has(p) && !p.startsWith(VENDOR)) out[p] = createHash('sha256').update(bytes).digest('hex');
   }
   return out;
 }
@@ -588,16 +729,16 @@ function localChanges(files, marker) {
 const buildId = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
 
 /**
- * What is uploaded, path -> bytes: the zip's site/ at the root, every relative import given
+ * What is uploaded, path -> bytes: the zip's site/public/ at the root, every relative import given
  * ?v=<build> and __BUILD__ the build, so a browser never runs the files of two deploys together;
  * then `vendor` (vendorFiles), byte for byte, and rayfin.config.json, which the browser SDK fetches
- * from the site's root.
+ * from the site's root: the extension's own packages and this publish's backend, whatever the zip's are.
  */
 function buildDist(files, config, vendor = new Map(), build = buildId()) {
   const out = new Map();
   for (const [path, raw] of byPath(files)) {
-    if (!path.startsWith('site/')) continue;
-    const rel = path.slice('site/'.length);
+    if (!path.startsWith(SITE) || path.startsWith(VENDOR) || path === CONFIG) continue;
+    const rel = path.slice(SITE.length);
     let bytes = raw;
     // vendor/ is pinned packages, already versioned by their path: left byte for byte.
     if (/\.(html|js)$/.test(rel) && !rel.startsWith('vendor/')) {
@@ -649,4 +790,6 @@ async function zip(files) {
 
 module.exports = { planExport, planOnModel, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
                    vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT,
-                   APP_EXT, MODEL_COPIES, setModelCopy, modelCopyOf, tablesOf, MAX_TOTAL_BYTES, MAX_ENTRIES };
+                   APP_EXT, LEGACY_EXT, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT, MODEL_COPIES, setModelCopy, modelCopyOf,
+                   tablesOf, setPackages, setSecrets, setDeployment, projectPackage, workspaceKey, PROJECT_PACKAGES,
+                   MAX_TOTAL_BYTES, MAX_ENTRIES };

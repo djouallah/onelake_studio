@@ -826,7 +826,7 @@ const signedIn = () => !!contexts['onelakeStudio.signedIn'];
 const accountEntries = () => entries('view/title', ctx({ view: VIEW })).flat()
   .filter(e => e.group === '1_account' && e.command !== 'onelakeStudio.openSettings');
 
-// File > Open…: an app's file (.fabricapp), or a model (.yaml, .yml, .bim), as a double-click opens it.
+// File > Open…: an app's file (.fabricator, or an earlier .fabricapp), or a model (.yaml, .yml, .bim), as a double-click opens it.
 const openFile = () => call('app.openFile').catch(e => toast({ level: 'error', message: e.message, items: [] }));
 
 const BAR = [

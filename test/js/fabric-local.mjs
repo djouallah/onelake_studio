@@ -1,6 +1,6 @@
 // A Fabric app on a local Rayfin backend (rayfin-local), for the tests that open one (run-fabric-local.mjs,
-// run-fabric-app.mjs): its project as an export's local copy lays it out (rayfin/: rayfin.yml and the function;
-// the site, built as it is uploaded), served by rayfin-local, which runs the function with the real
+// run-fabric-app.mjs): its project as an export's .fabricator holds it (package.json, rayfin/: rayfin.yml and the
+// function; the site, site/public/, as it is with its packages), served by rayfin-local, which runs the function with the real
 // @microsoft/fabric-user-data-functions and answers the page's SDK as Fabric's backend does.
 // Nothing of the product is stood in for or written over: the page signs in with its own sign-in and asks its
 // own function. What the tests add is beside the product: a page of their own in the site (`extra`), a local user.
@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 const require = createRequire(import.meta.url);
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const { PINS, WEBAPP } = require("../../core/vendored.js");
-const { appFiles, buildDist, vendorFiles } = require("../../fabric_app/export/exportapp.js");
+const { appFiles, setPackages, vendorFiles, SITE } = require("../../fabric_app/export/exportapp.js");
 
 export const RAYFIN_LOCAL = process.env.RAYFIN_LOCAL || "rayfin-local";
 export const CHROME = process.env.CHROME_PATH ||
@@ -33,19 +33,16 @@ const npm = (what, cwd) => execSync(`npm ${what} --no-audit --no-fund --loglevel
 export async function serveApp(name, { plan, model, report = null, engine, env = {}, extra = {}, user = null }) {
   const files = await appFiles({ plan, state: null, model, kept: report ? Buffer.from(JSON.stringify(report)) : null,
                                  fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"), daxSqlDir: join(root, "vendor", "npm", PINS.daxSql) });
+  setPackages(files, await vendorFiles(join(root, "vendor", "webapp"), engine));
+  // The project as the export's file holds it, unpacked as Fabricator unpacks one. Not published, it has no
+  // rayfin.config.json: the backend's to answer, where it is and its key.
   const project = await mkdtemp(join(tmpdir(), "fabric-local-"));
   const put = async (path, bytes) => { const to = join(project, path); await mkdir(dirname(to), { recursive: true }); await writeFile(to, bytes); };
-  for (const [path, bytes] of files) if (path.startsWith("rayfin/")) await put(path, bytes);
-  // The site's rayfin.config.json is the backend's to answer: where it is, and its key.
-  for (const [path, bytes] of buildDist(files, {}, await vendorFiles(join(root, "vendor", "webapp"), engine))) {
-    if (path !== "rayfin.config.json") await put(join("dist", path), bytes);
-  }
-  for (const [path, text] of Object.entries(extra)) await put(join("dist", path), text);
-  // The export's local copy has no package.json of its own.
-  await put("package.json", JSON.stringify({ name: plan.name, private: true, type: "module", dependencies: { "@microsoft/rayfin-core": SDK } }, null, 2));
+  for (const [path, bytes] of files) await put(path, bytes);
+  for (const [path, text] of Object.entries(extra)) await put(SITE + path, text);
   console.log(`${name}: the project is ${project} (Rayfin ${SDK})`);
+  // Its own package.json: its Rayfin, Vite, and the function, its workspace.
   npm("install", project);
-  npm("ci", join(project, "rayfin", "functions"));
   if (user) execFileSync(RAYFIN_LOCAL, ["users", "add", user.name, "--password", user.password, "-C", project], { stdio: ["ignore", "ignore", "inherit"] });
 
   const said = [];

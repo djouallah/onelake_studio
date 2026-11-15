@@ -131,15 +131,15 @@ test("fuzz: a zip with bytes changed, cut or added is read or refused with an Er
 test("readApp says a broken file is not an app, and writeApp leaves no temporary file behind, even two at once", async t => {
   const dir = await mkdtemp(join(tmpdir(), "unzip-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const file = join(dir, "x.fabricapp");
+  const file = join(dir, "x.fabricator");
   const files = n => new Map([["site/app.js", Buffer.from(`// ${n}`)]]);
   // Two writes of one file at the same moment: each is whole, and one of them is what is left.
   await Promise.all([writeApp(file, files(1), { n: 1 }), writeApp(file, files(2), { n: 2 })]);
   const app = await readApp(file);
   assert.equal(app.files.get("site/app.js").toString(), `// ${app.marker.n}`, "one write's files with that write's own record");
-  assert.deepEqual(await readdir(dir), ["x.fabricapp"], "no .tmp left");
-  assert.equal(await readApp(join(dir, "none.fabricapp")), null, "no file is no app, not an error");
-  const broken = join(dir, "broken.fabricapp");
+  assert.deepEqual(await readdir(dir), ["x.fabricator"], "no .tmp left");
+  assert.equal(await readApp(join(dir, "none.fabricator")), null, "no file is no app, not an error");
+  const broken = join(dir, "broken.fabricator");
   await writeFile(broken, Buffer.from("this was never a zip"));
   await assert.rejects(readApp(broken), /is not a zip Export to Fabric can read: no zip directory/);
   // A zip that is not an app's: nothing Export to Fabric wrote, so nothing it writes over.

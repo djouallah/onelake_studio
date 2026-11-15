@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createExport } = require("../../fabric_app/export/exportflow.js");
-const { writeApp, readApp } = require("../../fabric_app/export/exportapp.js");
+const { writeApp, readApp, SITE } = require("../../fabric_app/export/exportapp.js");
 const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
 const semantic = await import("../../page/semantic.js");
 
@@ -61,7 +61,9 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
         const id = o.itemId || "new-item";
         await o.onItem(id);
         await onPublish();
-        return { itemId: id, hostingUrl: "https://app.example", redirects: o.redirects };
+        // As fabricapp.js answers: the site's backend too, which the file keeps for rayfin up.
+        return { itemId: id, hostingUrl: "https://app.example", redirects: o.redirects,
+                 config: { apiUrl: "https://backend", publishableKey: "pk", workspaceId: o.workspaceId, itemId: id, portalUrl: "https://app.fabric.microsoft.com/" } };
       },
     }),
     extensionDir: ext, reportDir: join(ext, "reports"), pageDir: async () => ext,
@@ -72,9 +74,9 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
 
 // An app's file as someone else's export wrote it: it names an item, and a redirect of its own.
 async function appFile(dir, marker = {}) {
-  const file = join(dir, "sales.fabricapp");
-  await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// theirs")],
-                                ["rayfin/rayfin.yml", Buffer.from(RAYFIN)], ["site/report.json", Buffer.from('{"tiles":[]}')]]),
+  const file = join(dir, "sales.fabricator");
+  await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], [`${SITE}app.js`, Buffer.from("// theirs")],
+                                ["rayfin/rayfin.yml", Buffer.from(RAYFIN)], [`${SITE}report.json`, Buffer.from('{"tiles":[]}')]]),
     { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", ...marker });
   return file;
 }
@@ -87,7 +89,7 @@ test("an app's file from elsewhere is asked about before it is published over th
   assert.equal(e && e.declined, true, "a No is a refusal");
   assert.equal(published.length, 0, "nothing reached Fabric");
   assert.equal(asked.length, 1);
-  assert.match(asked[0].message, /has not published sales\.fabricapp from this computer before\. Publish it over the app /);
+  assert.match(asked[0].message, /has not published sales\.fabricator from this computer before\. Publish it over the app /);
   assert.match(asked[0].rest[0].detail, /is replaced by the pages in this file/);
   assert.ok(asked[0].rest[0].detail.includes(EVIL), "the redirects the file would add are shown");
   assert.deepEqual(asked[0].rest.slice(1), ["Publish It"]);
@@ -150,8 +152,15 @@ test("a tile added while the export publishes is still in the file when it is do
   a = await setup({ onPublish });
   await a.flow.exportExplore({ ...REQUEST, appFile: file });
   const after = await readApp(file);
-  assert.deepEqual(JSON.parse(after.files.get("site/report.json").toString("utf8")), TILES, "the publish's last write kept it");
+  assert.deepEqual(JSON.parse(after.files.get(`${SITE}report.json`).toString("utf8")), TILES, "the publish's last write kept it");
   assert.equal(after.marker.itemId, "new-item", "and the publish's own record is there too");
+  // The app as rayfin up records it, so Fabricator's publish updates this app; and the site's backend.
+  const reg = JSON.parse(after.files.get("rayfin/.deployments.json").toString("utf8"));
+  assert.equal(reg.active, "power-bi");
+  assert.equal(reg.deployments["power-bi"].fabricItemId, "new-item");
+  assert.equal(reg.deployments["power-bi"].hostingUrl, "https://app.example");
+  assert.equal(JSON.parse(after.files.get(`${SITE}rayfin.config.json`).toString("utf8")).itemId, "new-item");
+  assert.match(after.files.get("rayfin/.env.secrets").toString("utf8"), /^CATALOG_URL=https:\/\/onelake\.table\.fabric\.microsoft\.com\/iceberg\/.*\nTABLES=mart\.fct_sales\n$/);
   await rm(dir, { recursive: true, force: true });
   await a.done();
 });
@@ -223,9 +232,9 @@ test("a file that names an app this computer did publish, but is another file, i
   await flow.exportExplore({ ...REQUEST, appFile: mine });
   assert.equal(asked.filter(a => /has not published/.test(a.message)).length, 0, "its own file asks nothing");
   // The same app named by a file that came from somewhere else: its pages are not this computer's.
-  const theirs = join(dir, "from-a-colleague", "sales.fabricapp");
+  const theirs = join(dir, "from-a-colleague", "sales.fabricator");
   await mkdir(join(dir, "from-a-colleague"));
-  await writeApp(theirs, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// theirs")], ["rayfin/rayfin.yml", Buffer.from(RAYFIN)]]),
+  await writeApp(theirs, new Map([["model.yaml", Buffer.from(OSSIE)], [`${SITE}app.js`, Buffer.from("// theirs")], ["rayfin/rayfin.yml", Buffer.from(RAYFIN)]]),
     { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", itemId: "my-item" });
   const e = await flow.exportExplore({ ...REQUEST, appFile: theirs }).then(() => null, x => x);
   assert.equal(e && e.declined, true);
@@ -273,7 +282,7 @@ test("a tile saved and an export's own record written at the same moment: both a
     await a.flow.reportSave({ workspace: "power bi", model: "sales", spec: TILES, stamp });
   }
   const after = await readApp(file);
-  assert.deepEqual(JSON.parse(after.files.get("site/report.json").toString("utf8")), TILES);
+  assert.deepEqual(JSON.parse(after.files.get(`${SITE}report.json`).toString("utf8")), TILES);
   assert.equal(after.marker.itemId, "new-item", "the save did not write an older record back over the export's");
   assert.ok(after.marker.exportedAt, "nor lose that it was published");
   await rm(dir, { recursive: true, force: true });

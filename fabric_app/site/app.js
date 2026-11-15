@@ -92,6 +92,10 @@ function download(name, text) {
 const titled = text => { const h = document.getElementById("app-title"); if (h) h.textContent = text; };
 
 export async function start() {
+  // The build OneLake Studio's publish stamps in (exportapp.js buildDist). One `rayfin up` published, or
+  // Vite serves, has none, and says nothing of it. Split, so the stamp leaves this line alone.
+  const build = document.getElementById("build");
+  if (build && build.textContent.includes("__" + "BUILD__")) build.remove();
   try {
     // The shelves a first Visual would show (explore.json): the app shows the Report alone, so they aren't fetched.
     const first = null;

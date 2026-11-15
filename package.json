@@ -47,7 +47,7 @@
       {
         "viewType": "onelakeStudio.fabricApp",
         "displayName": "OneLake Studio app",
-        "selector": [{ "filenamePattern": "*.fabricapp" }],
+        "selector": [{ "filenamePattern": "*.fabricator" }, { "filenamePattern": "*.fabricapp" }],
         "priority": "default"
       },
       {
@@ -346,7 +346,7 @@
       "explorer/context": [
         {
           "command": "onelakeStudio.openPath",
-          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|fabricapp|sql)$/i",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|fabricator|fabricapp|sql)$/i",
           "group": "navigation@9"
         }
       ],

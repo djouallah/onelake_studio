@@ -156,8 +156,9 @@ VS Code extension); nothing is written to Fabric or OneLake.
   the answer.
 - `export` runs only when the user asks for it. VS Code then asks the user where the local copy goes and
   waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why
-  nothing was published. The app is one file, `<app>.fabricapp` (a zip), and is the model's Report alone.
-- To grow that report: edit `site/report.json` in the file (its `AGENTS.md` says how: unzip, edit, zip again). A
+  nothing was published. The app is one file, `<model>.fabricator` (a zip of a Rayfin project, which Fabricator
+  imports), and is the model's Report alone.
+- To grow that report: edit `site/public/report.json` in the file (its `AGENTS.md` says how: unzip, edit, zip again). A
   client-side app's model is `model.ossie.yaml` beside it, the model the app runs on.
   Each tile is a Visual, `{ title, kind: "pivot", pivot }`, its `pivot` Explore's shelves (fields, measures, filters,
   mark, sort, top), or `{ kind: "text", text }`: never SQL, the tile's query is generated from its shelves. The report

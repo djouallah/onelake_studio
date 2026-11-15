@@ -159,7 +159,7 @@ async function main() {
       // File > Open…: an app's file, a model file or a .sql file, opened as a double-click would.
       case 'app.openFile': return run(async () => {
         const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectMany: false, title: 'Open',
-          filters: { 'OneLake Studio app, model or SQL': ['fabricapp', 'yaml', 'yml', 'bim', 'sql'] } });
+          filters: { 'OneLake Studio app, model or SQL': ['fabricator', 'fabricapp', 'yaml', 'yml', 'bim', 'sql'] } });
         if (picked && picked.length) await vscode.commands.executeCommand('onelakeStudio.openPath', picked[0].fsPath);
       });
       default: throw new Error(`no method ${method}`);

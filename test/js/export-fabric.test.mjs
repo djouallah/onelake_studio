@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -151,11 +151,30 @@ test("on fabriccat: a model file's app is published, client side, with its funct
   const since = Date.now();
   const said = await s.flow.exportExplore({ file: FILE, name: "lakeci", text, state: null, workspace: WS, path: PATH });
   assert.match(said, /^Published to Fabric: https:/);
-  const marker = await published(s, said, "lakeci.fabricapp", "duckdb", since);
+  const marker = await published(s, said, "lakeci.fabricator", "duckdb", since);
   assert.equal(marker.model, `${WS}/${PATH}`);
   assert.equal(marker.lakehouseId, s.lakehouseId);
+  await project(s, "lakeci.fabricator", marker);
   await signedIn(s);
 });
+
+// The file is a Rayfin project Fabricator imports: its packages, its package.json, and the app as `rayfin up`
+// records it, the one just published. FABRICATOR_OUT: where to copy it, for CI's next step (run-fabricator-project.mjs),
+// which installs it and serves it as Fabricator does.
+async function project(s, zipName, marker) {
+  const { readApp, SITE, DEPLOYMENTS, CONFIG } = require("../../fabric_app/export/exportapp.js");
+  const { files } = await readApp(join(s.dir, zipName));
+  assert.ok(JSON.parse(files.get("package.json").toString("utf8")).devDependencies["@microsoft/rayfin-cli"], "the project's own Rayfin CLI");
+  assert.ok([...files.keys()].some(p => p.startsWith(`${SITE}vendor/npm/@duckdb/`)), "DuckDB-WASM is in the file");
+  const reg = JSON.parse(files.get(DEPLOYMENTS).toString("utf8"));
+  assert.equal(reg.deployments[reg.active].fabricItemId, marker.itemId, "rayfin up's record names the app just published");
+  assert.equal(reg.deployments[reg.active].hostingUrl, marker.hostingUrl);
+  assert.equal(JSON.parse(files.get(CONFIG).toString("utf8")).itemId, marker.itemId);
+  if (process.env.FABRICATOR_OUT) {
+    await copyFile(join(s.dir, zipName), process.env.FABRICATOR_OUT);
+    console.log(`the project: ${process.env.FABRICATOR_OUT}`);
+  }
+}
 
 // The published app, asked as a viewer's page asks it, with no browser: the site's own SDK signs in with an
 // Entra token (the app is published with externalEntraExchange for this), then calls the deployed function.

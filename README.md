@@ -31,7 +31,8 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 ## Experimental
 
 - **Publish to Fabric.** Turn a model's Explore into a Fabric app your colleagues open in a browser,
-  showing the model's current data to those with access. A copy stays in your folder.
+  showing the model's current data to those with access. A copy stays in your folder, as a Fabricator project you
+  can open there to keep building the app.
 - **See your Fabric apps.** Each workspace lists its apps, their address and who can open them.
 
 ## Get started

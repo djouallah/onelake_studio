@@ -9,7 +9,7 @@
 #   server-writes: a big write through the engine's server process, on Linux and on Windows, and the server
 #            after it (test/js/onelake-server-writes.test.mjs).
 #   export:  Export to Fabric from this checkout, published to the same workspace (test/js/export-fabric.test.mjs);
-#            then the app's page in Chrome, reading a table of that lakehouse (test/js/run-fabric-app.mjs), and
+#            its .fabricator as Fabricator takes one (test/js/run-fabricator-project.mjs); then the app's page in Chrome, reading a table of that lakehouse (test/js/run-fabric-app.mjs), and
 #            the app whole on a local Rayfin backend, from its sign-in to its Report (test/js/run-fabric-local.mjs).
 #
 # Signing in to fabriccat: no secret. The job's OIDC subject is what the federated credential on the Entra app
@@ -253,6 +253,14 @@ jobs:
       - run: node --test test/js/export-fabric.test.mjs
         env:
           NO_SKIP: 1
+          # The client-side app's .fabricator, for the step below.
+          FABRICATOR_OUT: ${{ runner.temp }}/lakeci.fabricator
+      # That file as Fabricator takes one (test/js/run-fabricator-project.mjs): unpacked, installed from its own
+      # package.json, its scripts parsed and its function built as `rayfin up` does, its page served by its own Vite.
+      - if: always()
+        run: node test/js/run-fabricator-project.mjs
+        env:
+          FABRICATOR_OUT: ${{ runner.temp }}/lakeci.fabricator
       # The two tests below open the app in Chrome, on a local Rayfin backend: playwright-core, Chrome, rayfin-local.
       - if: always()
         run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund

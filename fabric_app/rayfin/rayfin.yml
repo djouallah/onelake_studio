@@ -1,7 +1,8 @@
 # The Fabric app Export to Fabric deploys (OneLake Studio, fabric_app/export/exportapp.js and fabricapp.js):
 # a model's Report and Explore, over its lakehouse's tables. The extension deploys it over the
-# Fabric REST API from the local copy, one zip, so nothing reads this file to deploy: it says
-# what the app is, for whoever grows it from the local copy. The id, the name and the sign-in
+# Fabric REST API from the local copy, one .fabricator file, without reading this file; Fabricator
+# and `rayfin up` deploy the same project with it. The site is site/public/ as it is, with no
+# build (site/vite.config.mjs serves it locally). The id, the name and the sign-in
 # redirects are each app's own (written in by the export). Exported as DirectQuery or Direct Lake,
 # the export adds a top-level `connectors:` block: the semantic model, as a fabric-semanticmodel
 # connector with delegated auth, which the page queries as the person viewing it.
@@ -20,7 +21,8 @@ services:
     enabled: false
   staticHosting:
     enabled: true
-    folder: dist
+    path: site
+    folder: public
     indexDocument: index.html
     assetAccess: protected
   storage:

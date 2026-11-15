@@ -79,7 +79,8 @@ test("publish: a later step failing still leaves the item known to be this expor
 test("publish: item, backend, key, settings, secrets, site, function, redirect — in the CLI's order", async () => {
   const { app, calls } = appWith(happy());
   const r = await publish(app);
-  assert.deepEqual(r, { itemId: ID, hostingUrl: HOST, created: true, redirects: [HOST] });
+  assert.deepEqual(r, { itemId: ID, hostingUrl: HOST, created: true, redirects: [HOST], config: publish.config },
+    "and the site's backend, which the local copy keeps for rayfin up");
   const seq = calls.map(c => `${c.method} ${c.url.replace(API, "").replace(`/workspaces/${WS}`, "")}`);
   assert.deepEqual(seq, [
     "GET /items?type=AppBackend",

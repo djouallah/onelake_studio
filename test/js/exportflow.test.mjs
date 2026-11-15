@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createExport } = require("../../fabric_app/export/exportflow.js");
-const { writeApp, readApp } = require("../../fabric_app/export/exportapp.js");
+const { writeApp, readApp, zip, SITE, MARKER, FORMAT } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
 
 const URL_ = "https://onelake.dfs.fabric.microsoft.com/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555";
@@ -110,10 +110,10 @@ test("the Save dialog is the one question: named for the model file, in Document
   assert.equal(e.message, "Export cancelled.");
   assert.equal(asked.length, 1);
   const o = asked[0].saveFile;
-  assert.match(o.defaultPath, /[\\/]sales\.fabricapp$/, "the file's own name, its extension the app's");
-  assert.equal(o.title, "Export sales.fabricapp to Fabric");
+  assert.match(o.defaultPath, /[\\/]sales\.fabricator$/, "the file's own name, its extension Fabricator's project file's");
+  assert.equal(o.title, "Export sales.fabricator to Fabric");
   assert.equal(o.saveLabel, "Export");
-  assert.deepEqual(o.filters, { "OneLake Studio app": ["fabricapp"] });
+  assert.deepEqual(o.filters, { "Fabricator project": ["fabricator"] });
   assert.equal(kept.size, 0);
   await done();
 });
@@ -121,20 +121,26 @@ test("the Save dialog is the one question: named for the model file, in Document
 test("an app saved before: the Save dialog opens on that file", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-saved-"));
   const { exportExplore, asked, kept, done } = await setup({ answers: [null] });
-  const there = join(dir, "sales-model-explore.fabricapp");
+  const there = join(dir, "sales-model-explore.fabricator");
   kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", there);
   await exportExplore(REQUEST).catch(() => {});
   assert.equal(asked[0].saveFile.defaultPath, there);
+  // One saved as an earlier .fabricapp is offered by its .fabricator name.
+  const b = await setup({ answers: [null] });
+  b.kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", join(dir, "sales-model-explore.fabricapp"));
+  await b.exportExplore(REQUEST).catch(() => {});
+  assert.equal(b.asked[0].saveFile.defaultPath, there);
+  await b.done();
   await rm(dir, { recursive: true, force: true });
   await done();
 });
 
-test("an app an earlier export saved as .zip: offered as .fabricapp, and renamed when saved there", async () => {
+for (const ext of [".zip", ".fabricapp"]) test(`an app an earlier export saved as ${ext}: offered as .fabricator, and renamed when saved there`, async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-old-"));
-  const old = join(dir, "sales-model-explore.zip");
+  const old = join(dir, `sales-model-explore${ext}`);
   await writeApp(old, new Map([["site/app.js", Buffer.from("// app")]]),
     { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
-  const now = join(dir, "sales-model-explore.fabricapp");
+  const now = join(dir, "sales-model-explore.fabricator");
   const { exportExplore, asked, kept, done } = await setup({ answers: [now, undefined] });
   kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", old);
   const e = await exportExplore(REQUEST).then(() => null, x => x);
@@ -164,7 +170,7 @@ test("a semantic model opened from the tree is exported as it is: found by its w
   assert.equal(e.declined, true);
   assert.deepEqual(looked, [{ ws: "id-of-aemo", name: "NEM Sales" }]);
   assert.equal(asked.length, 1, "the Save dialog alone: no mode");
-  assert.match(asked[0].saveFile.defaultPath, /[\\/]NEM Sales\.fabricapp$/, "named for the semantic model");
+  assert.match(asked[0].saveFile.defaultPath, /[\\/]NEM Sales\.fabricator$/, "named for the semantic model");
   await done();
 });
 
@@ -177,7 +183,7 @@ test("a semantic model gone from its workspace is said, before anything is asked
 
 test("saving over an app's file rewrites it, with no question about what changed in it", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-over-"));
-  const file = join(dir, "sales-model-explore.fabricapp");
+  const file = join(dir, "sales-model-explore.fabricator");
   await writeApp(file, new Map([["site/app.js", Buffer.from("// app")]]),
     { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
   const { exportExplore, asked, done } = await setup({ answers: [file] });
@@ -190,7 +196,7 @@ test("saving over an app's file rewrites it, with no question about what changed
 
 test("opening an app's file: its report is this file from now on, and a client-side app's own model comes back", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-open-app-"));
-  const file = join(dir, "sales-model-explore.fabricapp");
+  const file = join(dir, "sales-model-explore.fabricator");
   await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/report.json", Buffer.from('{"tiles":[]}')]]),
     { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb",
       workspaceId: "ws-id", lakehouseId: "lh-id", report: { workspace: "power bi", model: "sales" } });
@@ -216,7 +222,7 @@ test("opening an app's file: its report is this file from now on, and a client-s
 
 test("an app's file opened from disk is exported as it is: no Save dialog, and no question about its changes", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-app-"));
-  const file = join(dir, "sales-model-explore.fabricapp");
+  const file = join(dir, "sales-model-explore.fabricator");
   await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// app")]]),
     { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
   const { exportExplore, asked, done } = await setup();
@@ -224,6 +230,22 @@ test("an app's file opened from disk is exported as it is: no Save dialog, and n
   assert.match(e.message, /stop: Fabric is not asked/, "it went on to Fabric");
   assert.equal(asked.filter(a => a.saveFile).length, 0, "no Save dialog");
   assert.equal(asked.filter(a => /has changed since/.test(a.message || "")).length, 0, "its changes are what is published");
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("an earlier .fabricapp opened from disk is published from its .fabricator: renamed, laid out as one, nothing asked", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-legacy-"));
+  const old = join(dir, "sales.fabricapp");
+  await writeFile(old, await zip([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// app")],
+    ["export.json", Buffer.from(JSON.stringify({ model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb" }))]]));
+  const { exportExplore, asked, done } = await setup();
+  const e = await exportExplore({ ...REQUEST, file: "model.yaml", appFile: old }).then(() => null, x => x);
+  assert.match(e.message, /stop: Fabric is not asked/, "it went on to Fabric");
+  assert.equal(asked.length, 0, "no Save dialog, no question");
+  assert.equal(existsSync(old), false);
+  const app = await readApp(join(dir, "sales.fabricator"));
+  assert.equal(app.files.get(`${SITE}app.js`).toString(), "// app", "its site where a .fabricator has it");
   await rm(dir, { recursive: true, force: true });
   await done();
 });
@@ -289,11 +311,11 @@ test("before an export, the Report is kept in Studio's file, and a save over a n
   await done();
 });
 
-test("with an export's zip, the Report is the zip's site/report.json: saved into it, its other entries and marker kept", async () => {
+test("with an export's zip, the Report is the zip's site/public/report.json: saved into it, its other entries and marker kept", async () => {
   const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const zipPath = join(open, "sales-model-explore.zip");
-  const marker = { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", files: { "site/app.js": "h" } };
-  await writeApp(zipPath, new Map([["site/app.js", Buffer.from("// app")], ["site/report.json", Buffer.from('{ "tiles": [] }')]]), marker);
+  const zipPath = join(open, "sales-model-explore.fabricator");
+  const marker = { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", files: { [`${SITE}app.js`]: "h" } };
+  await writeApp(zipPath, new Map([[`${SITE}app.js`, Buffer.from("// app")], [`${SITE}report.json`, Buffer.from('{ "tiles": [] }')]]), marker);
   const { flow, kept, done } = await setup();
   // A file from before the export is not read once there is a zip.
   await flow.reportSave({ ...MODEL, spec: { tiles: [{ title: "old", kind: "kpi", sql: "SELECT 1 FROM model" }] }, stamp: 0 });
@@ -302,9 +324,9 @@ test("with an export's zip, the Report is the zip's site/report.json: saved into
   assert.deepEqual([before.spec, before.from], [{ tiles: [] }, zipPath]);
   await flow.reportSave({ ...MODEL, spec: TILES, stamp: before.stamp });
   const app = await readApp(zipPath);
-  assert.deepEqual(JSON.parse(app.files.get("site/report.json").toString("utf8")), TILES);
-  assert.equal(app.files.get("site/app.js").toString("utf8"), "// app");
-  assert.deepEqual(app.marker, marker);
+  assert.deepEqual(JSON.parse(app.files.get(`${SITE}report.json`).toString("utf8")), TILES);
+  assert.equal(app.files.get(`${SITE}app.js`).toString("utf8"), "// app");
+  assert.deepEqual(app.marker, { ...marker, format: FORMAT });
   assert.deepEqual((await flow.reportOf(OPENED)).spec, TILES);
   await rm(open, { recursive: true, force: true });
   await done();

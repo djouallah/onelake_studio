@@ -216,7 +216,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {}, exter
 
   /**
    * Publishes the app. `site(config)` answers the site's zip, given the rayfin.config.json
-   * the browser reads (it names the backend). Returns { itemId, hostingUrl, created }.
+   * the browser reads (it names the backend). Returns { itemId, hostingUrl, created, redirects, config }.
    * `onItem(id)` hears the item's id as soon as there is one: if a later step fails, a second
    * export must know this item is its own.
    */
@@ -251,7 +251,8 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {}, exter
       redirects.push(origin);
       await postSettings(ws, id, redirects, semanticModel);
     }
-    return { itemId: id, hostingUrl, created, redirects };
+    // `config`: the site's rayfin.config.json, which the local copy keeps for `rayfin up` and its local run.
+    return { itemId: id, hostingUrl, created, redirects, config };
   }
 
   // The app's last deploy, from whatever deployed it: { hostingUrl, lastSuccessfulDeploymentAt },

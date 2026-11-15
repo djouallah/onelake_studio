@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Export to Fabric saves a Fabricator project.** The local copy is `<model>.fabricator` now, a Rayfin project:
+  Fabricator imports it with a double-click, installs it, previews it and publishes it, over the same app. It holds
+  the page's packages too (about 12 MB with DuckDB-WASM), a `package.json`, and once published the app as
+  `rayfin up` records it. OneLake Studio still publishes it itself, with no Node or CLI. An earlier `.fabricapp`
+  still opens, and is saved as a `.fabricator` the next time it is exported.
 - **A write finds where the catalog writes from the table itself.** OneLake's Iceberg catalog now names the
   workspace, not its GUID, in a table's metadata file path (since 2026-11-15), so every write asked the Fabric API
   for the GUID. It is read from the table's `write.data.path` property, which the catalog still gives by GUID. Only a workspace

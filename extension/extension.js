@@ -717,8 +717,8 @@ async function activateInner(context) {
       .catch(e => { if (out) out.appendLine(`${workspace}/${path} was saved, and its folder could not be listed again — ${(e && e.message) || e}`); });
   };
 
-  // A file from disk: VS Code's Explorer or an editor's title bar, a .fabricapp's editor, the desktop
-  // app's File > Open… or a double-click. A .fabricapp opens its model on the Report page, drawing this
+  // A file from disk: VS Code's Explorer or an editor's title bar, an app file's editor, the desktop
+  // app's File > Open… or a double-click. An app's file (.fabricator, or an earlier .fabricapp) opens its model on the Report page, drawing this
   // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it; a .sql file
   // opens in the SQL box, its text not run, as a saved query does. `arg`: a Uri, a path, or nothing
   // (the active editor's file).
@@ -730,7 +730,7 @@ async function activateInner(context) {
     // Open already: its tab, before the file is read again.
     if (revealTab(pathKey(fsPath))) return;
     try {
-      if (/\.fabricapp$/i.test(fsPath)) return await openAppFile(fsPath);
+      if (/\.(fabricator|fabricapp)$/i.test(fsPath)) return await openAppFile(fsPath);
       if (/\.sql$/i.test(fsPath)) {
         const sql = await fsp.readFile(fsPath, 'utf8');
         openedFiles.add(pathKey(fsPath));
@@ -763,7 +763,7 @@ async function activateInner(context) {
     });
   }
 
-  // A .fabricapp: a semantic model's app opens that model, as the tree's click does; a client-side app
+  // A .fabricator (or an earlier .fabricapp): a semantic model's app opens that model, as the tree's click does; a client-side app
   // opens on its own model.yaml, the app as it is, and Export to Fabric there publishes this file. Either
   // way on the Report page, which draws this file (exportflow.js openApp).
   async function openAppFile(fsPath) {
@@ -810,7 +810,7 @@ async function activateInner(context) {
   const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
 
-  // A .fabricapp, a model named as Ossie's tools name one (*.ossie.yaml) or a .sql file, opened in VS Code, opens
+  // A .fabricator or .fabricapp, a model named as Ossie's tools name one (*.ossie.yaml) or a .sql file, opened in VS Code, opens
   // in OneLake Studio here, by openPath, even with the desktop app installed: VS Code is what was picked to open it.
   // Its editor closes its own empty tab ("Reopen Editor With… Text Editor" still shows the text). The desktop
   // app's vscode has no custom editors: it opens files itself (desktop/node/main.js).
