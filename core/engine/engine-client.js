@@ -86,18 +86,19 @@ function pipePath(key) {
 // The control socket, signed in, and what the server says of itself; null if nobody answers or
 // the token is refused. A server still booting answers once it is up, so `waitMs` is long enough
 // for a boot once something has answered the connect.
-function connectControl(path, token, window, waitMs = BOOT_MS) {
+// `why.reason`, when it answers null: how it failed, for an error that has to say.
+function connectControl(path, token, window, waitMs = BOOT_MS, why = {}) {
   return new Promise(resolve => {
     const sock = net.connect(path);
-    let buf = '';
-    const done = v => { clearTimeout(timer); resolve(v); };
-    let timer = setTimeout(() => { sock.destroy(); done(null); }, CONNECT_MS);
+    let buf = '', settled = false;
+    const done = (v, reason) => { clearTimeout(timer); if (!settled && v == null) why.reason = reason; settled = true; resolve(v); };
+    let timer = setTimeout(() => { sock.destroy(); done(null, `no connection to its pipe in ${CONNECT_MS / 1000}s`); }, CONNECT_MS);
     sock.setEncoding('utf8');
-    sock.on('error', () => done(null));
-    sock.on('close', () => done(null));
+    sock.on('error', e => done(null, `its pipe: ${e.code || e.message}`));
+    sock.on('close', () => done(null, buf ? 'it closed the pipe after answering' : 'it closed the pipe before answering'));
     sock.on('connect', () => {
       clearTimeout(timer);
-      timer = setTimeout(() => { sock.destroy(); done(null); }, waitMs);
+      timer = setTimeout(() => { sock.destroy(); done(null, `no answer in ${waitMs / 1000}s`); }, waitMs);
       sock.write(`${JSON.stringify({ token, window })}\n`);
     });
     const onData = chunk => {
@@ -111,7 +112,7 @@ function connectControl(path, token, window, waitMs = BOOT_MS) {
       let state = null;
       try { state = JSON.parse(buf.slice(0, nl)); } catch (_) {}
       if (state && state.ok) done({ sock, state, rest: buf.slice(nl + 1) });
-      else { sock.destroy(); done(null); }
+      else { sock.destroy(); done(null, `it answered ${buf.slice(0, nl).slice(0, 300)}`); }
     };
     sock.on('data', onData);
   });
@@ -213,9 +214,10 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
       if (!await pipeHeld(pipe)) said = await spawnServer({ ...server, token, pipe });
     }
     if (said.taken) throw new Error('an engine with another session is still running: try again in a minute');
-    const up = await connectControl(pipe, token, window);
-    // What the server said of itself, its log's last lines: why it went, or what it was doing.
-    if (!up) throw new Error(`the engine started and then refused this window. Its log ends:\n${logTail(server.logFile)}`);
+    const why = {};
+    const up = await connectControl(pipe, token, window, BOOT_MS, why);
+    // How the connection failed, and what the server said of itself, its log's last lines: why it went, or what it was doing.
+    if (!up) throw new Error(`the engine started and then refused this window (${why.reason}). Its log ends:\n${logTail(server.logFile)}`);
     return { ...up, token };
   });
 }
