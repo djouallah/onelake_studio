@@ -28,8 +28,8 @@
 //     explore.json   the shelves the first view shows
 //     engine.json    what the page runs on, { engine: 'duckdb' } or { engine: 'semanticModel', name }, and maxRows:
 //                    on a semantic model the page runs no DuckDB (storage/modeldata.js: it queries the
-//                    semantic model), and the site holds neither DuckDB, its extensions nor its Arrow (both data
-//                    sources' scripts are in every site: DUCKDB_ONLY). Always written: the hosting answers a
+//                    semantic model), and the site holds neither DuckDB, its extensions, Arrow nor the data
+//                    source that reads the tables in the browser. Always written: the hosting answers a
 //                    file a site lacks with its index.html
 //     model.json     the model the page runs on: client side, model.yaml as JSON; on a semantic model,
 //                    its local copy, which the page writes its DAX from
@@ -624,7 +624,7 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
   const sql = onModel(plan);
   const text = s => Buffer.from(s, 'utf8');
   const files = new Map([
-    ...await filesOf(join(fabricAppDir, 'site'), SITE),
+    ...await filesOf(join(fabricAppDir, 'site'), SITE, rel => (sql ? DUCKDB_ONLY.site : MODEL_ONLY).includes(rel)),
     ...await filesOf(join(appDir, 'explore'), `${SITE}explore/`),
     [`${SITE}paths.js`, await fsp.readFile(join(appDir, 'paths.js'))],
     // As the package lays them out: formats/ imports ../src/.
@@ -648,6 +648,9 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
   files.set(`${SITE}engine.json`, text(JSON.stringify(sql
     ? { engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}), ...limit } : { engine: 'duckdb', ...limit })));
   files.set('AGENTS.md', text(agentsMd(plan)));
+  // The page's one data source (app.js imports this): the site holds that engine's scripts only, and a page
+  // that named the other's would be refused by Vite, which resolves every import a script names.
+  files.set(`${SITE}storage/source.js`, text(`export * from "./${sql ? 'modeldata' : 'data'}.js";\n`));
   return files;
 }
 
@@ -667,12 +670,16 @@ function engineOf(files, marker) {
   try { return JSON.parse(said.toString('utf8')).engine || 'semanticModel'; } catch { return 'semanticModel'; }
 }
 
-// On a semantic model: the packages the site leaves out, the page reading nothing in the browser. Paths under
-// vendor/webapp. DuckDB's Arrow only: the semantic-model connector decodes with an Arrow of its own version
-// (WEBAPP.rayfinSemanticModel). The other way round, the client-side site keeps the connector's few hundred KB,
-// which its page never loads. Both data sources' scripts are in every site (164 KB): app.js names both in its
-// dynamic imports, loads only its engine's, and Vite (Fabricator's preview) refuses app.js when one is missing.
+// Client side: what site/ leaves out, the semantic model's data source.
+const MODEL_ONLY = ['storage/modeldata.js', 'storage/modelrows.js'];
+
+// On a semantic model: what site/ leaves out, the page reading nothing in the browser. Paths under
+// fabric_app/site, and under vendor/webapp. DuckDB's Arrow only: the semantic-model connector
+// decodes with an Arrow of its own version (WEBAPP.rayfinSemanticModel). The other way round, the
+// client-side site keeps the connector's few hundred KB, which its page never loads.
 const DUCKDB_ONLY = {
+  site: ['storage/data.js', 'storage/blockcache.js', 'storage/catalog.js', 'storage/prefetch.js', 'storage/ranges.js', 'storage/split.js',
+         'storage/queue.js', 'storage/results.js', 'storage/snapshots.js', 'storage/kv.js'],
   vendor: [/^npm\/@duckdb(\/|$)/, /^duckdb-ext(\/|$)/, new RegExp(`^npm/${WEBAPP.arrow.replace(/[.]/g, '\\.')}(/|$)`)],
 };
 

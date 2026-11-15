@@ -100,8 +100,11 @@ export async function start() {
     // The shelves a first Visual would show (explore.json): the app shows the Report alone, so they aren't fetched.
     const first = null;
     const { engine, name: modelName, maxRows } = (await engineRead) || {};
-    if (engine === "semanticModel") return await startModel(first, modelName, maxRows);
-    const { createDataSource } = await import("./storage/data.js");
+    // This app's one data source (storage/source.js, which the export writes): DuckDB in the browser over the
+    // tables, or a semantic model asked through its connector. The site holds that one only.
+    const source = await import("./storage/source.js");
+    if (engine === "semanticModel") return await startModel(source, first, modelName, maxRows);
+    const { createDataSource } = source;
     const data = createDataSource({
       onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
       onProgress: p => status(p ? (p.detail || p.label) : ""),
@@ -157,8 +160,8 @@ function showRefused(model) {
 
 // On a semantic model: Explore's queries over the model go to the data source as they are written;
 // it turns them into DAX and runs them there, so the page's compiler passes them through.
-async function startModel(first, modelName, maxRows) {
-  const { createModelSource, MAX_ROWS: MODEL_MAX_ROWS } = await import("./storage/modeldata.js");
+async function startModel(source, first, modelName, maxRows) {
+  const { createModelSource, MAX_ROWS: MODEL_MAX_ROWS } = source;
   const data = createModelSource({ onStatus: s => boot.step(s) });
   await data.init();
   boot.step("Building Explore…");

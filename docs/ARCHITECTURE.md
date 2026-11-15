@@ -869,7 +869,8 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
 - `package.json`: Vite, the Rayfin CLI and its local-dev plugin, pinned to the Rayfin version the page's SDK is
   (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The function,
   `rayfin/functions`, is its workspace. None of these is in the page, and OneLake Studio needs none of them.
-- `site/public/`: the page as it is uploaded, but its build stamp, with its packages (`vendor/`: DuckDB-WASM, Arrow, the
+- `site/public/`: the page as it is uploaded, but its build stamp, with its engine's one data source (`storage/source.js`
+  names it: DuckDB in the browser, or the semantic model's connector) and its packages (`vendor/`: DuckDB-WASM, Arrow, the
   Rayfin SDK, ECharts, the extension's own, written again by every export). `rayfin.yml` serves it as it is
   (`staticHosting`: `path: site`, `folder: public`, no build), and `site/vite.config.mjs` serves it locally. A page
   with no stamp (published by `rayfin up`, or served by Vite) says nothing of its build. With DuckDB-WASM the file is
@@ -986,7 +987,7 @@ and the command line's `export` takes no `--mode`.
   caller's applicable model permissions, including Build", and Fabric checks it on whoever publishes (the CI identity was
   refused with "Could not verify Build permission on semantic model"). But a viewer needs only Read: tried on 2026-11-11 with an account that
   was a workspace Viewer, Read on the model and no Build, the app's connector answered its DAX query.
-- `site/public/` holds no DuckDB, extensions or DuckDB's Arrow, and no SAS is signed: the workspace
+- `site/public/` holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
   setting for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))

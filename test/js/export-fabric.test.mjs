@@ -126,7 +126,9 @@ async function published(s, said, zipName, engine, since) {
   console.log(`${new URL("app.js", marker.hostingUrl)} with the identity's Fabric token: HTTP ${signed.status}`);
 
   const site = unzip(s.sites.at(-1));
-  for (const p of ["index.html", "app.js", "model.json", "engine.json", "report.json", "rayfin.config.json"]) assert.ok(site.has(p), `the site has ${p}`);
+  for (const p of ["index.html", "app.js", "model.json", "engine.json", "report.json", "rayfin.config.json", "storage/source.js"]) assert.ok(site.has(p), `the site has ${p}`);
+  // The engine's data source alone: app.js names only storage/source.js, which names it.
+  assert.ok(!site.has(engine === "duckdb" ? "storage/modeldata.js" : "storage/data.js"), "no other engine's data source");
   assert.equal(JSON.parse(site.get("engine.json").toString("utf8")).engine, engine);
   assert.equal(JSON.parse(site.get("rayfin.config.json").toString("utf8")).itemId, marker.itemId);
   let imports = 0;

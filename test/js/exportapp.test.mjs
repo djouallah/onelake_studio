@@ -182,7 +182,7 @@ test("rayfin.yml: the app's id and name, its redirects first", async () => {
 async function fixture(root) {
   const files = {
     "fabric_app/site/index.html": '<link rel="stylesheet" href="./explore/explore.css">\n<script type="module">import { start } from "./app.js"; start();</script>\n<footer>build __BUILD__</footer>\n',
-    "fabric_app/site/app.js": 'import { mountExplore } from "./explore/view.js";\nconst { createModelSource } = await import("./storage/modeldata.js");\n',
+    "fabric_app/site/app.js": 'import { mountExplore } from "./explore/view.js";\nconst source = await import("./storage/source.js");\n',
     "fabric_app/site/storage/data.js": 'import { renderModel } from "../explore/model.js";\n',
     "fabric_app/site/storage/catalog.js": "// catalog\n",
     "fabric_app/site/storage/auth.js": "// auth\n",
@@ -288,12 +288,11 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.equal(engineOf(files, {}), "semanticModel", "a marker that doesn't say: the site does");
     assert.deepEqual(JSON.parse(text("site/public/engine.json")), { engine: "semanticModel", name: "sales" });
     assert.deepEqual(JSON.parse(text("site/public/model.json")), doc());
+    assert.equal(text("site/public/storage/source.js"), 'export * from "./modeldata.js";\n', "the page's one data source: the semantic model's");
     for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js", "site/public/storage/auth.js", "site/public/app.js", "site/public/explore/view.js"]) {
       assert.ok(files.has(p), p);
     }
-    assert.ok(![...files.keys()].some(f => /vendor\//.test(f)), "no packages yet (setPackages)");
-    // Both data sources' scripts: app.js names both, and Vite (Fabricator's preview) refuses it when one is missing.
-    assert.ok(files.has("site/public/storage/data.js") && files.has("site/public/storage/catalog.js"));
+    assert.ok(![...files.keys()].some(f => /^site\/public\/storage\/(data|catalog)\.js$|vendor\//.test(f)), "no DuckDB data source, and no packages yet (setPackages)");
     // The packages added at publish: the connector and its own Arrow, and not DuckDB's.
     const vendor = await vendorFiles(dirs.webappDir, engine);
     assert.deepEqual([...vendor.keys()].sort(), ["vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "vendor/npm/apache-arrow@21.2.0/+esm.js"]);
@@ -305,7 +304,7 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.match(agents, /The page turns it into DAX and runs it on the semantic model\./);
     assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
 
-    // Client side: the site has its DuckDB data source, the semantic model's too (app.js names it), and DuckDB's packages.
+    // Client side: the site has its DuckDB data source and not the semantic model's, and DuckDB's packages.
     assert.ok(!files.has("model.ossie.yaml") && !files.has("model.bim"), "a semantic model's app names the model, and holds no copy");
     const duck = await appFiles({ plan: { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), engine: "duckdb" },
                                   state: null, model, modelText: OSSIE, modelFile: "sales.yaml", ...dirs });
@@ -313,7 +312,7 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     // engine.json always: the hosting answers a file a site lacks with its index.html.
     assert.deepEqual(JSON.parse(duck.get("site/public/engine.json")), { engine: "duckdb" });
     assert.equal(engineOf(new Map(), {}), "duckdb", "an older client-side site, with no engine.json");
-    for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js"]) assert.ok(duck.has(p), p);
+    for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js"]) assert.ok(!duck.has(p), p);
     // Client side the app runs on its own model: the file's model.yaml, and the site's model.json made from it.
     assert.equal(duck.get("model.ossie.yaml").toString(), OSSIE);
     assert.deepEqual(JSON.parse(duck.get("site/public/model.json")), model);
@@ -409,7 +408,10 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     assert.match(up.get("index.html").toString(), /build 20261028-120000/);
     assert.match(up.get("app.js").toString(), /from "\.\/explore\/view\.js\?v=20261028-120000"/);
     // A module loaded only when it is needed is stamped too, or a redeploy leaves the old one in the browser.
-    assert.match(up.get("app.js").toString(), /import\("\.\/storage\/modeldata\.js\?v=20261028-120000"\)/);
+    assert.match(up.get("app.js").toString(), /import\("\.\/storage\/source\.js\?v=20261028-120000"\)/);
+    // Its one data source, which the export writes: the one its engine reads.
+    assert.equal(files.get("site/public/storage/source.js").toString(), 'export * from "./data.js";\n');
+    assert.match(up.get("storage/source.js").toString(), /from "\.\/data\.js\?v=20261028-120000"/);
     assert.match(up.get("explore/view.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
     assert.match(up.get("storage/data.js").toString(), /from "\.\.\/explore\/model\.js\?v=20261028-120000"/);
     assert.equal(up.get("vendor/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js").toString(), 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
@@ -465,7 +467,8 @@ test("the shipped page and its data source parse; the page reads its model from 
     const s = await readFile(new URL(p, siteDir), "utf8");
     for (const [, spec] of s.matchAll(/\b(?:from|import)\s*\(?\s*["'](\.{1,2}\/[\w./@+-]+\.js)["']/g)) {
       const to = new URL(spec, new URL(p, "http://site/")).pathname.slice(1);
-      const ok = to.startsWith("vendor/") || /^semantic\/(src\/[\w./-]+|formats\/(tmsl|ossie|ossie-sql))\.js$/.test(to)
+      // storage/source.js is the export's own (appFiles): the engine's data source, one of the site's.
+      const ok = to.startsWith("vendor/") || to === "storage/source.js" || /^semantic\/(src\/[\w./-]+|formats\/(tmsl|ossie|ossie-sql))\.js$/.test(to)
         || (to === "paths.js" || to.startsWith("explore/")
           ? await there(new URL(`../../page/${to}`, import.meta.url)) : await there(new URL(to, siteDir)));
       assert.ok(ok, `${p} imports ${spec}, which no export uploads`);
