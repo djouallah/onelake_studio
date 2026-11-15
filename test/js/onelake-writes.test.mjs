@@ -537,12 +537,27 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
     await noneAttached();
   });
 
+  await t.test("DROP SCHEMA drops an empty schema only with Allow Drop Table on", async () => {
+    const gone = `${run}_gone`;
+    const there = async () => (await fetch(`${ICEBERG}/v1/${prefix}/namespaces/${encodeURIComponent(gone)}`, { headers: auth })).status;
+    await sql(`CREATE SCHEMA ${lh}.${q(gone)}`);
+    await assert.rejects(engine.agentQuery(`DROP SCHEMA ${lh}.${q(gone)}`), /DROP SCHEMA is off\. Turn on Allow Drop Table/);
+    assert.equal(await there(), 200, "it is still there");
+    opts.drop = true;
+    try {
+      await sql(`DROP SCHEMA ${lh}.${q(gone)}`);
+      assert.equal(await there(), 404, "the catalog no longer has it");
+      await sql(`DROP SCHEMA IF EXISTS ${lh}.${q(gone)}`);
+    } finally { opts.drop = false; }
+    await noneAttached();
+  });
+
   await t.test("what is refused writes nothing, and leaves nothing attached", async () => {
     const count = async () => String((await back(`SELECT count(*)::INTEGER AS n FROM back.test.${q(a)}`))[0].n);
     const before = await count();
     for (const [text, why] of [
       [`DROP TABLE ${tbl(a)}`, /DROP TABLE is off/],
-      [`DROP SCHEMA ${lh}.${q(schema)} CASCADE`, /DROP is blocked/],
+      [`DROP SCHEMA ${lh}.${q(schema)} CASCADE`, /DROP SCHEMA is off/],
       [`CREATE OR REPLACE TABLE ${tbl(a)} AS SELECT 1 AS id`, /CREATE OR REPLACE isn't/],
       [`INSERT INTO ${tbl(a)} SELECT 9, 'z', 9 ON CONFLICT DO NOTHING`, /ON CONFLICT isn't/],
       [`TRUNCATE ${tbl(a)}`, /TRUNCATE isn't/],

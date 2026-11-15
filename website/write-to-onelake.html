@@ -40,7 +40,7 @@
           </thead>
           <tbody>
             <tr><td>Allow Table Writes</td><td>Off</td><td>Every write to a lakehouse's tables and schemas.</td></tr>
-            <tr><td>Allow Drop Table</td><td>Off</td><td><code>DROP TABLE</code> on an Iceberg table. It also needs Allow Table Writes. It can't be undone.</td></tr>
+            <tr><td>Allow Drop Table</td><td>Off</td><td><code>DROP TABLE</code> on an Iceberg table, and <code>DROP SCHEMA</code>. It also needs Allow Table Writes. It can't be undone.</td></tr>
             <tr><td>Allow Copy to Files</td><td>On</td><td><code>COPY</code> to a lakehouse's Files/. It needs no other setting.</td></tr>
           </tbody>
         </table>
@@ -61,6 +61,7 @@
             <tr><td><code>INSERT INTO</code></td><td>A Delta table: its rows are added to the table's Delta log.</td></tr>
             <tr><td><code>DROP TABLE [IF EXISTS]</code></td><td>An Iceberg table: the table and its files are deleted.</td></tr>
             <tr><td><code>CREATE SCHEMA</code></td><td>A schema in a lakehouse with schemas.</td></tr>
+            <tr><td><code>DROP SCHEMA [IF EXISTS]</code></td><td>A schema in a lakehouse with schemas, as its Iceberg catalog drops one.</td></tr>
             <tr><td><code>COPY (…) TO '&lt;ws&gt;.&lt;lh&gt;/Files/&lt;path&gt;'</code></td><td>A Parquet, CSV or JSON file in Files/. A file already at that path is replaced.</td></tr>
           </tbody>
         </table>
@@ -104,7 +105,7 @@ COPY (SELECT * FROM aemo.data.dbo.daily) TO 'aemo.data/Files/export/daily.parque
       <h2 id="refused">What is refused</h2>
       <p>These are refused before anything is sent:</p>
       <ul>
-        <li>any <code>DROP</code> other than <code>DROP TABLE</code>, such as <code>DROP SCHEMA</code> or <code>DROP VIEW</code>;</li>
+        <li>any <code>DROP</code> other than <code>DROP TABLE</code> and <code>DROP SCHEMA</code>, such as <code>DROP VIEW</code>;</li>
         <li><code>CREATE OR REPLACE</code>, <code>INSERT OR REPLACE</code>, <code>ON CONFLICT</code>, <code>TRUNCATE</code> and <code>COPY … FROM</code>;</li>
         <li>a view, a macro, a secret or any other <code>CREATE</code>;</li>
         <li>a write to a warehouse, a SQL database or a mirrored database;</li>

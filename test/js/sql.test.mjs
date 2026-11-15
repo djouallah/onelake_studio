@@ -425,6 +425,12 @@ test("a write is found with what it writes, and where", () => {
   const s = writeOf("CREATE SCHEMA aemo.data.raw");
   assert.deepEqual([s.what, s.target, s.ref], ["create schema", "schema", { workspace: "aemo", item: "data", schema: "raw" }]);
   assert.deepEqual(writeOf("CREATE SCHEMA IF NOT EXISTS aemo.data.raw").ref, { workspace: "aemo", item: "data", schema: "raw" });
+  // DROP SCHEMA is a write too, under Allow Drop Table, as DROP TABLE is. No other DROP is.
+  const d = writeOf("DROP SCHEMA aemo.data.raw");
+  assert.deepEqual([d.what, d.target, d.ref], ["drop schema", "schema", { workspace: "aemo", item: "data", schema: "raw" }]);
+  assert.deepEqual(writeOf("drop schema if exists aemo.data.raw cascade").ref, { workspace: "aemo", item: "data", schema: "raw" });
+  assert.throws(() => writeOf("DROP VIEW aemo.data.dbo.v"), /DROP is blocked: only DROP TABLE and DROP SCHEMA/);
+  assert.throws(() => writeOf("DROP SCHEMA raw"), /schema/);
 });
 
 test("a new table gets Direct Lake's Parquet properties, with nothing written for them", () => {
@@ -545,7 +551,7 @@ test("DuckDB's physical plan has the last word: each write's own operator at its
     assert.doesNotThrow(() => checkPhysical([op("COPY_TO_FILE", op("PROJECTION", op(r)))], "copy"), r);
   }
   assert.doesNotThrow(() => checkPhysical([op("ICEBERG_UPDATE", op("EMPTY_RESULT"))], "update"));
-  for (const [root, what] of [["CREATE_SCHEMA", "create schema"], ["CREATE_TABLE", "create table"], ["ALTER", "alter"], ["DROP", "drop table"]]) {
+  for (const [root, what] of [["CREATE_SCHEMA", "create schema"], ["CREATE_TABLE", "create table"], ["ALTER", "alter"], ["DROP", "drop table"], ["DROP", "drop schema"]]) {
     assert.doesNotThrow(() => checkPhysical([op(root)], what), what);
   }
 
@@ -672,6 +678,7 @@ test("under a USE, a bare name is the schema's table, and the engine's own stays
     // coffee.sql: USE, then a bare DROP TABLE, which was refused as no lakehouse table.
     ["DROP TABLE IF EXISTS fact_sales", "DROP TABLE IF EXISTS aemo.data.dbo.fact_sales"],
     ["DROP TABLE mart.t", "DROP TABLE aemo.data.mart.t"],
+    ["DROP SCHEMA IF EXISTS raw", "DROP SCHEMA IF EXISTS aemo.data.raw"],
     ["INSERT INTO aemo.data.dbo.t SELECT 1", "INSERT INTO aemo.data.dbo.t SELECT 1"],
     ["INSERT INTO cat1.t SELECT 1", "INSERT INTO cat1.t SELECT 1"]]) {
     assert.equal(await writeWithNamespace(w, lh, none, duck), want, w);

@@ -733,7 +733,7 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 
 - **The settings** (*Writes*, read at each statement), with nothing sent while the one a statement needs is off:
   **Allow Table Writes** (`onelakeStudio.allowTableWrites`) is off by default, for every write to a table or a schema.
-  **Allow Drop Table** (`allowDropTable`) is off by default too, and `DROP TABLE` needs both. **Allow Copy to Files**
+  **Allow Drop Table** (`allowDropTable`) is off by default too, and `DROP TABLE` and `DROP SCHEMA` need both. **Allow Copy to Files**
   (`allowCopyToFiles`) is on by default, for `COPY` to `Files/` alone, which replaces a file already at its path. The
   command line reads the same keys from its settings file.
 
@@ -743,6 +743,7 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 | `INSERT INTO` | A lakehouse table that is Delta |
 | `DROP TABLE [IF EXISTS]` | A lakehouse table that is Iceberg: it and its files are gone. A Delta table is refused |
 | `CREATE SCHEMA` | A lakehouse with schemas |
+| `DROP SCHEMA [IF EXISTS]` | A schema of a lakehouse with schemas, as its Iceberg catalog drops one |
 | `COPY (…) TO '<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
 
 - **A new table's Parquet** is laid out as Direct Lake reads it best, with nothing written for it: every
@@ -753,7 +754,7 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 
 - **The names:** a table is `<ws>.<lh>.<schema>.<table>` ([NAMING.md](NAMING.md#a-writes-target)), and a
   schema is `<ws>.<lh>.<schema>`.
-- **What is refused, before anything runs:** any `DROP` but `DROP TABLE`; what DuckDB's Iceberg writer doesn't have
+- **What is refused, before anything runs:** any `DROP` but `DROP TABLE` and `DROP SCHEMA`; what DuckDB's Iceberg writer doesn't have
   (`CREATE OR REPLACE`, `INSERT OR REPLACE`, `ON CONFLICT`, `TRUNCATE`, `COPY … FROM`); a view, a macro, a secret or any
   other `CREATE`; anything but `INSERT INTO` on a table that is Delta in OneLake; a warehouse, a
   SQL or mirrored database; a name of the engine's own (`lake`, `system_internal`, …); and a `COPY` to

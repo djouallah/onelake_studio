@@ -713,7 +713,7 @@
             "default": false,
             "scope": "machine",
             "order": 2,
-            "markdownDescription": "Let `DROP TABLE` delete a lakehouse's Iceberg table, its files with it. It can't be undone. Needs `#onelakeStudio.allowTableWrites#`. A Delta table is never dropped here: DuckDB can't drop one."
+            "markdownDescription": "Let `DROP TABLE` delete a lakehouse's Iceberg table, its files with it, and `DROP SCHEMA` delete a schema. It can't be undone. Needs `#onelakeStudio.allowTableWrites#`. A Delta table is never dropped here: DuckDB can't drop one."
           },
           "onelakeStudio.allowCopyToFiles": {
             "type": "boolean",

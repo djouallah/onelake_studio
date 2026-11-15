@@ -149,7 +149,7 @@ VS Code extension); nothing is written to Fabric or OneLake.
   `CREATE TABLE … AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE`, `CREATE SCHEMA`) and its
   `Files/` by `COPY (…) TO '<ws>.<lh>/Files/<path>'`. A target is `<ws>.<lh>.<schema>.<table>`. Each table
   is written in its own format, and a new one is made as Iceberg. A Delta table takes `INSERT` only.
-  `DROP TABLE` drops an Iceberg table only with Allow Drop Table on as well; any other `DROP` is refused, and so
+  `DROP TABLE` (an Iceberg table) and `DROP SCHEMA` run only with Allow Drop Table on as well; any other `DROP` is refused, and so
   is a write to a warehouse or anything
   not in a lakehouse. Write only when the user asks for it.
 - Several statements, separated by `;`, run in turn: the first that fails stops them, and the last one's rows are

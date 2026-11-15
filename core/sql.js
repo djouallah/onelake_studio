@@ -386,7 +386,7 @@ function tokens(sql) {
 
 const notRun = refuse;
 const TABLE_SHAPE = 'a write goes to a lakehouse table: <workspace>.<lakehouse>.<schema>.<table>';
-const SCHEMA_SHAPE = 'a schema is made in a lakehouse: <workspace>.<lakehouse>.<schema>';
+const SCHEMA_SHAPE = 'a schema is named in its lakehouse: <workspace>.<lakehouse>.<schema>';
 const FILE_SHAPE = "COPY writes to a lakehouse's Files/: TO '<workspace>.<lakehouse>/Files/<path>'";
 
 /**
@@ -408,8 +408,8 @@ function writeOf(sql) {
   }
   const verb = w(k);
   const VERB = (tk[k] && tk[k].v ? tk[k].v : 'this').toUpperCase();
-  // DROP TABLE is a write (engine-host.js lets it run only when Allow Drop Table is on); no other DROP is.
-  if (verb === 'drop' && w(k + 1) !== 'table') notRun('DROP is blocked: only DROP TABLE drops anything, and no schema is dropped');
+  // DROP TABLE and DROP SCHEMA are writes (engine-host.js lets them run only when Allow Drop Table is on); no other DROP is.
+  if (verb === 'drop' && !['table', 'schema'].includes(w(k + 1))) notRun('DROP is blocked: only DROP TABLE and DROP SCHEMA drop anything');
   if (verb === 'truncate') notRun("TRUNCATE isn't one of DuckDB's Iceberg writes");
   if (!['insert', 'update', 'delete', 'merge', 'create', 'alter', 'copy', 'drop'].includes(verb)) {
     notRun(`${VERB} is not a read, nor one of the writes to a lakehouse`);
@@ -471,6 +471,7 @@ function writeOf(sql) {
     if (w(k + 1) !== 'table') notRun(`ALTER ${(tk[k + 1] && tk[k + 1].v || '').toUpperCase()} isn't a write to a lakehouse: only ALTER TABLE is`);
     return as('alter', table(ifWords(k + 2, ['if', 'exists'])));
   }
+  if (verb === 'drop' && w(k + 1) === 'schema') return as('drop schema', schema(ifWords(k + 2, ['if', 'exists'])));
   if (verb === 'drop') return as('drop table', table(ifWords(k + 2, ['if', 'exists'])));
   if (verb === 'create') {
     if (w(k + 1) === 'or') notRun("CREATE OR REPLACE isn't one of DuckDB's Iceberg writes");
@@ -568,6 +569,7 @@ const SHAPES = {
     'create table': { roots: ['CREATE_TABLE', 'ICEBERG_INSERT'], lake: true },
     alter: { roots: ['ALTER'] },
     'drop table': { roots: ['DROP'] },
+    'drop schema': { roots: ['DROP'] },
     insert: { roots: ['ICEBERG_INSERT'], lake: true },
     // An UPDATE writes its rows anew (ICEBERG_INSERT, over the ICEBERG_UPDATE that marks the old ones deleted), or
     // marks them alone; a DELETE marks them; a MERGE does any of those under its MERGE_INTO.
@@ -1340,6 +1342,7 @@ async function writeWithNamespace(sql, ns, serialize, duck, listed) {
   else if ((verb === 'alter' || verb === 'drop') && w(1) === 'table') at = skip(2, ['if', 'exists']);
   else if (verb === 'create' && w(1) === 'table') at = skip(2, ['if', 'not', 'exists']);
   else if (verb === 'create' && w(1) === 'schema') { at = skip(2, ['if', 'not', 'exists']); schema = true; }
+  else if (verb === 'drop' && w(1) === 'schema') { at = skip(2, ['if', 'exists']); schema = true; }
   let out = text, target = null;
   const n = at >= 0 ? nameAt(at) : null;
   if (n && (schema ? n.parts.length === 1 : n.parts.length <= 2) && !isOwnCatalog(n.parts[0]) && !duck.databases.has(n.parts[0].toLowerCase())) {

@@ -1375,15 +1375,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     sql = withTableProperties(sql);
     const w = writeOf(sql);
     // The Writes settings (onelakeStudio.allowTableWrites, allowDropTable, allowCopyToFiles): nothing is sent while the
-    // one a statement needs is off, whoever sends it. A COPY to Files/ needs only its own; a DROP TABLE needs both of
-    // the tables' ones.
+    // one a statement needs is off, whoever sends it. A COPY to Files/ needs only its own; a DROP TABLE or DROP SCHEMA
+    // needs both of the tables' ones.
     if (w.target === 'file' ? !copyAllowed() : !tableWritesAllowed()) {
       throw Object.assign(new Error(w.target === 'file'
         ? "Not run: COPY to Files/ is off. Turn on Allow Copy to Files in OneLake Studio's settings."
         : "Not run: writing to a lakehouse's tables is off. Turn on Allow Table Writes in OneLake Studio's settings."), { writesOff: true });
     }
-    if (w.what === 'drop table' && !dropAllowed()) {
-      throw Object.assign(new Error("Not run: DROP TABLE is off. Turn on Allow Drop Table in OneLake Studio's settings."), { writesOff: true });
+    if ((w.what === 'drop table' || w.what === 'drop schema') && !dropAllowed()) {
+      throw Object.assign(new Error(`Not run: ${w.what.toUpperCase()} is off. Turn on Allow Drop Table in OneLake Studio's settings.`), { writesOff: true });
     }
     const why = offlineReason();
     if (why) {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **DROP SCHEMA runs, under Allow Drop Table.** `DROP SCHEMA [IF EXISTS] ws.lakehouse.schema`, or a bare name after a
+  `USE`, drops a lakehouse's schema as its Iceberg catalog drops one. Any `DROP` but `DROP TABLE` was refused.
 - **Fixed: DROP TABLE after a USE named its table in full.** `USE ws.lh.schema;` then `DROP TABLE IF EXISTS t` was refused as
   no lakehouse table: every other write took the bare name under the USE, and DROP did not.
 
