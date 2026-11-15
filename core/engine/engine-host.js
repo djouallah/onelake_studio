@@ -406,6 +406,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // DuckDB's own default unless told otherwise, 80% of RAM: it runs in a process of its own, not the extension host.
       if (memoryLimit) config.memory_limit = memoryLimit;
       if (threads > 0) config.threads = String(threads);
+      // Off: to keep rows in the order they were read, DuckDB holds what every thread has made until its turn
+      // comes, and a big write held it all in memory. A statement that wants an order says ORDER BY.
+      config.preserve_insertion_order = 'false';
       if (extensionDir) config.extension_directory = extensionDir;
       // The community extensions (h3, zipfs, nanoarrow) ship in the vsix and load by path, and a LOAD by
       // path knows only the core signing keys: so unsigned extensions are allowed when they are there.
@@ -433,9 +436,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // catch below, which is the same path a failed boot takes.
       if (closed) throw new Error('the engine was closed');
 
-      // preserve_insertion_order is left ON. Turning it off buys a little scan speed and
-      // costs a preview of a CSV or a sheet that shows its rows in a scrambled order.
-      //
       // The editor's proxy, before anything is downloaded. GLOBAL: a plain SET of an extension's setting holds for
       // this connection only, and every statement runs on one of its own.
       const proxy = proxySettings(httpProxy);

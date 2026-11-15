@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A big write no longer holds its rows in memory to keep their order.** DuckDB kept every thread's rows until
+  their turn came (`preserve_insertion_order`), which is what a big `CREATE TABLE AS` filled memory with. It is
+  off for the whole engine: rows come in the order DuckDB reads them, and a statement that wants an order says
+  `ORDER BY`.
 - **DROP SCHEMA runs, under Allow Drop Table.** `DROP SCHEMA [IF EXISTS] ws.lakehouse.schema`, or a bare name after a
   `USE`, drops a lakehouse's schema as its Iceberg catalog drops one. Any `DROP` but `DROP TABLE` was refused.
 - **Fixed: DROP TABLE after a USE named its table in full.** `USE ws.lh.schema;` then `DROP TABLE IF EXISTS t` was refused as

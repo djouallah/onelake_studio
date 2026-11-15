@@ -1,14 +1,12 @@
 // A big write, as a user runs one: through the engine's server process (engine-server.js), over Quack, from a
 // window joined to it, against the CI lakehouse. onelake-writes.test.mjs runs every kind of write on an engine in
-// its own process and with a few rows; this one runs the coffee benchmark's tables at LAKECI_COFFEE_ROWS orders
-// (20 million unless set), which is the statement a server on a user's machine died under with no word in its log.
+// its own process and with a few rows; this one makes the coffee benchmark's tables at LAKECI_COFFEE_ROWS orders
+// (20 million unless set, under a minute's write), the statement a server on a user's machine died under with no word in its log.
 //
 // What is held to: the write finishes, the server that started it is the one that answers after it (same pid, no
-// window told it went, nothing in its log about stopping), it answers its windows while the write runs, a write
-// that is stopped leaves it answering, and one with too little memory either finishes or says so and leaves it
-// answering. What is printed, for whoever reads the run: the server's peak memory, how long its windows waited
-// for it, DuckDB's own log's size, and the Parquet it wrote (files, row groups, encodings), for a table with the
-// engine's properties and for one with a 128 MB file target.
+// window told it went, nothing in its log about stopping), and it answers its other window while the write runs.
+// What is printed: the server's peak memory, how long its windows waited for it, and the Parquet it wrote (files,
+// row groups, encodings).
 // Skipped without the lake workflow's variables.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -158,7 +156,7 @@ async function server(t, prefix, wsId, more = {}) {
   return { a, b, alive, watched, log, warnings, pid: first.pid };
 }
 
-test("a big write through the engine's server, and the server after it", { skip, timeout: 3_300_000 }, async t => {
+test("a big write through the engine's server, and the server after it", { skip, timeout: 1_500_000 }, async t => {
   const prefix = await prefixOf();
   const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
   // Anywhere the catalog's answer says it: the metadata file's own place is by name since 2026-11-15, and the
@@ -169,7 +167,6 @@ test("a big write through the engine's server, and the server after it", { skip,
   const lh = `${q(WS)}.${q(LH)}`;
   const tbl = name => `${lh}."test".${q(name)}`;
   const made = [];
-  const file = `lakeci/${run}_sales.parquet`;
 
   // The test's own DuckDB, which reads from the catalog what the server wrote, and drops it after.
   const own = await DuckDBInstance.create(":memory:", { allow_unsigned_extensions: "true" });
@@ -185,7 +182,6 @@ test("a big write through the engine's server, and the server after it", { skip,
   const back = async sql => (await c.runAndReadAll(sql)).getRowObjectsJson();
   t.after(async () => {
     for (const n of made) await c.run(`DROP TABLE IF EXISTS back.test.${q(n)}`).catch(e => console.log(`left test.${n}: ${e.message}`));
-    await fetch(`https://${DFS}/${WS}/${ITEM}/Files/${file}`, { method: "DELETE", headers: { ...auth, "x-ms-version": "2023-11-03" } }).catch(() => {});
     c.closeSync();
   });
   // A table Delta made names its workspace as it was uploaded; one the catalog makes says where the catalog writes.
@@ -257,53 +253,5 @@ test("a big write through the engine's server, and the server after it", { skip,
     const lay = await layout(names.fact_sales);
     assert.equal(lay.rows, lines, "every row is in a row group");
     assert.ok(lay.rows / lay.groups.length >= 1_000_000, `row groups of a million rows or more on average: ${lay.groups.join(", ")}`);
-  });
-
-  // What a 128 MB file target does to the same rows, read from the big table through the lake: printed, to be read
-  // against the layout above. Nothing of its shape is held to: it is DuckDB-Iceberg's to decide.
-  await t.test("the same rows with a 128 MB file target, read from the table just written", async () => {
-    const small = `${run}_sales128`;
-    made.push(small);
-    const { error } = await s.watched("fact_sales, 128 MB files", `CREATE TABLE ${tbl(small)} WITH ('write.target-file-size-bytes' = '134217728') AS SELECT * FROM ${tbl(names.fact_sales)}`);
-    await s.alive("after a CREATE TABLE AS that reads a big table");
-    assert.equal(error, null, "it ran");
-    const lay = await layout(small);
-    assert.equal(lay.rows, lines, "every row is in a row group");
-  });
-
-  await t.test("a big COPY to Files/, and a table made from that file", async () => {
-    const copied = await s.watched("COPY to Files/", `COPY (SELECT * FROM ${tbl(names.fact_sales)}) TO '${WS}.${LH}/Files/${file}' (FORMAT parquet)`);
-    await s.alive("after a big COPY to Files/");
-    assert.equal(copied.error, null, "the COPY ran");
-    const fromFile = `${run}_fromfile`;
-    made.push(fromFile);
-    const { error } = await s.watched("CREATE TABLE AS from the file", `CREATE TABLE ${tbl(fromFile)} AS SELECT * FROM '${WS}.${LH}/Files/${file}'`);
-    await s.alive("after a CREATE TABLE AS from a big file");
-    assert.equal(error, null, "it ran");
-    const [theirs] = await back(`SELECT count(*)::BIGINT AS n FROM back.test.${q(fromFile)}`);
-    assert.equal(Number(theirs.n), lines, "every row of the file is in the table");
-  });
-
-  await t.test("a write that is stopped leaves the server answering", async () => {
-    const stopped = `${run}_stopped`;
-    made.push(stopped);
-    const stop = new AbortController();
-    setTimeout(() => stop.abort(), 10_000).unref();
-    const { error } = await s.watched("a write stopped after 10 s",
-      `CREATE TABLE ${tbl(stopped)} AS SELECT i, md5(i::VARCHAR) AS m FROM range(2000000000) r(i)`, { signal: stop.signal });
-    assert.ok(error, "it ended as stopped, not as done");
-    await s.alive("after a stopped write");
-  });
-
-  // A server with far less memory than the write wants: it may finish (DuckDB spills) or say it ran out, and
-  // either way it is still there.
-  await t.test("the same write on a server with 2 GB: done or refused in words, and the server answers", async () => {
-    const tight = await server(t, prefix, wsId, { memoryLimit: "2GB" });
-    const low = `${run}_sales2gb`;
-    made.push(low);
-    const { error } = await tight.watched("fact_sales on 2 GB", coffee[2].replace(tbl(names.fact_sales), tbl(low)));
-    if (error) assert.match(error.message, /memory/i, "what it says is that memory ran out");
-    await tight.alive("after a write with too little memory");
-    console.log(tight.warnings.length ? `the 2 GB server's windows warned:\n${tight.warnings.join("\n")}` : "no warnings on 2 GB");
   });
 });

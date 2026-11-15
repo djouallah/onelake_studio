@@ -163,7 +163,7 @@ jobs:
           - { os: ubuntu-26.04, target: linux-x64 }
           - { os: windows-latest, target: win32-x64 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write

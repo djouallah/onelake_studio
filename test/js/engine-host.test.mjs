@@ -609,11 +609,6 @@ test("native engine host", async t => {
     assert.equal(batches[0].numRows, 0);
   });
 
-  await t.test("rows come back in insertion order", async () => {
-    const r = await engine.call("query", ["SELECT * FROM (VALUES (3), (1), (2)) t(x)"]);
-    assert.deepEqual(r.rows.map(x => x.x), [3, 1, 2]);
-  });
-
   await t.test("past the row cap the host counts, it does not convert", async () => {
     const { res, batches } = await collect("SELECT range AS i FROM range(250000)");
     const kept = batches.reduce((n, b) => n + b.rows.length, 0);
