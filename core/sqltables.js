@@ -332,9 +332,9 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   // catalog answers to (by those names, as catalog.js asks it), and the storage scopes its files are written under.
   // OneLake's catalog puts a table it makes under the workspace's GUID, abfs://<guid>@<host>/<item guid>/Tables/…,
   // which no OneLake listing names but a table's own metadata: so the GUID is read off a table of the workspace, the
-  // lakehouse's own first, from what the store keeps: the table's location, or its metadata file's, which named the
-  // workspace by GUID too until 2026-11-15 and by name since. Only a workspace with no table yet asks the Fabric
-  // API, once.
+  // lakehouse's own first, from what the store keeps: where the catalog says the table's data is written
+  // (write.data.path), or its metadata file's place, which named the workspace by GUID too until 2026-11-15 and by
+  // name since. Only a workspace with no table yet asks the Fabric API, once.
   const wsGuids = new Map();
   const GUID_AT = /^abfss?:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})@/i;
   async function workspaceGuid(ws, dir) {
