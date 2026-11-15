@@ -728,16 +728,17 @@ function on(m) {
 // ---------------------------------------------------------------------------
 const events = new EventSource('/events');
 let lostTimer = null;
-// A tab's messages wait for `boot`, which says where its page is: a file that started the app opened its tab before
-// the window had it, and the tab stayed blank. They go in the order they came once it's here. The rest are drawn
-// again from `boot` anyway.
+// A tab's messages wait for this script to have run whole: `boot` says where its page is, and the keys its page takes are
+// consts further down. A file that started the app opened its tab before then, and the tab stayed blank. They go in
+// the order they came, at the end. The rest are drawn again from `boot` anyway.
+let started = false;
 const beforeBoot = [];
 const NEEDS_BOOT = /^(tab-|text-tab$|open-settings$)/;
 const handle = m => { try { on(m); } catch (err) { console.error(err); } };
 events.onmessage = e => {
   let m;
   try { m = JSON.parse(e.data); } catch (err) { console.error(err); return; }
-  if (!boot && m && NEEDS_BOOT.test(m.t)) beforeBoot.push(m); else handle(m);
+  if (!started && m && NEEDS_BOOT.test(m.t)) beforeBoot.push(m); else handle(m);
 };
 events.onopen = () => { clearTimeout(lostTimer); $('lost').hidden = true; };
 events.onerror = () => {
@@ -758,7 +759,6 @@ ui = { ...ui, ...boot.window };
 drawStatus();
 drawHeader();
 reload();
-for (const m of beforeBoot.splice(0)) handle(m);
 
 $('empty-query').addEventListener('click', () => runCommand('onelakeStudio.newQuery'));
 
@@ -969,3 +969,6 @@ drawBar();
 $('side').style.width = `${ui.width}px`;
 showTree(ui.tree, false);
 if (ui.zoom !== 1) call('app.zoom', ui.zoom).catch(() => {});
+// What came for a tab before this script had run, now that it has.
+started = true;
+for (const m of beforeBoot.splice(0)) handle(m);
