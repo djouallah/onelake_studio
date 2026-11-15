@@ -65,7 +65,12 @@ try {
     await page.goto(url);
     await page.locator(".tab", { hasText: "from disk.sql" }).waitFor({ timeout: 30_000 });
     const box = page.frameLocator("#pages iframe").first().locator("#sqlEditor");
-    await box.waitFor({ timeout: 60_000 });
+    await box.waitFor({ timeout: 60_000 }).catch(async e => {
+      await page.screenshot({ path: join(shots, "1a-file-from-disk-failed.png") });
+      console.error("tabs:", await page.locator(".tab").allInnerTexts(),
+        "frames:", await page.locator("#pages iframe").evaluateAll(fs => fs.map(f => `${f.className} ${f.src}`)));
+      throw e;
+    });
     assert.match(await box.inputValue(), /opened from disk/);
     await page.screenshot({ path: join(shots, "1a-file-from-disk.png") });
     await page.locator(".tab", { hasText: "from disk.sql" }).locator("button.close").click();
@@ -237,6 +242,8 @@ try {
   console.log("all passed");
 } catch (e) {
   if (proc) console.error(proc.stderr());
+  // What the app said of itself, for a failure CI can't show otherwise.
+  console.error(`--- desktop.log\n${await readFile(join(home, "desktop.log"), "utf8").catch(() => "(none)")}`);
   throw e;
 } finally {
   await browser.close();
