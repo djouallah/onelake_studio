@@ -682,7 +682,7 @@ WHERE NOT EXISTS (SELECT 1 FROM onelake_logs WHERE NOT setup AND sql NOT LIKE '%
   let said = "";
   await until("the log has them", async () => {
     const r = await runIt(sql);
-    said = isError(r) ? r.status : /none/.test(r.table) ? 'none' : r.table;
+    said = isError(r) ? r.status : /\bnone\b/.test(r.table) ? 'none' : r.table;
     return said === "none";
   }, 30000).catch(() => {});
   return said;
@@ -690,7 +690,7 @@ WHERE NOT EXISTS (SELECT 1 FROM onelake_logs WHERE NOT setup AND sql NOT LIKE '%
 // How many statements the log has, and the newest one's time, in ms.
 async function logsCounted(sql) {
   const r = await runIt(sql);
-  const m = /n=(d+);last=(d+)/.exec(r.table);
+  const m = /n=(\d+);last=(\d+)/.exec(r.table);
   if (!m) throw new Error(r.table || r.status);
   return { n: Number(m[1]), last: Number(m[2]) };
 }
