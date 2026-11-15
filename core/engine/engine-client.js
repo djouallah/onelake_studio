@@ -54,7 +54,8 @@ const PING_WAIT_MS = 30_000;
  * call `onStuck()` once. A check that fails at once isn't a miss: something answered. Gives back stop().
  * A server whose loop or DuckDB stopped answering was waited on for ever, by every window.
  */
-function watchdog({ check, onStuck, everyMs, waitMs, misses = 2 }) {
+// `stuck`, when given, has the last word after the misses: false, and they count again from none.
+function watchdog({ check, onStuck, everyMs, waitMs, misses = 2, stuck = () => true }) {
   let missed = 0, busy = false, done = false;
   const timer = setInterval(async () => {
     if (busy || done) return;
@@ -64,7 +65,10 @@ function watchdog({ check, onStuck, everyMs, waitMs, misses = 2 }) {
     try {
       const got = await Promise.race([Promise.resolve().then(check).then(() => 'ok', () => 'ok'), late]);
       missed = got === 'late' ? missed + 1 : 0;
-      if (missed >= misses && !done) { done = true; clearInterval(timer); onStuck(); }
+      if (missed >= misses && !done) {
+        if (!stuck()) missed = 0;
+        else { done = true; clearInterval(timer); onStuck(); }
+      }
     } finally { clearTimeout(timeout); busy = false; }
   }, everyMs);
   if (timer.unref) timer.unref();

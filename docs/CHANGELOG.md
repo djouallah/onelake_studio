@@ -13,8 +13,9 @@
   statements or the errors; Run again for what ran since. Its own tab is gone: it was sent the latest 1,000 statements in
   full every few seconds, 18 MB on a busy log, and opening a line could hang it.
 - **A stuck engine is replaced.** A window asks its engine every 20 s whether it's there, and the engine checks its own
-  DuckDB every 30 s. With no answer for about a minute, or no DuckDB answer for 4, the engine is stopped and the next
-  table opened starts a new one. An engine stuck on a statement left the window waiting for ever.
+  DuckDB every 30 s. With no answer for about a minute, or no DuckDB answer for 4 minutes and next to no CPU used,
+  the engine is stopped and the next table opened starts a new one. An engine busy on a long query is left alone.
+  An engine stuck on a statement left the window waiting for ever.
 - **The desktop app shares nothing with the extension.** It kept its files in VS Code's folder for the extension when
   there was one: two engines then wrote one log and one catalog. It keeps everything in its own folder now, its
   settings and sign-in too, so it asks you to sign in once.

@@ -1797,10 +1797,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const allowStorageHere = scopes => init().then(() => allowStorage(scopes));
   // What the engine ran, newest first, read with no statement of its own (a tab reads it as onelake_logs).
   const logs = limit => init().then(() => (remote ? instance.logs(limit) : []));
-  // What the server's watchdog asks (engine-server.js): a statement through the host's own queue, then on a connection
-  // of its own, as a window's goes.
-  const health = () => init().then(() => admin(() => conn.run('SELECT 1')))
-    .then(() => withConn(c => c.run('SELECT 1'), agentLive)).then(() => true);
+  // What the server's watchdog asks (engine-server.js): DuckDB itself, on a connection of its own. Not through the host's
+  // queue: syncing a large table holds that for minutes, and a busy engine was taken for a stuck one.
+  const health = () => init().then(async () => {
+    const c = await instance.connect();
+    try { await c.run('SELECT 1'); } finally { try { c.closeSync(); } catch (_) {} }
+    return true;
+  });
 
   // serve: once Quack is listening, what a window needs to know of this engine.
   async function boot() {

@@ -36,6 +36,8 @@ const sameToken = (a, b) => {
 // What a connection may send before it has said who it is, and how long it has to say it: a window's first line is
 // its token and its name, a few hundred bytes, sent at once. And the longest line a window sends after.
 const MAX_HELLO = 64 * 1024;
+// Less CPU than this in the 4 minutes a stuck DuckDB doesn't answer, across all its threads: nothing is running.
+const IDLE_CPU_S = 5;
 const HELLO_MS = 10_000;
 const MAX_LINE = 64 * 1024 * 1024;
 
@@ -220,15 +222,21 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
       .catch(e => { log(`no way to cancel a gone window's queries: ${e.message}`); return null; });
   });
   await booted;
-  // DuckDB that stops answering: a SELECT 1 through the waits a window's statement goes through, every 30 s. With no
-  // answer in 2 minutes, twice running, this server says so and goes, and its windows start another.
+  // DuckDB that stops answering: a SELECT 1 on a connection of its own, every 30 s. With no answer in 2 minutes,
+  // twice running, and next to no CPU used meanwhile, this server says so and goes, and its windows start another.
+  // A query that keeps every core busy can make a SELECT 1 wait as long: that engine is working, not stuck.
+  let cpuAt = process.cpuUsage();
   watchdog({
-    check: () => engine.health(), everyMs: 30_000, waitMs: 120_000, misses: 2,
+    check: () => engine.health().finally(() => { cpuAt = process.cpuUsage(); }),
+    everyMs: 30_000, waitMs: 120_000, misses: 2,
+    stuck: () => {
+      const used = process.cpuUsage(cpuAt);
+      return (used.user + used.system) / 1e6 < IDLE_CPU_S;
+    },
     onStuck: () => {
-      log('stuck: DuckDB answered no SELECT 1 for 4 minutes');
-      // Its own close can wait on what is stuck too.
-      setTimeout(() => process.exit(1), 10_000).unref();
-      shutdown('stuck');
+      log('stuck: DuckDB answered no SELECT 1 for 4 minutes, and used no CPU');
+      // Ended at once: process.exit waits for DuckDB's threads, which are what is stuck.
+      process.kill(process.pid, 'SIGKILL');
     },
   });
   watchIdle();

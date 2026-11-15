@@ -751,4 +751,11 @@ test("a watchdog calls a check that never answers stuck, once, and one that answ
   await sleep(150);
   ok(); failing();
   assert.equal(alive, 0);
+  // A check that doesn't answer, from an engine busy on a query (stuck says no): working, not stuck.
+  let busy = 0, asked = 0;
+  const working = watchdog({ check: () => new Promise(() => {}), stuck: () => { asked++; return false; }, onStuck: () => { busy++; }, everyMs: 10, waitMs: 20, misses: 2 });
+  await sleep(200);
+  working();
+  assert.equal(busy, 0, "never called stuck");
+  assert.ok(asked >= 1, "asked each time the misses add up");
 });
