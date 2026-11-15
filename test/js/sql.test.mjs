@@ -475,7 +475,7 @@ test("where the target is written is where it is named again", () => {
 
 test("what isn't one of DuckDB's Iceberg writes to a lakehouse is refused, saying why", () => {
   const refused = [
-    ["drop schema aemo.data.raw cascade", /DROP is blocked/],
+    ["drop schema aemo.data", /schema is named in its lakehouse/],
     ["DROP VIEW aemo.data.dbo.v", /DROP is blocked/],
     ["DROP TABLE onelake.main.t", /engine's own/],
     ["TRUNCATE aemo.data.dbo.monthly", /TRUNCATE isn't/],

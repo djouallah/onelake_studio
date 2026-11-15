@@ -99,8 +99,8 @@ ATTACH ':memory:' AS x
 ----
 Not run
 
-# What the page sends to set up its reads is the page's. DROP TABLE drops a lakehouse's table only, and only
-# with Allow Drop Table on (off here, as by default); any other DROP is blocked.
+# What the page sends to set up its reads is the page's. DROP TABLE and DROP SCHEMA drop a lakehouse's table or
+# schema only, and only with Allow Drop Table on (off here, as by default); any other DROP is blocked.
 statement error
 DROP TABLE onelake.main.not_a_table
 ----
@@ -119,7 +119,7 @@ DROP is blocked
 statement error
 DROP SCHEMA cat1 CASCADE
 ----
-DROP is blocked
+schema is named in its lakehouse
 
 statement error
 DETACH lakehouse
