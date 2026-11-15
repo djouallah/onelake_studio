@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.25
 
 - **Every statement's result in a run of several.** The last one's result shows, and a selector above the grid
   switches to any statement of the run, its status line with it. The last 30 results are kept.
