@@ -531,11 +531,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
       // What the engine ran, for SQL: the server's log file (logfile.js), read only, as onelake_logs. A view in the
       // engine's own database, so a USE leaves its bare name alone. DuckDB refuses a write to it, and so does the guard
-      // (sql.js OWN_CATALOGS). Attached before the lockdown, which would refuse it after.
+      // (sql.js OWN_CATALOGS). Attached before the lockdown, which would refuse it after. Its columns are named so
+      // they need no quotes: `at` is a keyword to DuckDB (`AT (VERSION => …)`), and `SELECT at, …` failed to parse.
       if (serve && logsFile && capabilities.sqlite_scanner) {
         try {
           await conn.run(`ATTACH ${sqlStr(String(logsFile).replace(/\\/g, '/'))} AS studio_logs (TYPE sqlite, READ_ONLY);`);
-          await conn.run(`CREATE OR REPLACE VIEW main.onelake_logs AS SELECT epoch_ms(ts) AS at, status, ms, sql, error, win AS client
+          await conn.run(`CREATE OR REPLACE VIEW main.onelake_logs AS SELECT epoch_ms(ts) AS logged_at, status, ms, sql, error, win AS client
             FROM studio_logs.logs;`);
         } catch (e) { onWarn(`the log can't be read with SQL (onelake_logs) — ${e.message}`); }
       }

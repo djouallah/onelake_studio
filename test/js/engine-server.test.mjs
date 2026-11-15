@@ -725,7 +725,7 @@ test("the log is a table a tab reads: onelake_logs, which no statement can chang
   await tab.call("query", ["SELECT 'find me in the log' AS marker"]);
   let rows = [];
   for (let i = 0; i < 40 && !rows.length; i++) {
-    rows = (await tab.call("query", ["SELECT status, ms, sql FROM onelake_logs WHERE sql LIKE '%find me in the log%' AND sql NOT LIKE '%onelake_logs%'"])).rows;
+    rows = (await tab.call("query", ["SELECT logged_at, status, ms, sql, error, client FROM onelake_logs WHERE sql LIKE '%find me in the log%' AND sql NOT LIKE '%onelake_logs%'"])).rows;
     if (!rows.length) await sleep(500);
   }
   assert.equal(rows.length >= 1, true, "the statement is in onelake_logs");
