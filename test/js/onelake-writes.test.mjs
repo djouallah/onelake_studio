@@ -74,6 +74,7 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   // table's location inside it may still be by GUID.
   const guidIn = answer => (/abfss?:\/\/([0-9a-f]{8}-[0-9a-f-]{27})@/i.exec(JSON.stringify(answer)) || [])[1] || null;
   let wsId = guidIn(known);
+  console.log(`the catalog's answer: metadata-location ${known["metadata-location"]}, location ${known.metadata && known.metadata.location}`);
   console.log(`prefix ${prefix}, workspace ${wsId || `by name only: ${known["metadata-location"]}`}`);
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));

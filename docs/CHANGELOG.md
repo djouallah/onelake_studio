@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A write finds where the catalog writes from the table itself.** OneLake's Iceberg catalog now names the
+  workspace, not its GUID, in a table's metadata file path (since 2026-11-15), so every write asked the Fabric API
+  for the GUID. It is read from the table's own location, which the catalog still gives by GUID. Only a workspace
+  with no table yet asks Fabric.
 - **A big write no longer holds its rows in memory to keep their order.** DuckDB kept every thread's rows until
   their turn came (`preserve_insertion_order`), which is what a big `CREATE TABLE AS` filled memory with. It is
   off for the whole engine: rows come in the order DuckDB reads them, and a statement that wants an order says

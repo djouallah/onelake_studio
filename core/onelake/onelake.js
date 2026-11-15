@@ -51,11 +51,14 @@ function summarize(metadata, metadataLocation) {
   // Which table this is: one dropped and made again at the same path starts its Delta log over at 0, and
   // what was kept of the old one's log must not answer for it.
   const tableUuid = metadata['table-uuid'] || null;
+  // Where the table's files are, as the catalog writes them: under the workspace's GUID, which a write's storage
+  // scopes need (sqltables.js workspaceGuid). The metadata file's own place names the workspace instead.
+  const location = metadata.location ? String(metadata.location) : null;
   // Listed by the catalog but never written: snapshot -1, no snapshots, no files. DuckDB
   // opens it as an empty table against the right schema.
   if (!snap || String(curId) === '-1' || !snapshots.length) {
     return { empty: true, schemaFields: names.icebergFields(schema), totalRecords: 0, stats: null,
-             metadataLocation, format, ...(tableUuid ? { tableUuid } : {}) };
+             metadataLocation, format, ...(tableUuid ? { tableUuid } : {}), ...(location ? { location } : {}) };
   }
   return {
     empty: false,
@@ -74,6 +77,7 @@ function summarize(metadata, metadataLocation) {
     metadataLocation,
     format,
     ...(tableUuid ? { tableUuid } : {}),
+    ...(location ? { location } : {}),
   };
 }
 

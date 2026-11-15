@@ -92,6 +92,18 @@ test("a bare name is a table only in a workspace OneLake has; elsewhere it is Du
   assert.equal(count(w, "workspaces"), 1);
 });
 
+test("a write's scopes carry the workspace's GUID, read off a table's location with nothing asked of Fabric", async () => {
+  const w = world();
+  const guid = "67d3feed-4012-4319-b231-c184031d3617";
+  // As OneLake's catalog answers since 2026-11-15: the metadata file's place by name, the table's by GUID.
+  w.catalog.loadTable = async () => ({ metadata: { ...metadata, location: `abfss://${guid}@onelake.dfs.fabric.microsoft.com/4be44169-0fe1-48cb-8b10-cd333a14a84e/Tables/dbo/t` },
+    metadataLocation: "abfss://ws@onelake.dfs.fabric.microsoft.com/old.Lakehouse/Tables/dbo/t/metadata/v3.metadata.json" });
+  w.fabric.workspaceId = async () => { w.calls.push("fabric"); return "from-fabric"; };
+  const lh = await w.sql.lakehouseOf({ workspace: "ws", item: "old" });
+  assert.ok(lh.scopes.includes(`abfss://${guid}@onelake.dfs.fabric.microsoft.com/`), lh.scopes.join(" "));
+  assert.equal(count(w, "fabric"), 0);
+});
+
 test("ws.old_lakehouse is lakehouse old, or the lakehouse named old_lakehouse; with both, it is refused", async () => {
   const w = world();
   const lh = await w.sql.resolve({ ...ref("old_lakehouse"), bare: true });
