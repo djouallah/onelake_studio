@@ -1337,7 +1337,7 @@ async function writeWithNamespace(sql, ns, serialize, duck, listed) {
   if (verb === 'insert' && w(1) === 'into') at = 2;
   else if (verb === 'update') at = 1;
   else if ((verb === 'delete' && w(1) === 'from') || (verb === 'merge' && w(1) === 'into')) at = 2;
-  else if (verb === 'alter' && w(1) === 'table') at = skip(2, ['if', 'exists']);
+  else if ((verb === 'alter' || verb === 'drop') && w(1) === 'table') at = skip(2, ['if', 'exists']);
   else if (verb === 'create' && w(1) === 'table') at = skip(2, ['if', 'not', 'exists']);
   else if (verb === 'create' && w(1) === 'schema') { at = skip(2, ['if', 'not', 'exists']); schema = true; }
   let out = text, target = null;

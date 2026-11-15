@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: DROP TABLE after a USE named its table in full.** `USE ws.lh.schema;` then `DROP TABLE IF EXISTS t` was refused as
+  no lakehouse table: every other write took the bare name under the USE, and DROP did not.
+
 ## 0.2.25
 
 - **A .sql file from disk opens with no sign-in.** Signed out, its tab opens at once; a statement that reads OneLake

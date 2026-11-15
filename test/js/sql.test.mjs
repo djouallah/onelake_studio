@@ -669,6 +669,9 @@ test("under a USE, a bare name is the schema's table, and the engine's own stays
     ["CREATE TABLE IF NOT EXISTS x AS SELECT 1", "CREATE TABLE IF NOT EXISTS aemo.data.dbo.x AS SELECT 1"],
     ["CREATE SCHEMA raw", "CREATE SCHEMA aemo.data.raw"],
     ["DELETE FROM t WHERE a = 1", "DELETE FROM aemo.data.dbo.t WHERE a = 1"],
+    // coffee.sql: USE, then a bare DROP TABLE, which was refused as no lakehouse table.
+    ["DROP TABLE IF EXISTS fact_sales", "DROP TABLE IF EXISTS aemo.data.dbo.fact_sales"],
+    ["DROP TABLE mart.t", "DROP TABLE aemo.data.mart.t"],
     ["INSERT INTO aemo.data.dbo.t SELECT 1", "INSERT INTO aemo.data.dbo.t SELECT 1"],
     ["INSERT INTO cat1.t SELECT 1", "INSERT INTO cat1.t SELECT 1"]]) {
     assert.equal(await writeWithNamespace(w, lh, none, duck), want, w);
