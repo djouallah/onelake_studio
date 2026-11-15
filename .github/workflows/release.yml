@@ -30,6 +30,7 @@ jobs:
   # The tag names the version its commit's package.json says, and that commit has a green build.
   build:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -63,6 +64,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     environment: azure
     permissions:
       contents: read
@@ -112,6 +114,7 @@ jobs:
   installer:
     needs: [build, publish]
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     permissions:
       contents: write
       actions: read

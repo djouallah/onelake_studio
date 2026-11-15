@@ -66,11 +66,12 @@ function resolverFor(prefix) {
 
 test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { skip, timeout: 900_000 }, async t => {
   const prefix = await prefixOf();
-  // The workspace's GUID, off a table of it, as sqltables.js lakehouseOf reads it: the catalog writes there.
+  // The workspace's GUID, off a table of it, as sqltables.js lakehouseOf reads it: the catalog has written there.
+  // It names the workspace either way (by GUID until 2026-11-15, by name since), and with no GUID to read the
+  // scopes are the name's alone, as lakehouseOf's are.
   const known = await (await loadTable(prefix, "test", "lakeci_plain")).json();
-  const wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1];
-  assert.ok(wsId, `a table's metadata names its workspace by GUID: ${known["metadata-location"]}`);
-  console.log(`prefix ${prefix}, workspace ${wsId}`);
+  const wsId = (/^abfss?:\/\/([0-9a-f-]{36})@/i.exec(known["metadata-location"]) || [])[1] || null;
+  console.log(`prefix ${prefix}, workspace ${wsId || `by name only: ${known["metadata-location"]}`}`);
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const warnings = [], written = [];
@@ -87,7 +88,7 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
       assert.equal(String(ref.workspace).toLowerCase(), WS.toLowerCase());
       assert.equal(String(ref.item).toLowerCase(), LH.toLowerCase());
       return { workspace: WS, item: ITEM, warehouse: WAREHOUSE,
-               scopes: [WS, wsId].flatMap(w => [`abfss://${w}@${DFS}/`, `abfs://${w}@${DFS}/`]) };
+               scopes: [WS, ...(wsId ? [wsId] : [])].flatMap(w => [`abfss://${w}@${DFS}/`, `abfs://${w}@${DFS}/`]) };
     },
     resolveTable: resolverFor(prefix),
     resolveFile: async () => ({ workspace: WS, item: ITEM }),

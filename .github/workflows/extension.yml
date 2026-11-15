@@ -111,6 +111,7 @@ jobs:
   # matrix, so a red test costs no build minutes.
   test:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -130,6 +131,7 @@ jobs:
   # before it was here: a lockfile made behind a mirror, a dependency with a known hole.
   checks:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -158,6 +160,7 @@ jobs:
   # no use for it. The first run found Download CSV broken in every model's Visual: a key written twice.
   lint:
     runs-on: ubuntu-26.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -211,10 +214,11 @@ jobs:
           NO_SKIP: 1
         run: |
           for i in 1 2 3; do
-            node test/js/engine-host.test.mjs > "$RUNNER_TEMP/engine-host-$i.log" 2>&1
-            code=$?
+            # The step's shell stops at the first command that fails, which is the one being asked about.
+            code=0
+            node test/js/engine-host.test.mjs > "$RUNNER_TEMP/engine-host-$i.log" 2>&1 || code=$?
             echo "::group::run $i: exit code $code"
-            grep -E "^(not )?ok |^# |Error|error|signal|abort|Assertion" "$RUNNER_TEMP/engine-host-$i.log" | tail -40
+            grep -E "^(not )?ok |^# |Error|error|signal|abort|Assertion" "$RUNNER_TEMP/engine-host-$i.log" | tail -40 || true
             echo "--- its last lines"
             tail -25 "$RUNNER_TEMP/engine-host-$i.log"
             echo "::endgroup::"
@@ -254,6 +258,7 @@ jobs:
         include:
           - { os: windows-latest, node: 22 }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -306,6 +311,7 @@ jobs:
   # to fail a leg), and Export to Fabric's function package.
   prepare:
     runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -325,6 +331,7 @@ jobs:
   package:
     needs: [test, checks, lint, engine, cli-os, page, prepare]
     runs-on: ubuntu-26.04
+    timeout-minutes: 30
     strategy:
       # Every leg's failure is worth seeing in the same run; a release needs ALL of them green
       # anyway, so cancelling early protects nothing.

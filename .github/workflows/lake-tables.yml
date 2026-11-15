@@ -6,6 +6,8 @@
 #   onelake: the same cases uploaded to fabriccat (workspace tmp, lakehouse data, Tables/test/lakeci_*), read
 #            there, and the table service for real: what a statement reads comes down over HTTPS, and reads with
 #            the token gone. Then SQL's writes there: Iceberg tables and a file (test/js/onelake-writes.test.mjs).
+#   server-writes: a big write through the engine's server process, on Linux and on Windows, and the server
+#            after it (test/js/onelake-server-writes.test.mjs).
 #   export:  Export to Fabric from this checkout, published to the same workspace (test/js/export-fabric.test.mjs);
 #            then the app's page in Chrome, reading a table of that lakehouse (test/js/run-fabric-app.mjs), and
 #            the app whole on a local Rayfin backend, from its sign-in to its Report (test/js/run-fabric-local.mjs).
@@ -142,7 +144,63 @@ jobs:
           NO_SKIP: 1
       # SQL's writes: DuckDB's Iceberg writes through the lakehouse's Iceberg catalog, and a COPY to its Files/,
       # on the engine with its lockdown. The tables a run makes are dropped by the test, past the engine.
-      - run: node --test test/js/onelake-writes.test.mjs
+      # Run whatever the tables' test said: it reads, this writes, and neither needs the other.
+      - if: ${{ !cancelled() }}
+        run: node --test test/js/onelake-writes.test.mjs
+        env:
+          ONELAKE_CI_WORKSPACE: ${{ vars.ONELAKE_CI_WORKSPACE }}
+          ONELAKE_CI_LAKEHOUSE: ${{ vars.ONELAKE_CI_LAKEHOUSE }}
+          NO_SKIP: 1
+
+  # A big write as a user runs one: through the engine's server process, over Quack, on Linux and on Windows, where
+  # most of them are. The coffee benchmark's tables at 20 million orders, then the server asked whether it is still
+  # the one that started. Each run's tables carry its platform and its time, and are dropped by the test.
+  server-writes:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-26.04, target: linux-x64 }
+          - { os: windows-latest, target: win32-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: duckdb-extensions
+          key: duckdb-extensions-${{ matrix.target }}-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
+      - run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
+      - name: Sign in to fabriccat as fabric-github-deploy
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.ONELAKE_CI_CLIENT_ID }}
+          tenant-id: ${{ vars.ONELAKE_CI_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: A storage token for OneLake
+        shell: bash
+        run: |
+          t=$(az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv)
+          echo "::add-mask::$t"
+          echo "ONELAKE_TOKEN=$t" >> "$GITHUB_ENV"
+      - name: The system's CA bundle where the azure extension looks
+        if: runner.os == 'Linux'
+        run: |
+          for p in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem /etc/pki/tls/cacert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/cert.pem; do
+            if [ ! -e "$p" ]; then sudo mkdir -p "$(dirname "$p")"; sudo ln -s /etc/ssl/certs/ca-certificates.crt "$p"; fi
+          done
+          echo "CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+          echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+      - run: node --test test/js/onelake-server-writes.test.mjs
         env:
           ONELAKE_CI_WORKSPACE: ${{ vars.ONELAKE_CI_WORKSPACE }}
           ONELAKE_CI_LAKEHOUSE: ${{ vars.ONELAKE_CI_LAKEHOUSE }}
