@@ -718,3 +718,35 @@ test("a tab whose session the server lost goes on: its statement runs again on a
   assert.doesNotMatch(e.message, /\.query\(/, "with no wrapper of ours in it");
   assert.deepEqual((await holding.call("query", ["SELECT getvariable('kept') AS v, 4 AS next"])).rows, [{ v: null, next: 4 }]);
 });
+
+test("the log is a table a tab reads: onelake_logs, which no statement can change", async t => {
+  const a = (await setup(t)).open();
+  const tab = a.forTab();
+  await tab.call("query", ["SELECT 'find me in the log' AS marker"]);
+  let rows = [];
+  for (let i = 0; i < 40 && !rows.length; i++) {
+    rows = (await tab.call("query", ["SELECT status, ms, sql FROM onelake_logs WHERE sql LIKE '%find me in the log%' AND sql NOT LIKE '%onelake_logs%'"])).rows;
+    if (!rows.length) await sleep(500);
+  }
+  assert.equal(rows.length >= 1, true, "the statement is in onelake_logs");
+  assert.equal(rows[0].status, "ok");
+  for (const sql of ["DELETE FROM onelake_logs", "DROP VIEW onelake_logs", "INSERT INTO studio_logs.logs SELECT * FROM studio_logs.logs",
+                     "DELETE FROM studio_logs.logs", "DETACH studio_logs"]) {
+    await assert.rejects(tab.call("query", [sql]), /Not run|read-only/, sql);
+  }
+});
+
+test("a watchdog calls a check that never answers stuck, once, and one that answers or fails at once never", async () => {
+  const { watchdog } = require("../../core/engine/engine-client.js");
+  let stuck = 0;
+  const stop = watchdog({ check: () => new Promise(() => {}), onStuck: () => { stuck++; }, everyMs: 10, waitMs: 20, misses: 2 });
+  await sleep(200);
+  stop();
+  assert.equal(stuck, 1, "said once");
+  let alive = 0;
+  const ok = watchdog({ check: async () => true, onStuck: () => { alive++; }, everyMs: 10, waitMs: 20 });
+  const failing = watchdog({ check: async () => { throw new Error("the engine stopped"); }, onStuck: () => { alive++; }, everyMs: 10, waitMs: 20 });
+  await sleep(150);
+  ok(); failing();
+  assert.equal(alive, 0);
+});

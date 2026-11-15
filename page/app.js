@@ -124,6 +124,7 @@ function wireUi() {
   };
   $('pivotBtn').onclick = openPivot;
   $('csvBtn').onclick = saveActive;
+  $('resultPick').onchange = () => { const r = runResults && runResults[Number($('resultPick').value)]; if (r) showRunResult(r); };
   $('runBtn').onclick = () => runBox();
   $('planBtn').onclick = () => runBox({ plan: true });
   $('saveQueryBtn').onclick = saveBox;
@@ -1036,7 +1037,50 @@ function clearResults(hint = '', { error = false } = {}) {
   lastResult = null;
   $('csvBtn').disabled = true;
   $('profileBtn').disabled = true;
+  if (!pickingResult) hideRunPick();
   setSaveLabel();
+}
+
+// A run of several statements: what each one showed, so the run's selector shows it again. Anything else that takes
+// the pane (another run, a tree click, Plan) clears it away. The last KEEP_RESULTS results are held.
+const KEEP_RESULTS = 30;
+let runResults = null, pickingResult = false;
+function hideRunPick() {
+  runResults = null;
+  $('runBar').hidden = true;
+  $('resultPick').replaceChildren();
+}
+const statusType = el => ['error', 'warn', 'ok'].find(c => el.classList.contains(c)) || '';
+function showRunPick(ran) {
+  if (ran.length < 2) return;
+  ran.forEach((r, i) => { if (i < ran.length - KEEP_RESULTS) r.res = undefined; });
+  runResults = ran;
+  $('resultPick').replaceChildren(...ran.map((r, i) => {
+    const head = r.sql.replace(/\s+/g, ' ').trim();
+    const what = r.res === undefined ? 'result not kept' : r.res ? `${r.res.rows.length.toLocaleString('en')} row(s)` : r.type === 'error' ? 'error' : 'stopped';
+    const option = document.createElement('option');
+    option.value = String(i);
+    option.textContent = `${i + 1} · ${head.length > 60 ? `${head.slice(0, 60)}…` : head} · ${what}`;
+    option.title = head.slice(0, 500);
+    return option;
+  }));
+  $('resultPick').value = String(ran.length - 1);
+  $('runBar').hidden = false;
+}
+function showRunResult(r) {
+  pickingResult = true;
+  try {
+    if (r.res) {
+      renderResults(r.res);
+      lastResult = r.res;
+      $('csvBtn').disabled = r.res.rows.length === 0;
+      $('profileBtn').disabled = r.res.rows.length === 0 || /^\s*summarize\b/i.test(r.sql);
+      $('chartBtn').disabled = r.res.rows.length === 0;
+    } else {
+      clearResults(r.res === undefined ? `(only the last ${KEEP_RESULTS} results are kept)` : (r.error || '(no result — query stopped)'), { error: r.type === 'error' });
+    }
+  } finally { pickingResult = false; }
+  setStatus(r.status, r.type);
 }
 
 // The document a result holds, or null: read_text()'s one cell, or a text file's lines.
@@ -1691,17 +1735,28 @@ async function runBox({ plan = false } = {}) {
   if (parts.length <= 1) return runOne(parts[0] || span, { plan, text });
   if (plan) { setStatus('Plan shows one statement: put the cursor in one, or select only that one.', 'warn'); return; }
   const t0 = performance.now();
+  // What each statement showed: its result, or its error, and its status line.
+  const ran = [];
+  let all = true;
   try {
     for (let i = 0; i < parts.length; i++) {
       stepNote = `${i + 1}/${parts.length}`;
-      if (!await runOne(parts[i], { text })) return;
+      const ok = await runOne(parts[i], { text });
+      const status = $('status');
+      ran.push({ sql: text.slice(parts[i].start, parts[i].end), res: ok ? lastResult : null, status: status.textContent,
+                 type: statusType(status), error: ok ? null : lastRun.error });
+      if (!ok) { all = false; break; }
     }
   } finally { stepNote = ''; }
-  // All of them ran: the last one's line, and how long the whole run took.
-  const ms = performance.now() - t0;
-  const took = ms < 1000 ? `${Math.round(ms)} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
-  const status = $('status');
-  status.textContent = status.title = `${status.textContent} · all ${parts.length} in ${took}`;
+  if (all) {
+    // All of them ran: the last one's line, and how long the whole run took.
+    const ms = performance.now() - t0;
+    const took = ms < 1000 ? `${Math.round(ms)} ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
+    const status = $('status');
+    status.textContent = status.title = `${status.textContent} · all ${parts.length} in ${took}`;
+    ran[ran.length - 1].status = status.textContent;
+  }
+  showRunPick(ran);
 }
 // One statement of the box, `span` of `text`: true when it ran.
 async function runOne(span, { plan = false, text }) {

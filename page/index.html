@@ -145,6 +145,10 @@
     .gridBar input { width: 16rem; padding: 0.2rem 0.4rem; background: var(--vscode-input-background, var(--panel));
                      color: var(--vscode-input-foreground, var(--text)); border: 1px solid var(--vscode-input-border, var(--border)); }
     .gridBar span { color: var(--muted); font-size: 0.8rem; }
+    .runBar { position: sticky; left: 0; padding: 0.35rem 0.75rem 0; }
+    .runBar select { max-width: min(40rem, 100%); font: inherit; font-size: 0.85rem; padding: 0.15rem 0.3rem;
+      color: var(--vscode-dropdown-foreground, inherit); background: var(--vscode-dropdown-background, var(--panel));
+      border: 1px solid var(--vscode-dropdown-border, transparent); }
     #inspector { position: fixed; right: 1rem; bottom: 2.5rem; width: min(42rem, 80vw); max-height: 60vh; z-index: 5;
                  display: flex; flex-direction: column; background: var(--vscode-editorWidget-background, var(--panel));
                  border: 1px solid var(--vscode-editorWidget-border, var(--border)); box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
@@ -296,6 +300,8 @@
           <div id="chartView" hidden></div>
           <div class="hint" id="resultsHint">Query results appear here.</div>
           <article id="docView" class="docView" hidden></article>
+          <!-- A run of several statements: which one's result is on screen (app.js runBox). -->
+          <div class="runBar" id="runBar" hidden><select id="resultPick" aria-label="Which statement's result"></select></div>
           <!-- The grid's filter and row count (grid.js), while a result is on screen. -->
           <div class="gridBar" id="gridBar" hidden>
             <input id="gridFilter" type="search" aria-label="Filter rows" placeholder="Filter rows" spellcheck="false">

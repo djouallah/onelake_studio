@@ -334,6 +334,22 @@ async function runMatrix() {
     check("it ran", /\b601\b/.test(r.table) && !isError(r), r.status);
   });
 
+  await step("Run: several statements show the last result, and a selector switches to any of them", async () => {
+    const text = "select 'first_of_two' as w; select 'second_of_two' as w";
+    await runIt(text, { selection: [0, text.length] });
+    // Between the two the status line can look settled: the run's end is its total.
+    const r = await until("the run's end", async () => { const s = await panelState(); return /· all 2 in /.test(s.status) && s; });
+    check("the last one's result is shown", /second_of_two/.test(r.table), r.table || r.status);
+    const f = await panel();
+    const options = await f.locator("#resultPick option").allTextContents();
+    check("a selector of both, the last picked", options.length === 2 && await f.locator("#resultPick").inputValue() === "1", options.join(" | "));
+    await f.locator("#resultPick").selectOption("0");
+    const first = await cell(/first_of_two/);
+    check("picking the first shows its result and its line", /^1\/2 · /.test(first.status), first.status);
+    await runIt("select 'alone' as w");
+    check("a single statement after it has no selector", await f.locator("#runBar").isHidden());
+  });
+
   await step("Run: SET VARIABLE and getvariable", async () => {
     const set = await runIt("SET VARIABLE e2e_a = 7");
     check("SET VARIABLE is answered", set.settled === "settled" && /e2e_a = 7/.test(set.status), set.status);

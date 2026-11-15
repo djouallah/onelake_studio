@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Every statement's result in a run of several.** The last one's result shows, and a selector above the grid
+  switches to any statement of the run, its status line with it. The last 30 results are kept.
+- **The log is a table.** `SELECT sql, ms FROM onelake_logs ORDER BY ms DESC` in a tab: what the engine ran, read only.
+- **Logs opens at once and stays responsive.** It was sent the latest 1,000 statements in full every few seconds, 18 MB
+  on a busy log, behind a query that held the engine's one thread for most of a second. It's sent only what's new now,
+  each statement's start, and the whole of one when it's opened, copied or opened in a tab.
+- **A stuck engine is replaced.** A window asks its engine every 20 s whether it's there, and the engine checks its own
+  DuckDB every 30 s. With no answer for about a minute, or no DuckDB answer for 4, the engine is stopped and the next
+  table opened starts a new one. An engine stuck on a statement left the window waiting for ever.
+- **The desktop app shares nothing with the extension.** It kept its files in VS Code's folder for the extension when
+  there was one: two engines then wrote one log and one catalog. It keeps everything in its own folder now, its
+  settings and sign-in too, so it asks you to sign in once.
+- **Fixed: a table read in the same millisecond as a Refresh kept its old answer.**
 - **Several statements say how long they took together.** A run of several ends with the last one's line and the
   whole run's time: `23/23 · 7 row(s) in 626 ms · all 23 in 41.2 s`.
 - **Fixed: a click on a line in Logs was slow, and could hang.** Each click drew the whole list again, every

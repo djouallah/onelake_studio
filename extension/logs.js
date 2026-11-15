@@ -31,37 +31,54 @@ function openLogs({ engine, open, copy, clear }) {
   panel.webview.html = page(crypto.randomBytes(16).toString('base64'));
   const post = msg => { try { panel.webview.postMessage(msg); } catch (_) {} };
 
-  let asking = false, said = null;   // what the last rows shown were: null, none yet
+  // The first answer is the latest SHOWN statements; after it, only rows past the newest one shown, which is
+  // nothing at all while nothing runs. Their text comes cut (enginelog.js SHOWN_TEXT): a line's whole is asked for
+  // when it is opened, copied or opened in a tab. 1,000 whole statements every few seconds were 18 MB and froze it.
+  let asking = false, newest = 0, setup = false, again = true;   // again: the next answer replaces what is shown
+  const named = r => ({ ...r, sql: fileNamesIn(r.sql), error: r.error && fileNamesIn(r.error) });
   async function tick() {
     if (asking || !panel.visible) return;
     asking = true;
     try {
       const e = engine();
       if (!e) { post({ down: 'The engine is not available here.' }); return; }
-      // The newest statement first: the rows shown are tens of MB of SQL, asked for again only when
-      // something ran since. Redrawn only then, so a scrolled or expanded table stays as it is.
-      const [newest] = await e.logs(1);
-      const now = newest ? `${newest.at}|${newest.window}|${newest.ms}|${newest.status}` : '';
-      if (now === said) { post({ down: null }); return; }
-      const kept = newest ? await e.logs(SHOWN) : [];
-      said = now;
+      const whole = again;
+      const rows = await e.logs(SHOWN, { after: whole ? 0 : newest, setup });
+      again = false;
+      if (whole) newest = 0;
+      for (const r of rows) newest = Math.max(newest, r.id);
       // A file under its name: DuckDB logs its URL, and a row reopens as what was written.
-      post({ rows: kept.map(r => ({ ...r, sql: fileNamesIn(r.sql), error: r.error && fileNamesIn(r.error) })), shown: SHOWN });
+      if (whole || rows.length) post({ rows: rows.map(named), replace: whole, shown: SHOWN, down: null });
+      else post({ down: null });
     } catch (err) {
-      said = null;
+      again = true;
       post({ down: `The engine did not answer: ${(err && err.message) || err}` });
     } finally { asking = false; }
+  }
+  // A line's whole text: shown in the tab, or opened in a new tab, or copied.
+  async function whole(id, then) {
+    const e = engine();
+    const r = e && await e.logRow(id).catch(() => null);
+    if (!r) return;
+    const row = named(r);
+    if (then === 'open') open(row.source ?? row.sql);
+    else if (then === 'copy') copy(row.source ?? row.sql);
+    else if (then === 'copyCompiled') copy(row.sql);
+    else post({ full: row });
   }
 
   const timer = setInterval(tick, EVERY_MS);
   const subs = [
-    panel.onDidChangeViewState(() => { if (panel.visible) tick(); }),
+    // Shown again: the whole list again, as another window may have cleared it meanwhile.
+    panel.onDidChangeViewState(() => { if (panel.visible) { again = true; tick(); } }),
     panel.webview.onDidReceiveMessage(async m => {
       if (!m) return;
-      if (m.ready) { said = null; tick(); }
+      if (m.ready) { again = true; tick(); }
+      else if (m.full != null) whole(m.full, m.then);
       else if (m.open != null) open(String(m.open));
       else if (m.copy != null) copy(String(m.copy));
-      else if (m.clear) { await clear(); said = null; tick(); }
+      else if (m.setup != null) { setup = !!m.setup; again = true; tick(); }
+      else if (m.clear) { await clear(); again = true; tick(); }
     }),
   ];
   panel.onDidDispose(() => {
@@ -140,7 +157,7 @@ function draw() {
   const failed = asked.filter(r => r.status === 'error').length;
   const slowest = asked.reduce((n, r) => Math.max(n, r.ms), 0);
   $('summary').replaceChildren(
-    el('b', { textContent: String(asked.length) }), rows.length === shown ? ' of the latest · ' : ' statements · ',
+    el('b', { textContent: String(asked.length) }), asked.length >= shown ? ' of the latest · ' : ' statements · ',
     el('b', { textContent: String(failed) }), ' failed · slowest ', el('b', { textContent: slowest >= 1000 ? (slowest / 1000).toFixed(1) + ' s' : slowest + ' ms' }));
   if (!list.length) {
     $('list').replaceChildren(el('div', { className: 'hint', textContent: rows.length ? 'Nothing matches.' : 'Nothing has run yet.' }));
@@ -151,13 +168,13 @@ function draw() {
       className: cls || '', textContent: label + (sort.col === col ? (sort.desc ? ' ▾' : ' ▴') : ''),
       onclick: () => { sort = { col, desc: sort.col === col ? !sort.desc : col === 'at' || col === 'ms' }; draw(); } })), el('th'))),
     el('tbody', {}, ...list.map(r => {
-      const key = r.at + r.sql;
+      const key = r.id;
       // A semantic model's query: the statement as written, and what dax-sql compiled it to when it is open.
       const written = r.source ?? r.sql;
       const one = el('span', { className: 'one', textContent: open.has(key) ? written : preview(written) });
       const sql = el('td', { className: 'sql', title: 'Click to see all of it' }, one);
       if (r.source != null) {
-        const copy = el('button', { textContent: 'Copy', onclick: e => { e.stopPropagation(); vs.postMessage({ copy: r.sql }); } });
+        const copy = el('button', { textContent: 'Copy', onclick: e => { e.stopPropagation(); vs.postMessage(r.cut ? { full: r.id, then: 'copyCompiled' } : { copy: r.sql }); } });
         const lines = r.sql.split('\\n').length;
         sql.append(el('div', { className: 'compiled', hidden: !open.has(key) },
           el('div', { className: 'label' }, 'Compiled by dax-sql, ' + lines + (lines === 1 ? ' line' : ' lines'), copy),
@@ -170,8 +187,8 @@ function draw() {
         el('td', { className: 'n', textContent: r.ms.toLocaleString() }),
         sql,
         el('td', {},
-          el('button', { textContent: 'Open', title: 'A new tab with this SQL in its box, not run', onclick: () => vs.postMessage({ open: written }) }), ' ',
-          el('button', { textContent: 'Copy', onclick: () => vs.postMessage({ copy: written }) })));
+          el('button', { textContent: 'Open', title: 'A new tab with this SQL in its box, not run', onclick: () => vs.postMessage(r.cut ? { full: r.id, then: 'open' } : { open: written }) }), ' ',
+          el('button', { textContent: 'Copy', onclick: () => vs.postMessage(r.cut ? { full: r.id, then: 'copy' } : { copy: written }) })));
       // Only this row changes: the table isn't drawn again.
       sql.onclick = () => {
         const now = !open.has(key);
@@ -179,20 +196,34 @@ function draw() {
         tr.classList.toggle('open', now);
         one.textContent = now ? written : preview(written);
         for (const d of sql.querySelectorAll('.compiled, .error')) d.hidden = !now;
+        // Only its start came: the whole is asked for, and the line drawn again with it.
+        if (now && r.cut) vs.postMessage({ full: r.id });
       };
       return tr;
     }))));
 }
 $('filter').oninput = draw;
 $('errors').onchange = draw;
-$('setup').onchange = draw;
+$('setup').onchange = () => { vs.postMessage({ setup: $('setup').checked }); draw(); };
 $('clear').onclick = () => vs.postMessage({ clear: true });
 addEventListener('message', e => {
   const m = e.data;
   $('down').hidden = !m.down;
   $('down').textContent = m.down || '';
-  // What the filter looks in, lowercased once per answer rather than at each key.
-  if (m.rows) { rows = m.rows.map(r => ({ ...r, hay: [r.sql, r.source || '', r.error || ''].join(' ').toLowerCase() })); shown = m.shown; draw(); }
+  // What the filter looks in, lowercased once per row rather than at each key.
+  const withHay = r => ({ ...r, hay: [r.sql, r.source || '', r.error || ''].join(' ').toLowerCase() });
+  // The latest, or the rows since the newest shown, on top; as many kept as statements are shown, and their setup.
+  if (m.rows) {
+    const add = m.rows.map(withHay);
+    rows = m.replace ? add : add.concat(rows).slice(0, 2 * m.shown);
+    shown = m.shown;
+    draw();
+  }
+  // A line's whole text, for a line opened.
+  if (m.full) {
+    const i = rows.findIndex(r => r.id === m.full.id);
+    if (i >= 0) { rows[i] = withHay(m.full); draw(); }
+  }
 });
 vs.postMessage({ ready: true });
 </script></body></html>`;

@@ -224,7 +224,7 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // like an instance, so a window boots nothing and keeps everything from sourcesOf down.
 function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}, onWarn = () => {}, getToken = null,
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
-                            allowedPaths = [], lockdown = true,
+                            allowedPaths = [], lockdown = true, logsFile = null,
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, lakeFolder = 'lake', resolveTable = null, resolveFile = null,
                             resolveLakehouse = null, onWritten = () => {},
@@ -527,6 +527,17 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // And the files statements open, which is how the table service hears what to bring here.
         await conn.run(`CALL enable_logging(${capabilities.lake ? "['Quack', 'FileSystem']" : "['Quack']"}, storage = 'memory');`);
         mark('quack');
+      }
+
+      // What the engine ran, for SQL: the server's log file (logfile.js), read only, as onelake_logs. A view in the
+      // engine's own database, so a USE leaves its bare name alone. DuckDB refuses a write to it, and so does the guard
+      // (sql.js OWN_CATALOGS). Attached before the lockdown, which would refuse it after.
+      if (serve && logsFile && capabilities.sqlite_scanner) {
+        try {
+          await conn.run(`ATTACH ${sqlStr(String(logsFile).replace(/\\/g, '/'))} AS studio_logs (TYPE sqlite, READ_ONLY);`);
+          await conn.run(`CREATE OR REPLACE VIEW main.onelake_logs AS SELECT epoch_ms(ts) AS at, status, ms, sql, error, win AS client
+            FROM studio_logs.logs;`);
+        } catch (e) { onWarn(`the log can't be read with SQL (onelake_logs) — ${e.message}`); }
       }
 
       // THE LOCKDOWN. This engine runs SQL that a webview sends it, with the user's files
@@ -1783,7 +1794,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }));
   const allowStorageHere = scopes => init().then(() => allowStorage(scopes));
   // What the Logs tab shows.
-  const logs = limit => init().then(() => (remote ? instance.logs(limit) : []));
+  const logs = (limit, o) => init().then(() => (remote ? instance.logs(limit, o) : []));
+  const logRow = id => init().then(() => (remote ? instance.logRow(id) : null));
+  // What the server's watchdog asks (engine-server.js): a statement through the host's own queue, then on a connection
+  // of its own, as a window's goes.
+  const health = () => init().then(() => admin(() => conn.run('SELECT 1')))
+    .then(() => withConn(c => c.run('SELECT 1'), agentLive)).then(() => true);
   const clearLogs = () => init().then(() => (remote ? instance.clearLogs() : undefined));
 
   // serve: once Quack is listening, what a window needs to know of this engine.
@@ -1963,7 +1979,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, clearLogs,
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, logRow, clearLogs, health,
                 icebergAttach: ({ warehouse }) => iceAttach(warehouse), icebergDetach: ({ name }) => iceDetach(name),
                 deltaAttach: ({ folder }) => deltaAttach(folder), deltaDetach: ({ name }) => deltaDetach(name) };
   return api;

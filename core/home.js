@@ -3,25 +3,28 @@
 // home.js — where this install keeps its files, and what it remembers there, with no editor
 // =============================================================================
 // VS Code hands the extension its storage folder, its settings and its globalState. The command line with
-// VS Code closed and the desktop app have none of that, and read the same places themselves, so all three
-// share one cache. No `vscode` import.
+// VS Code closed and the desktop app have none of that, and read their own install's places themselves. The
+// extension and the desktop app are separate products: neither reads the other's folder, settings or cache.
+// No `vscode` import.
 // =============================================================================
 
 const { join } = require('node:path');
-const { readFileSync, writeFileSync, renameSync, existsSync } = require('node:fs');
+const { homedir } = require('node:os');
+const { readFileSync, writeFileSync, renameSync } = require('node:fs');
 
 const EXTENSION_ID = 'djouallah.onelake-studio';
 
-// Where VS Code keeps this extension's files, for whichever VS Code this install is under, so the extension,
-// the command line and the desktop app read one cache. With no VS Code, the app's own folder.
+// Where this install keeps its files. The extension's, under VS Code (its command line with VS Code closed reads
+// them too: it is the extension's): VS Code's folder for it. Anything else, the desktop app's: a folder of its
+// own, whether VS Code is here or not. Two engines on one folder fought over the lake, its log and its catalog.
 // ONELAKE_STUDIO_HOME keeps it all somewhere else.
-function pathsOf(extensionDir, env = process.env, exists = existsSync) {
+function pathsOf(extensionDir, env = process.env) {
   if (env.ONELAKE_STUDIO_HOME) return { home: env.ONELAKE_STUDIO_HOME, settingsFile: join(env.ONELAKE_STUDIO_HOME, 'settings.json') };
   const product = /[\\/]\.vscode-insiders[\\/]/i.test(extensionDir) ? 'Code - Insiders' : 'Code';
   const user = join(env.APPDATA || '', product, 'User');
-  const vscodeHome = join(user, 'globalStorage', EXTENSION_ID);
-  if (exists(vscodeHome) || /[\\/]\.vscode(-insiders)?[\\/]/i.test(extensionDir)) return { home: vscodeHome, settingsFile: join(user, 'settings.json') };
-  const own = join(env.LOCALAPPDATA || env.APPDATA || '', 'OneLake Studio', 'data');
+  if (/[\\/]\.vscode(-insiders)?[\\/]/i.test(extensionDir)) return { home: join(user, 'globalStorage', EXTENSION_ID), settingsFile: join(user, 'settings.json') };
+  const own = env.LOCALAPPDATA || env.APPDATA ? join(env.LOCALAPPDATA || env.APPDATA, 'OneLake Studio', 'data')
+    : join(env.HOME || homedir(), '.onelake-studio');
   return { home: own, settingsFile: join(own, 'settings.json') };
 }
 

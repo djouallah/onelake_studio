@@ -295,7 +295,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     // without one until its TTL runs out. A folder that was no table may have become one, so using
     // that answer reads it again, as using any kept answer that fails does.
     // The read failing keeps what was kept, except an answer that it was no table: that one is what failed.
-    if (r.cached && (r.at < refreshedSince(lh) || !r.value.format || r.value.notValid)) {
+    if (r.cached && (staleAfterRefresh(keys.table(lh, t), lh, r.at) || !r.value.format || r.value.notValid)) {
       const kept = r;
       r = await load(true).catch(e => { if (kept.value.notValid) throw e; return kept; });
     }
@@ -412,7 +412,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       const behind = meta.stats && meta.stats.deltaVersion != null && newest < meta.stats.deltaVersion;
       // Another table's log, one dropped and made again at the same path.
       const another = r.value.length > 0 && (r.value[0].tableUuid || null) !== uuid;
-      if (r.cached && (behind || another || r.at < refreshedSince(lh))) r = await load(true);
+      if (r.cached && (behind || another || staleAfterRefresh(keys.deltaCommits(lh, t), lh, r.at))) r = await load(true);
       return r.value;
     };
     // A kept listing can name commits log retention has deleted since.
@@ -431,6 +431,15 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   const refreshes = new Map();   // `${workspace}\0${item}` ('' for all) -> ms
   function refreshTables({ workspace, item } = {}) {
     refreshes.set(`${workspace || ''}\u0000${(workspace && item) || ''}`, Date.now());
+  }
+  // Whether a kept answer is from before the last Refresh over its lakehouse, so it is read again. One from the same
+  // millisecond as the Refresh can't be told apart by its time: it is read again once for that Refresh, not after.
+  const rereadFor = new Map();   // key -> the Refresh (ms) it was read again for
+  function staleAfterRefresh(key, lh, at) {
+    const since = refreshedSince(lh);
+    if (!since || at > since || (at === since && rereadFor.get(key) === since)) return false;
+    rereadFor.set(key, since);
+    return true;
   }
   function refreshedSince(lh) {
     let at = 0;

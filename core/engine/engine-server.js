@@ -24,7 +24,7 @@ const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { dirname, join } = require('node:path');
 const { createEngineHost } = require('./engine-host');
-const { openClient, lineReader } = require('./engine-client');
+const { openClient, lineReader, watchdog } = require('./engine-client');
 const { createLogFile } = require('../logfile');
 const { createLogKeeper } = require('./enginelog');
 
@@ -58,7 +58,12 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   const say = o => process.stdout.write(`${JSON.stringify(o)}\n`);
   log(`starting: pid ${process.pid}`);
 
-  const engine = createEngineHost({ ...options, serve: { token }, onWarn: log,
+  // The log file there before the engine starts, which opens it read only for SQL (onelake_logs) before its lockdown.
+  if (logsFile) {
+    try { const made = createLogFile({ file: logsFile, log }); made.read(1); made.close(); }
+    catch (e) { log(`the log file could not be made: ${e.message}`); }
+  }
+  const engine = createEngineHost({ ...options, serve: { token }, logsFile, onWarn: log,
     onLog: b => log(`booted in ${b.totalMs}ms: ${b.stages.map(s => `${s.stage} ${s.ms}ms`).join(', ')}`) });
 
   let idle = null, state = null, reaper = null, stopping = false, logs = null, keeper = null;
@@ -128,6 +133,8 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
 
   // What a window asks over the pipe rather than Quack: nothing here is in Quack's log, the token above all.
   async function answer(msg) {
+    // A window asking whether this process is there: answered by its loop, whatever DuckDB is doing.
+    if (msg.ping) return true;
     await booted;
     const scopes = Array.isArray(msg.storageScopes) ? msg.storageScopes.map(String) : [];
     if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken), scopes); return true; }
@@ -151,9 +158,10 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.othersRunning) return engine.othersRunning();
     if (msg.logs) {
-      if (keeper) return keeper.read(msg.logs.limit);
+      if (keeper) return keeper.read(msg.logs.limit, { after: msg.logs.after, setup: msg.logs.setup });
       return [];
     }
+    if (msg.logRow) return keeper ? keeper.row(msg.logRow.id) : null;
     if (msg.clearLogs) { if (keeper) await keeper.clear(); return true; }
     throw new Error('the engine was asked something it does not know');
   }
@@ -210,13 +218,24 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   if (process.platform !== 'win32') { try { fs.chmodSync(pipe, 0o600); } catch (_) {} }
 
   booted = engine.boot().then(async s => {
-    state = { ...s, build };
+    state = { ...s, build, pid: process.pid };
     log(`serving ${s.uri}`);
     if (logsFile) await keepLog();
     reaper = await openClient({ uri: s.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
       .catch(e => { log(`no way to cancel a gone window's queries: ${e.message}`); return null; });
   });
   await booted;
+  // DuckDB that stops answering: a SELECT 1 through the waits a window's statement goes through, every 30 s. With no
+  // answer in 2 minutes, twice running, this server says so and goes, and its windows start another.
+  watchdog({
+    check: () => engine.health(), everyMs: 30_000, waitMs: 120_000, misses: 2,
+    onStuck: () => {
+      log('stuck: DuckDB answered no SELECT 1 for 4 minutes');
+      // Its own close can wait on what is stuck too.
+      setTimeout(() => process.exit(1), 10_000).unref();
+      shutdown('stuck');
+    },
+  });
   watchIdle();
   say({ ready: true });
 }

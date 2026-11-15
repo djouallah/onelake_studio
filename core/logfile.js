@@ -64,14 +64,22 @@ function createLogFile({ file, log = () => {} }) {
         db.exec('COMMIT');
       } catch (e) { db.exec('ROLLBACK'); throw e; }
     },
-    /** The newest first: `limit` statements, and as many of the engine's setup beside them. Each start
-     * registers every table there is, thousands of them, and the newest rows were only that. */
-    read(limit) {
-      // enginelog.js isSetup, in SQL.
-      const SETUP = ['create', 'drop', 'attach', 'detach'].map(w => `lower(ltrim(sql, ' ' || char(9, 10, 13))) GLOB '${w}[^a-z0-9_]*'`).join(' OR ');
-      return database().prepare(`SELECT * FROM (SELECT ts, win, sql, ms, status, error FROM logs WHERE NOT (${SETUP}) ORDER BY ts DESC LIMIT ?)
-        UNION ALL SELECT * FROM (SELECT ts, win, sql, ms, status, error FROM logs WHERE ${SETUP} ORDER BY ts DESC LIMIT ?)
-        ORDER BY ts DESC`).all(limit, limit);
+    /** The newest first: `limit` statements, and as many of the engine's setup beside them when `setup`. Each start
+     * registers every table there is, thousands of them, and the newest rows were only that. `after`: only rows
+     * added since the one with that id (`id` is the row's). */
+    read(limit, { after = 0, setup = true } = {}) {
+      // enginelog.js isSetup, in SQL, on each statement's start only: some are megabytes.
+      const head = "lower(ltrim(substr(sql, 1, 64), ' ' || char(9, 10, 13)))";
+      const SETUP = ['create', 'drop', 'attach', 'detach'].map(w => `${head} GLOB '${w}[^a-z0-9_]*'`).join(' OR ');
+      const part = where => `SELECT * FROM (SELECT rowid AS id, ts, win, sql, ms, status, error FROM logs WHERE rowid > ? AND ${where} ORDER BY ts DESC LIMIT ?)`;
+      const db = database();
+      const first = Math.max(0, Math.floor(Number(after)) || 0);
+      if (!setup) return db.prepare(`${part(`NOT (${SETUP})`)} ORDER BY ts DESC`).all(first, limit);
+      return db.prepare(`${part(`NOT (${SETUP})`)} UNION ALL ${part(SETUP)} ORDER BY ts DESC`).all(first, limit, first, limit);
+    },
+    /** One row, whole, by its id. */
+    row(id) {
+      return database().prepare('SELECT rowid AS id, ts, win, sql, ms, status, error FROM logs WHERE rowid = ?').get(Math.floor(Number(id)) || 0) || null;
     },
     clear() { database().exec('DELETE FROM logs'); },
     // The oldest go, down to half, so this isn't at the limit again at once.

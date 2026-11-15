@@ -1040,10 +1040,10 @@ command, menu, tab and message is the same code in both, and a change to the ext
   and Explorer, through PowerShell, as Open in Excel is.
 - **Sign-in** is the command line's: MSAL as the Azure CLI's public client, with the token cache under DPAPI, and the same
   `signin` for both. No app registration.
-- **The same data:** with VS Code on the machine, its folder for this extension, so the extension, the command line and the
-  app read one cache. With none, `%LOCALAPPDATA%\OneLake Studio\data`. Settings are VS Code's where there are any, under
-  what the app's Settings tab changes. Its engine is a server of its own, so it has a lake of its own, `lake-desktop`:
-  with VS Code open too, both read OneLake tables, and each keeps its own copy of their files.
+- **Nothing shared with the extension:** the app keeps everything in a folder of its own,
+  `%LOCALAPPDATA%\OneLake Studio\data` (`pathsOf` in [`core/home.js`](../core/home.js)), whether VS Code is on the
+  machine or not: its settings, sign-in, catalog, log, cache and lake (`lake-desktop`), and its engine is a server of its
+  own. Two engines on one folder wrote one log and one catalog, and the second couldn't open the lake.
 - **The shell** is Tauri ([`desktop/src-tauri/`](../desktop/src-tauri/)): it shows a splash, starts the Node process, and
   opens the page it names. Each line the process says after that is something only the shell can do: exit, zoom.
   Closing the window closes the process's stdin, and it ends; if the process ends first, the splash comes back with

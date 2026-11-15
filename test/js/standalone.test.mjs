@@ -24,11 +24,12 @@ test("its files are VS Code's for this extension, Insiders' under Insiders", () 
   assert.match(insiders.home.replaceAll("\\", "/"), /Code - Insiders\/User\/globalStorage/);
 });
 
-test("with no VS Code, the desktop app keeps its files in a folder of its own", () => {
-  const p = pathsOf("C:/Users/u/AppData/Local/OneLake Studio/app", { APPDATA: "C:/Roaming", LOCALAPPDATA: "C:/Local" }, () => false);
+test("the desktop app keeps its files in a folder of its own, VS Code or not: nothing is shared with the extension", () => {
+  const p = pathsOf("C:/Users/u/AppData/Local/OneLake Studio/app", { APPDATA: "C:/Roaming", LOCALAPPDATA: "C:/Local" });
   assert.match(p.home.replaceAll("\\", "/"), /^C:\/Local\/OneLake Studio\/data$/);
-  const shared = pathsOf("C:/Users/u/AppData/Local/OneLake Studio/app", { APPDATA: "C:/Roaming", LOCALAPPDATA: "C:/Local" }, () => true);
-  assert.match(shared.home.replaceAll("\\", "/"), /Code\/User\/globalStorage\/djouallah\.onelake-studio$/, "and VS Code's, where it has some");
+  assert.match(p.settingsFile.replaceAll("\\", "/"), /^C:\/Local\/OneLake Studio\/data\/settings\.json$/, "its own settings too");
+  // With no APPDATA (macOS, Linux): under the home folder.
+  assert.match(pathsOf("/opt/onelake/app", { HOME: "/home/u" }).home.replaceAll("\\", "/"), /^\/home\/u\/\.onelake-studio$/);
 });
 
 test("ONELAKE_STUDIO_HOME keeps it all somewhere else", () => {

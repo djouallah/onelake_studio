@@ -45,6 +45,31 @@ const CANCEL_EVERY_MS = 100;   // a Stop can land before the statement reaches t
 const MAX_ATTACHES = 8;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// How often a window asks its server whether it is there, and how long it waits for the answer.
+const PING_EVERY_MS = 20_000;
+const PING_WAIT_MS = 30_000;
+
+/**
+ * Asks `check()` every `everyMs`; one that hasn't answered in `waitMs` is a miss, and `misses` of them in a row
+ * call `onStuck()` once. A check that fails at once isn't a miss: something answered. Gives back stop().
+ * A server whose loop or DuckDB stopped answering was waited on for ever, by every window.
+ */
+function watchdog({ check, onStuck, everyMs, waitMs, misses = 2 }) {
+  let missed = 0, busy = false, done = false;
+  const timer = setInterval(async () => {
+    if (busy || done) return;
+    busy = true;
+    let timeout;
+    const late = new Promise(r => { timeout = setTimeout(() => r('late'), waitMs); });
+    try {
+      const got = await Promise.race([Promise.resolve().then(check).then(() => 'ok', () => 'ok'), late]);
+      missed = got === 'late' ? missed + 1 : 0;
+      if (missed >= misses && !done) { done = true; clearInterval(timer); onStuck(); }
+    } finally { clearTimeout(timeout); busy = false; }
+  }, everyMs);
+  if (timer.unref) timer.unref();
+  return () => { done = true; clearInterval(timer); };
+}
 const slash = p => String(p).replace(/\\/g, '/');
 
 // Named after the user and `key` (the account and this build), so another account or build gets
@@ -484,6 +509,16 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     if (reattachSaid) client.reattach().catch(() => {});
     const { local, admin, route, dedicated, stopGrowing, reattachControl, listTagged, cancelIds } = client;
     const recover = recovery(ask, client);
+    // A server that doesn't answer its pipe has its loop stuck: every statement of every window waits on it, for
+    // ever. Two pings with no answer, and it is stopped; this window starts another, as when one goes (onGone).
+    const unwatch = watchdog({
+      check: () => ask({ ping: true }), everyMs: PING_EVERY_MS, waitMs: PING_WAIT_MS, misses: 2,
+      onStuck: () => {
+        if (closing || gone) return;
+        try { if (state.pid) process.kill(state.pid); } catch (_) {}
+        sock.destroy();
+      },
+    });
 
     let seq = 0;
     // Statements can work while `control` is stale: an attach made after the listener came back knows
@@ -572,7 +607,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       deltaDetach: w => ask({ deltaDetach: w }),
       stats: () => ask({ stats: true }),
       othersRunning: () => ask({ othersRunning: true }),
-      logs: limit => ask({ logs: { limit } }),
+      logs: (limit, { after = 0, setup = true } = {}) => ask({ logs: { limit, after, setup } }),
+      logRow: id => ask({ logRow: { id } }),
       clearLogs: () => ask({ clearLogs: true }),
       async connect() { return wrap(sql => route(sql)); },
       /**
@@ -602,6 +638,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       // `stop` ends the server for every window: Sign Out, a restart, Clear Cached OneLake Data.
       // It waits for the server to go, since what follows may delete the files it holds open.
       async leave({ stop = false } = {}) {
+        unwatch();
         closing = true;
         const ids = await listTagged(`${window}:`).catch(() => []);
         if (ids.length && !await cancelNow(ids).catch(() => true)) {
@@ -616,6 +653,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
         sock.destroy();
       },
       closeSync() {
+        unwatch();
         closing = true;
         stopGrowing();
         sock.destroy();
@@ -626,4 +664,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, stopServer, openClient, loadExtension, pipePath, lineReader, LOST };
+module.exports = { createRemote, stopServer, openClient, loadExtension, pipePath, lineReader, watchdog, LOST };

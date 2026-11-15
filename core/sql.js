@@ -16,7 +16,7 @@ const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 
 const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart, itemPart, ENGINE_DB } = require('./names');
 // The engine's own catalogs, other than its database: a name starting with one is DuckDB's, never a workspace's.
-const OWN_CATALOGS = new Set(['temp', 'system', 'lake', 'system_internal']);
+const OWN_CATALOGS = new Set(['temp', 'system', 'lake', 'system_internal', 'studio_logs']);
 // A write's own catalog (engine-host.js runWrite): ice_ or delta_ and 16 hex digits, attached for one statement.
 const WRITE_CATALOG = '(?:ice|delta)_[0-9a-f]{16}';
 const isWriteCatalog = s => new RegExp(`^${WRITE_CATALOG}$`, 'i').test(String(s));
