@@ -490,9 +490,12 @@ test("a listener that stops: the next statement starts it again, and goes on", a
 });
 
 test("Stop still reaches the server when its listener came back before anything noticed", async t => {
-  const { open, secret, pipe } = await setup(t);
+  const { open, secret, pipe, log } = await setup(t);
   // A hang here is what this is about, so it fails rather than waits.
   const within = (ms, what, p) => Promise.race([p, sleep(ms).then(() => { throw new Error(`${what}: nothing after ${ms}ms`); })]);
+  // It has failed with "the engine stopped": the server gone under the window. Its own log says why (a crash is
+  // written there, engine-server.js sayWhy), and goes with the test's folder, so it is printed on a failure.
+  try {
   // With a new window, a pool's first attach can land on either side of the restart, so several tries.
   for (let i = 0; i < 4; i++) {
     const w = open();
@@ -504,6 +507,12 @@ test("Stop still reaches the server when its listener came back before anything 
     assert.equal((await within(20_000, `Stop, try ${i}`, running)).cancelled, true);
     assert.deepEqual((await within(20_000, `after Stop, try ${i}`, w.call("query", ["SELECT 3 AS after"]))).rows, [{ after: 3 }]);
     await within(20_000, `closing, try ${i}`, w.close());
+  }
+  } catch (e) {
+    let said;
+    try { said = log(); } catch (x) { said = String(x); }
+    console.log(`the server's log:\n${said}`);
+    throw e;
   }
 });
 
