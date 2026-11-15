@@ -54,6 +54,10 @@ try {
   proc = start();
   let { url } = await proc.ready;
   let page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
+  // What the window said in its console, for a failure CI can't show otherwise.
+  const said = [];
+  const listen = p => { p.on("console", m => said.push(`${m.type()}: ${m.text()}`)); p.on("pageerror", e => said.push(`pageerror: ${e.message}`)); };
+  listen(page);
 
   await step("a .sql file that started the app, signed out, opens in its tab, before the window was there", async () => {
     // A double-click on a .sql file with the app closed: the file is asked for as the app starts, and its tab is
@@ -67,8 +71,9 @@ try {
     const box = page.frameLocator("#pages iframe").first().locator("#sqlEditor");
     await box.waitFor({ timeout: 60_000 }).catch(async e => {
       await page.screenshot({ path: join(shots, "1a-file-from-disk-failed.png") });
+      console.error("console:", said.join(" | "));
       console.error("tabs:", await page.locator(".tab").allInnerTexts(),
-        "frames:", await page.locator("#pages iframe").evaluateAll(fs => fs.map(f => `${f.className} ${f.src}`)));
+        "frames:", await page.locator("#pages iframe").evaluateAll(fs => fs.map(f => f.outerHTML)));
       throw e;
     });
     assert.match(await box.inputValue(), /opened from disk/);
