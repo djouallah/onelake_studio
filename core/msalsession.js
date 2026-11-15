@@ -91,8 +91,8 @@ function createMsalSession({ tenant, store, openBrowser = openInBrowser, msal = 
   async function signIn(pca, wanted, account) {
     let timer = null;
     const late = new Promise((_, reject) => {
+      // Not unref'd: a sign-in waiting in the browser holds the process anyway, and cleared once it ends.
       timer = setTimeout(() => reject(new Error(`the sign-in in the browser wasn't finished in ${Math.round(signInWaitMs / 60_000)} minutes`)), signInWaitMs);
-      if (timer.unref) timer.unref();
     });
     const r = await Promise.race([pca.acquireTokenInteractive({
       scopes: wanted, openBrowser,
