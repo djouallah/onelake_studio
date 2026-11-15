@@ -75,6 +75,10 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   const guidIn = answer => (/abfss?:\/\/([0-9a-f]{8}-[0-9a-f-]{27})@/i.exec(JSON.stringify(answer)) || [])[1] || null;
   let wsId = guidIn(known);
   console.log(`the catalog's answer: metadata-location ${known["metadata-location"]}, location ${known.metadata && known.metadata.location}`);
+  // Every place in the answer that still names the workspace by GUID.
+  const places = (v, at = "") => (v && typeof v === "object" ? Object.entries(v).flatMap(([k, x]) => places(x, `${at}/${k}`))
+    : typeof v === "string" && wsId && v.includes(wsId) ? [`${at} = ${v.slice(0, 300)}`] : []);
+  console.log(`the workspace's GUID is in: ${places(known).slice(0, 12).join(" ; ") || "nowhere"}`);
   console.log(`prefix ${prefix}, workspace ${wsId || `by name only: ${known["metadata-location"]}`}`);
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
