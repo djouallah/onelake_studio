@@ -154,11 +154,13 @@ let saveQuery = null;
 // Save, from a tab with a file it opened: the SQL box's .sql file, a Model page's model file. Set by activateInner.
 let saveFileText = null;
 
-async function show(context, { newTab = false, key = null, ...options } = {}) {
+// `signIn` false: what is opened needs no account, as a .sql file from disk: its tab opens signed out, and a
+// statement that reads OneLake says to sign in.
+async function show(context, { newTab = false, key = null, signIn = true, ...options } = {}) {
   if (!newTab && revealPanel()) return true;
   // With an account's cache to show, or after a Sign Out, no click prompts for a sign-in: it opens
   // on what is held.
-  const noPrompt = !!knownAccount() || signedOutByChoice();
+  const noPrompt = !signIn || !!knownAccount() || signedOutByChoice();
   // Not waited for then, either: the tab opens on what is held while the account provider answers, which at
   // startup can take half a minute. The token is asked for now so it is there when a read wants it.
   if (noPrompt) hostToken().catch(() => {});
@@ -553,11 +555,11 @@ async function activateInner(context) {
   // A model, a model file or an app that a tab shows already (`key`, tabKey) is not opened again: its
   // tab comes forward as it is, and this answers 'revealed'.
   const openingKeys = new Set();   // being opened: a second click meanwhile makes no second tab
-  async function openInPanel(msg, tabName = msg.table || msg.modelName || msg.name || (msg.path && msg.path.split('/').pop()), key = tabKey(msg)) {
+  async function openInPanel(msg, tabName = msg.table || msg.modelName || msg.name || (msg.path && msg.path.split('/').pop()), key = tabKey(msg), { signIn = true } = {}) {
     if (key && (revealTab(key) || openingKeys.has(key))) return 'revealed';
     if (key) openingKeys.add(key);
     try {
-      if (!await showWithProgress({ createIfNone: true, newTab: true, key })) return false;
+      if (!await showWithProgress({ createIfNone: true, newTab: true, key, signIn })) return false;
     } finally {
       openingKeys.delete(key);
     }
@@ -732,7 +734,8 @@ async function activateInner(context) {
       if (/\.sql$/i.test(fsPath)) {
         const sql = await fsp.readFile(fsPath, 'utf8');
         openedFiles.add(pathKey(fsPath));
-        await openInPanel({ type: 'query', name: name.replace(/\.sql$/i, ''), sql, file: fsPath }, name, pathKey(fsPath));
+        // A file from disk needs no account to open: no sign-in is asked for it.
+        await openInPanel({ type: 'query', name: name.replace(/\.sql$/i, ''), sql, file: fsPath }, name, pathKey(fsPath), { signIn: false });
         return;
       }
       const found = await core.models.modelFile(fsPath);
