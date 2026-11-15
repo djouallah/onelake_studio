@@ -14,6 +14,7 @@ const { spawn } = require('node:child_process');
 
 const CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
 const NO_ANSWER = /network|fetch failed|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONN|socket hang up/i;
+const SIGN_IN_WAIT_MS = 5 * 60_000;
 
 const DONE_PAGE = '<!doctype html><title>OneLake Studio</title><p>Signed in to OneLake Studio. You can close this tab.</p>';
 const FAILED_PAGE = '<!doctype html><title>OneLake Studio</title><p>OneLake Studio could not sign in. The command line says why.</p>';
@@ -36,9 +37,11 @@ const sessionOf = r => ({ accessToken: r.accessToken, account: { id: r.account.h
  * @param {{ read: Function, write: Function, clear: Function }} o.store  tokenstore.js
  * @param {(url: string) => Promise<void>} [o.openBrowser]
  * @param {() => object} [o.msal]  the library, which only a sign-in needs: stands in for it in a test
+ * @param {number} [o.signInWaitMs]  how long a sign-in in the browser is waited for
  */
-function createMsalSession({ tenant, store, openBrowser = openInBrowser, msal = () => require('@azure/msal-node') }) {
+function createMsalSession({ tenant, store, openBrowser = openInBrowser, msal = () => require('@azure/msal-node'), signInWaitMs = SIGN_IN_WAIT_MS }) {
   let app = null, appAuthority = null;
+  let signingIn = null;   // the browser's sign-in, while one is open
 
   function application() {
     const authority = `https://login.microsoftonline.com/${tenant() || 'organizations'}`;
@@ -72,17 +75,36 @@ function createMsalSession({ tenant, store, openBrowser = openInBrowser, msal = 
       }
     }
     if (!createIfNone) return null;
-    const r = await pca.acquireTokenInteractive({
+    // One sign-in in the browser at a time. A second one (a file opened at start, then the tree's Sign In) left one
+    // of the two waiting for a browser tab nobody would finish, and what waited on it, for ever. A second asker
+    // waits for the first, then asks again with no browser; its failure is the second's too, so a "no" isn't asked
+    // again at once.
+    if (signingIn) {
+      await signingIn;
+      return session(scopes, { createIfNone, account });
+    }
+    signingIn = signIn(pca, wanted, account).finally(() => { signingIn = null; });
+    return sessionOf(await signingIn);
+  }
+
+  // The browser's sign-in, given up after `signInWaitMs`: a tab closed or forgotten never answers.
+  async function signIn(pca, wanted, account) {
+    let timer = null;
+    const late = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`the sign-in in the browser wasn't finished in ${Math.round(signInWaitMs / 60_000)} minutes`)), signInWaitMs);
+      if (timer.unref) timer.unref();
+    });
+    const r = await Promise.race([pca.acquireTokenInteractive({
       scopes: wanted, openBrowser,
       ...(account ? { loginHint: account.label } : { prompt: 'select_account' }),
       successTemplate: DONE_PAGE, errorTemplate: FAILED_PAGE,
-    });
+    }), late]).finally(() => clearTimeout(timer));
     // One account at a time: the one just signed in as is the one asked for next.
     if (!account) {
       const cache = pca.getTokenCache();
       for (const a of await cache.getAllAccounts()) if (a.homeAccountId !== r.account.homeAccountId) await cache.removeAccount(a);
     }
-    return sessionOf(r);
+    return r;
   }
 
   return {

@@ -2,6 +2,10 @@
 
 ## 0.2.25
 
+- **Fixed (desktop app): a file that started the app, signed out, never opened again.** Its open asked for a sign-in
+  in the browser, the tree's Sign In asked for another, and the one not finished kept the file waiting until the app
+  closed. There is one sign-in in the browser at a time now, which every asker waits for, and it is given up after
+  5 minutes.
 - **Every statement's result in a run of several.** The last one's result shows, and a selector above the grid
   switches to any statement of the run, its status line with it. The last 30 results are kept.
 - **Logs is a query.** It opens a tab like any other with `SELECT … FROM onelake_logs WHERE NOT setup ORDER BY

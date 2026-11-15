@@ -121,6 +121,40 @@ test("with nobody signed in, no sign-in is asked for unless createIfNone says so
   assert.equal(asked, 1);
 });
 
+test("one sign-in in the browser at a time: a second asker waits for it, and gets the session it made", async () => {
+  // A file opened at start asks for a sign-in, and so does the tree's Sign In: one browser tab, both answered.
+  const accounts = [];
+  let asked = 0, finish;
+  const fake = fakeMsal({ accounts,
+    interactive: () => { asked++; return new Promise(r => { finish = r; }); },
+    silent: async () => answer("silent") });
+  const s = session(fake);
+  const first = s.session(STORAGE, { createIfNone: true });
+  const second = s.session(STORAGE, { createIfNone: true });
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(asked, 1, "one browser sign-in");
+  accounts.push(ALICE);
+  finish(answer("new"));
+  assert.equal((await first).accessToken, "new");
+  assert.equal((await second).accessToken, "silent", "the second, asked again with no browser");
+  assert.equal(asked, 1);
+});
+
+test("a sign-in the browser never finishes is given up, so what waits on it doesn't wait for ever", async () => {
+  let asked = 0;
+  const fake = fakeMsal({ interactive: () => { asked++; return new Promise(() => {}); } });
+  const s = session(fake, { signInWaitMs: 50 });
+  const first = s.session(STORAGE, { createIfNone: true });
+  const second = s.session(STORAGE, { createIfNone: true });
+  await assert.rejects(first, /wasn't finished/);
+  await assert.rejects(second, /wasn't finished/, "the one waiting on it is told too");
+  assert.equal(asked, 1);
+  // And the next one opens the browser again.
+  s.session(STORAGE, { createIfNone: true }).catch(() => {});
+  await new Promise(r => setTimeout(r, 10));
+  assert.equal(asked, 2);
+});
+
 test("a token that can't be refreshed is no session; no answer is not, since it says nothing", async () => {
   const refused = fakeMsal({ accounts: [ALICE], silent: async () => { throw Object.assign(new Error("AADSTS70008 expired"), { errorCode: "invalid_grant" }); } });
   assert.equal(await session(refused).session(STORAGE), null);
