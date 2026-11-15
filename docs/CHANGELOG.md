@@ -4,10 +4,10 @@
 
 - **Every statement's result in a run of several.** The last one's result shows, and a selector above the grid
   switches to any statement of the run, its status line with it. The last 30 results are kept.
-- **The log is a table.** `SELECT sql, ms FROM onelake_logs ORDER BY ms DESC` in a tab: what the engine ran, read only.
-- **Logs opens at once and stays responsive.** It was sent the latest 1,000 statements in full every few seconds, 18 MB
-  on a busy log, behind a query that held the engine's one thread for most of a second. It's sent only what's new now,
-  each statement's start, and the whole of one when it's opened, copied or opened in a tab.
+- **Logs is a query.** It opens a tab like any other with `SELECT … FROM onelake_logs WHERE NOT setup ORDER BY
+  logged_at DESC LIMIT 1000`, run at once: what the engine ran, read only. Change it as you like, for the slowest
+  statements or the errors; Run again for what ran since. Its own tab is gone: it was sent the latest 1,000 statements in
+  full every few seconds, 18 MB on a busy log, and opening a line could hang it.
 - **A stuck engine is replaced.** A window asks its engine every 20 s whether it's there, and the engine checks its own
   DuckDB every 30 s. With no answer for about a minute, or no DuckDB answer for 4, the engine is stopped and the next
   table opened starts a new one. An engine stuck on a statement left the window waiting for ever.
@@ -17,9 +17,6 @@
 - **Fixed: a table read in the same millisecond as a Refresh kept its old answer.**
 - **Several statements say how long they took together.** A run of several ends with the last one's line and the
   whole run's time: `23/23 · 7 row(s) in 626 ms · all 23 in 41.2 s`.
-- **Fixed: a click on a line in Logs was slow, and could hang.** Each click drew the whole list again, every
-  statement's full text with it. A click now opens or closes its own line, and a closed line holds the start of its
-  statement only.
 - **After a USE, a statement no longer asks DuckDB for its own names first.** The tab asks once and keeps them until
   it makes or drops something; that query was in Logs before each statement.
 - **A tab is one DuckDB session.** Its statements run on a DuckDB connection of its own, so what DuckDB keeps on one

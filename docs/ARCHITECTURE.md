@@ -230,7 +230,7 @@ every window is a client of it over DuckDB's Quack protocol ([`core/engine/engin
   comment and uses `quack_cancel`, since `interrupt()` doesn't reach the server. A stopped statement's attach
   isn't used again: its reads take time to wind down, and the next statement on it waited about 80s, then failed.
 - **The control pipe:** an OS pipe, signed in with the session token, that says a window is alive. The OneLake
-  token, the offline switch and what Logs and Performance ask for go this way rather than over Quack, which logs
+  token, the offline switch and what Performance asks for go this way rather than over Quack, which logs
   what it is sent.
   A Quack listener can stop while the process lives on: a statement that can't connect asks over this pipe, the
   server starts it again on the same port and tells every window to attach again, and the statement goes once more.
@@ -261,15 +261,19 @@ Outside those files there is **one cache folder**, `file-cache-v1`, with a folde
 `secured\`. A semantic model's `.yaml` copy is under `models\<account>\`. Saved queries are yours, under
 `~/OneLakeStudio/queries`.
 
-**Logs** ([`extension/logs.js`](../extension/logs.js)), a node in the tree, with one tab per window. The record is DuckDB's own: its `Quack` log has a row per
+**Logs**, a node in the tree, opens a query tab with `SELECT … FROM onelake_logs WHERE NOT setup ORDER BY logged_at DESC
+LIMIT 1000`, run at once. The record is DuckDB's own: its `Quack` log has a row per
 statement with the time to its first rows and any error, for every tab, window and the command line. A large
 result's later rows aren't in that time, since DuckDB doesn't log them. It is kept in memory
 (file storage can't be read back on Windows, since DuckDB locks its own file), and the server moves it to the log
 file every two seconds ([`core/engine/enginelog.js`](../core/engine/enginelog.js)), up to `onelakeStudio.logMaxGB`, the oldest going first.
-It holds your SQL and its errors in plain text, and never the OneLake token. A row reopens its SQL in a new tab, not run.
-A semantic model's query runs as the SQL dax-sql compiles it to, with the query as written in a comment in front
-([`page/semantic.js`](../page/semantic.js)), so its row shows what was asked and, opened, what it compiled to. It reopens
-as what was asked.
+It holds your SQL and its errors in plain text, and never the OneLake token.
+`onelake_logs` is that file, attached read only through DuckDB's sqlite extension before the lockdown
+([`core/engine/engine-host.js`](../core/engine/engine-host.js)): `logged_at`, `status`, `ms`, `client` (the window), `sql`,
+`error`, and `setup`, true for what the engine and the tree run to get ready (a `CREATE`, `DROP`, `ATTACH` or `DETACH`:
+thousands of views at each start). DuckDB refuses a write to it, and so does the guard. A semantic model's query is
+there as the SQL dax-sql compiled it to, with the query as written in a comment in front
+([`page/semantic.js`](../page/semantic.js)).
 `SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory.
 
 **Performance** ([`extension/performance.js`](../extension/performance.js)), a node in the tree, with one tab per window. Live charts of
@@ -1301,7 +1305,7 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | `extension.js` | Activation, commands, the tree's view, dialogs and the status bar. It hands the rest in. |
 | `tree.js` | The explorer. |
 | `panel.js`, `webview.js`, `html.js` | A tab's webview and its page. |
-| `performance.js`, `logs.js` | The Performance and Logs tabs. |
+| `performance.js` | The Performance tab. |
 
 ### page/
 

@@ -3,8 +3,8 @@
 // logfile.js — what the engine ran, in a SQLite file of its own
 // =============================================================================
 // The log isn't metadata about OneLake, so it isn't in the catalog: Clear Cached leaves it, and it can
-// grow without touching what the tree reads. The server writes it (enginelog.js) and answers the Logs tab
-// from it. A file that won't open is set aside and started again, and with no file at all the engine
+// grow without touching what the tree reads. The server writes it (enginelog.js), and a tab reads it with SQL
+// (engine-host.js onelake_logs). A file that won't open is set aside and started again, and with no file at all the engine
 // runs on with no log.
 // =============================================================================
 
@@ -64,24 +64,15 @@ function createLogFile({ file, log = () => {} }) {
         db.exec('COMMIT');
       } catch (e) { db.exec('ROLLBACK'); throw e; }
     },
-    /** The newest first: `limit` statements, and as many of the engine's setup beside them when `setup`. Each start
-     * registers every table there is, thousands of them, and the newest rows were only that. `after`: only rows
-     * added since the one with that id (`id` is the row's). */
-    read(limit, { after = 0, setup = true } = {}) {
+    /** The newest first: `limit` statements, and as many of the engine's setup beside them. Each start registers
+     * every table there is, thousands of them, and the newest rows were only that. */
+    read(limit) {
       // enginelog.js isSetup, in SQL, on each statement's start only: some are megabytes.
       const head = "lower(ltrim(substr(sql, 1, 64), ' ' || char(9, 10, 13)))";
       const SETUP = ['create', 'drop', 'attach', 'detach'].map(w => `${head} GLOB '${w}[^a-z0-9_]*'`).join(' OR ');
-      const part = where => `SELECT * FROM (SELECT rowid AS id, ts, win, sql, ms, status, error FROM logs WHERE rowid > ? AND ${where} ORDER BY ts DESC LIMIT ?)`;
-      const db = database();
-      const first = Math.max(0, Math.floor(Number(after)) || 0);
-      if (!setup) return db.prepare(`${part(`NOT (${SETUP})`)} ORDER BY ts DESC`).all(first, limit);
-      return db.prepare(`${part(`NOT (${SETUP})`)} UNION ALL ${part(SETUP)} ORDER BY ts DESC`).all(first, limit, first, limit);
+      const part = where => `SELECT * FROM (SELECT ts, win, sql, ms, status, error FROM logs WHERE ${where} ORDER BY ts DESC LIMIT ?)`;
+      return database().prepare(`${part(`NOT (${SETUP})`)} UNION ALL ${part(SETUP)} ORDER BY ts DESC`).all(limit, limit);
     },
-    /** One row, whole, by its id. */
-    row(id) {
-      return database().prepare('SELECT rowid AS id, ts, win, sql, ms, status, error FROM logs WHERE rowid = ?').get(Math.floor(Number(id)) || 0) || null;
-    },
-    clear() { database().exec('DELETE FROM logs'); },
     // The oldest go, down to half, so this isn't at the limit again at once.
     trim(maxBytes) {
       // The pages in use say it fits with nothing read. The sum below reads up to a gigabyte's rows, on the

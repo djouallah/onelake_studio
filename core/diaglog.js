@@ -7,7 +7,7 @@
 // path changes every session. `mark` is a step of starting up, in ms since the extension host started:
 // the difference between two of them says whose time it was. `status` reads those back too.
 //
-// This is what the extension did, for debugging it. What the engine ran is the Logs tab (logfile.js).
+// This is what the extension did, for debugging it. What the engine ran is in onelake_logs (logfile.js).
 //
 // No `vscode` import: the extension passes in the channel.
 // =============================================================================

@@ -4,8 +4,8 @@
 // =============================================================================
 // The record is DuckDB's own: with its Quack log on, each request a client makes is a row with the
 // statement, the time to its first rows and any error (engine-host.js turns it on). That log lives in memory,
-// so the server moves it into its own SQLite file (logfile.js), which outlives the process and answers
-// the Logs tab with no scan of anything large. Nothing here looks at a statement as it runs.
+// so the server moves it into its own SQLite file (logfile.js), which outlives the process and a tab reads
+// with SQL (engine-host.js onelake_logs). Nothing here looks at a statement as it runs.
 //
 // `SELECT * FROM duckdb_logs` still answers in a SQL box, for what hasn't been emptied yet.
 // =============================================================================
@@ -63,15 +63,10 @@ const isSetup = sql => /^\s*(create|drop|attach|detach)\b/i.test(sql);
 
 const cut = s => { const t = String(s).split('\0').join(''); return t.length > SQL_MAX ? `${t.slice(0, SQL_MAX)}\n… (cut)` : t; };
 
-// What the Logs tab is sent of a statement's text at first; the rest when a line is opened, copied or opened in a tab.
-const SHOWN_TEXT = 2_000;
-// A row of the log file as the Logs tab reads it, its text cut at `max`.
-function entryOf(x, max) {
+// A row of the log file, the statement as written apart from what it was compiled to.
+function entryOf(x) {
   const { source, sql } = sourceOf(x.sql);
-  const short = s => (s != null && s.length > max ? s.slice(0, max) : s);
-  const long = [sql, source, x.error].some(s => s != null && s.length > max);
-  return { id: Number(x.id), at: Number(x.ts), window: x.win, sql: short(sql), source: short(source), ms: Number(x.ms), status: x.status,
-           error: short(x.error), setup: isSetup(sql), cut: long };
+  return { at: Number(x.ts), window: x.win, sql, source, ms: Number(x.ms), status: x.status, error: x.error, setup: isSetup(sql) };
 }
 
 // After a fatal error DuckDB refuses every statement, whoever sends it, until the process is gone.
@@ -123,7 +118,7 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
     }
     if (moved > EMPTY_PAST_ROWS) {
       // What was logged while the rows above were being kept, read just before the log is emptied:
-      // emptying takes everything, and a statement in neither read would never be in the Logs tab.
+      // emptying takes everything, and a statement in neither read would never be in the log.
       const late = take(await engine.readLog(last));
       if (maxBytes > 0) logs.add(late);
       await engine.emptyLog();
@@ -154,23 +149,16 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
     },
     flush,
     stop() { for (const t of timers) clearInterval(t); },
-    /** The newest statements, up to date: past the row `after` (an id), with the setup ones when `setup`. Their
-     * text is cut to SHOWN_TEXT, `cut` saying so: the whole is row(id)'s. 1,000 of them were 18 MB. */
-    async read(limit = 1000, { after = 0, setup = true } = {}) {
+    /** The newest statements, up to date. */
+    async read(limit = 1000) {
       await flush().catch(() => {});
-      return logs.read(Math.max(1, Math.floor(limit)), { after, setup }).map(x => entryOf(x, SHOWN_TEXT));
-    },
-    /** One statement, whole. */
-    async row(id) {
-      const x = logs.row(id);
-      return x ? entryOf(x, Infinity) : null;
+      return logs.read(Math.max(1, Math.floor(limit))).map(entryOf);
     },
     /** How many statements someone has asked for so far, up to date: Performance's queries per second. */
     async statements() {
       await flush().catch(() => {});
       return asked;
     },
-    clear: () => turn(async () => { logs.clear(); await engine.emptyLog(); moved = 0; }),
   };
 }
 

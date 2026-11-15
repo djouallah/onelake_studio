@@ -22,7 +22,6 @@ const fsp = require('node:fs/promises');
 const { quoteIdent, sqlStr, tableRefs } = require('../core/sql');
 const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, revealTab, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { openPerformance, closePerformance } = require('./performance');
-const { openLogs, closeLogs } = require('./logs');
 const { createDiagLog, outputLogOf } = require('../core/diaglog');
 const { createConnectivity, probeOf } = require('../core/onelake/connectivity');
 const { useConnectivity } = require('../core/onelake/http');
@@ -122,10 +121,9 @@ const { keepLimitBytes } = settings;
 // The engine and what goes with it (engines.js); set first thing at activation.
 let engines = null;
 
-// Every tab of this window, for an account that is going: Logs and Performance show what it ran too.
+// Every tab of this window, for an account that is going: Performance shows what it ran too.
 function closeAllTabs() {
   closePanel();
-  closeLogs();
   closePerformance();
 }
 
@@ -250,6 +248,17 @@ const onClick = fn => n => (treeClick(n) ? fn(n) : undefined);
 
 // What a new query (the Queries node's +) starts with. SHOW ALL TABLES is answered from the
 // cache (cachedSqlTables), so it lists only the tables seen in the tree.
+// Logs: what the engine ran, newest first, as a query of its log (engine-host.js onelake_logs) in a tab like any other.
+// `setup` is what the engine and the tree run to get ready: thousands of CREATE VIEWs at each start.
+const LOGS_SQL = [
+  'SELECT logged_at, status, ms, client, sql, error',
+  'FROM onelake_logs',
+  'WHERE NOT setup',
+  'ORDER BY logged_at DESC',
+  'LIMIT 1000;',
+  '',
+].join('\n');
+
 const NEW_QUERY_SQL = [
   '-- New query. A table is named workspace.lakehouse.schema.table.',
   '-- This lists only the tables cached on this machine: expand a lakehouse in the OneLake tree to add its tables.',
@@ -962,19 +971,7 @@ async function activateInner(context) {
       });
     }),
 
-    vscode.commands.registerCommand('onelakeStudio.showLogs', async () => {
-      const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
-      openLogs({
-        engine: () => engines.ensureEngine({ readme: readme.fsPath }),
-        open: sql => openInPanel({ type: 'query', sql }),
-        copy: sql => vscode.env.clipboard.writeText(sql),
-        clear: async () => {
-          const pick = await vscode.window.showWarningMessage(
-            'Clear what the engine has run, for every window?', { modal: true }, 'Clear');
-          if (pick === 'Clear') await engines.current()?.clearLogs();
-        },
-      });
-    }),
+    vscode.commands.registerCommand('onelakeStudio.showLogs', () => openInPanel({ type: 'run-sql', sql: LOGS_SQL }, 'Logs')),
 
     vscode.commands.registerCommand('onelakeStudio.openTable', onClick(n => openInPanel({
       type: 'open-table',

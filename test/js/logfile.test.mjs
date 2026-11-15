@@ -61,14 +61,6 @@ test("thousands of setup statements after the last query don't hide it", async t
   assert.equal(rows[0].ts, 61);
 });
 
-test("clear empties it", async t => {
-  const { open } = await setup(t);
-  const f = open();
-  f.add([row(1)]);
-  f.clear();
-  assert.deepEqual(f.read(10), []);
-});
-
 test("past its limit the oldest go, down to half", async t => {
   const { open } = await setup(t);
   const f = open();
@@ -134,21 +126,3 @@ test("a semantic model's query is logged as written and as compiled, apart again
   assert.ok(ran.endsWith(`*/\n${compiled}`));
 });
 
-test("the Logs tab's reads: rows after an id, setup only when asked, one row whole by its id", async t => {
-  const { open } = await setup(t);
-  const f = open();
-  f.add([row(1, "SELECT 1"), row(2, "CREATE VIEW v AS SELECT 1"), row(3, "SELECT 3")]);
-  const all = f.read(10);
-  assert.deepEqual(all.map(r => r.ts), [3, 2, 1]);
-  assert.ok(all.every(r => Number.isInteger(r.id) && r.id > 0), "each row has its id");
-  assert.deepEqual(f.read(10, { setup: false }).map(r => r.ts), [3, 1], "no setup unless asked");
-  const newest = Math.max(...all.map(r => r.id));
-  assert.deepEqual(f.read(10, { after: newest }), [], "nothing past the newest");
-  f.add([row(4, "SELECT 4")]);
-  assert.deepEqual(f.read(10, { after: newest }).map(r => r.ts), [4], "only what came since");
-  const big = "SELECT '" + "x".repeat(10_000) + "'";
-  f.add([row(5, big)]);
-  const [five] = f.read(1, { setup: false });
-  assert.equal(f.row(five.id).sql, big, "one row, whole");
-  assert.equal(f.row(999_999), null);
-});

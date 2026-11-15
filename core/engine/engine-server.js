@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | othersRunning | logs | clearLogs | storageToken | lakeTable | lakeSync | lakeTables | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | deltaAttach | deltaDetach | listen }, answered { id, value | error }
+//   window -> server   { id, stats | othersRunning | logs | storageToken | lakeTable | lakeSync | lakeTables | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | deltaAttach | deltaDetach | listen }, answered { id, value | error }
 //   server -> window   { reattach: true }   its own news, with no id
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
@@ -69,7 +69,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   let idle = null, state = null, reaper = null, stopping = false, logs = null, keeper = null;
   const clients = new Set();
 
-  // What the engine runs goes to the log file, where the Logs tab reads it.
+  // What the engine runs goes to the log file, where a tab reads it as onelake_logs.
   async function keepLog() {
     logs = createLogFile({ file: logsFile, log });
     // A database that has died takes every window's statements with it. Gone, the windows hear so and the
@@ -157,12 +157,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     if (msg.listen) { await listenAgain(!!msg.listen.force); return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.othersRunning) return engine.othersRunning();
-    if (msg.logs) {
-      if (keeper) return keeper.read(msg.logs.limit, { after: msg.logs.after, setup: msg.logs.setup });
-      return [];
-    }
-    if (msg.logRow) return keeper ? keeper.row(msg.logRow.id) : null;
-    if (msg.clearLogs) { if (keeper) await keeper.clear(); return true; }
+    if (msg.logs) return keeper ? keeper.read(msg.logs.limit) : [];
     throw new Error('the engine was asked something it does not know');
   }
 

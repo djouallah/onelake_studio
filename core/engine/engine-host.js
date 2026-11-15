@@ -536,7 +536,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (serve && logsFile && capabilities.sqlite_scanner) {
         try {
           await conn.run(`ATTACH ${sqlStr(String(logsFile).replace(/\\/g, '/'))} AS studio_logs (TYPE sqlite, READ_ONLY);`);
-          await conn.run(`CREATE OR REPLACE VIEW main.onelake_logs AS SELECT epoch_ms(ts) AS logged_at, status, ms, sql, error, win AS client
+          await conn.run(`CREATE OR REPLACE VIEW main.onelake_logs AS SELECT epoch_ms(ts) AS logged_at, status, ms, sql, error, win AS client,
+            regexp_matches(left(sql, 64), '^\\s*(create|drop|attach|detach)\\b', 'i') AS setup
             FROM studio_logs.logs;`);
         } catch (e) { onWarn(`the log can't be read with SQL (onelake_logs) — ${e.message}`); }
       }
@@ -1794,14 +1795,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return issueSecret(token);
   }));
   const allowStorageHere = scopes => init().then(() => allowStorage(scopes));
-  // What the Logs tab shows.
-  const logs = (limit, o) => init().then(() => (remote ? instance.logs(limit, o) : []));
-  const logRow = id => init().then(() => (remote ? instance.logRow(id) : null));
+  // What the engine ran, newest first, read with no statement of its own (a tab reads it as onelake_logs).
+  const logs = limit => init().then(() => (remote ? instance.logs(limit) : []));
   // What the server's watchdog asks (engine-server.js): a statement through the host's own queue, then on a connection
   // of its own, as a window's goes.
   const health = () => init().then(() => admin(() => conn.run('SELECT 1')))
     .then(() => withConn(c => c.run('SELECT 1'), agentLive)).then(() => true);
-  const clearLogs = () => init().then(() => (remote ? instance.clearLogs() : undefined));
 
   // serve: once Quack is listening, what a window needs to know of this engine.
   async function boot() {
@@ -1980,7 +1979,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, logRow, clearLogs, health,
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, health,
                 icebergAttach: ({ warehouse }) => iceAttach(warehouse), icebergDetach: ({ name }) => iceDetach(name),
                 deltaAttach: ({ folder }) => deltaAttach(folder), deltaDetach: ({ name }) => deltaDetach(name) };
   return api;

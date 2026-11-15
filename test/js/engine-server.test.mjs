@@ -271,8 +271,6 @@ test("the log: every window's statements, as DuckDB recorded them", async t => {
   const seen = await a.call("query", ["SELECT count(*)::INT AS n FROM duckdb_logs WHERE type = 'Quack'"]);
   assert.ok(seen.rows[0].n > 0);
 
-  await a.clearLogs();
-  assert.equal((await a.logs(1000)).length <= 1, true, "cleared");
 });
 
 test("the OneLake token reaches no log, and history survives the server", async t => {
@@ -730,6 +728,10 @@ test("the log is a table a tab reads: onelake_logs, which no statement can chang
   }
   assert.equal(rows.length >= 1, true, "the statement is in onelake_logs");
   assert.equal(rows[0].status, "ok");
+  // What Logs opens (extension.js LOGS_SQL): newest first, the engine's setup left out.
+  const shown = (await tab.call("query", ["SELECT logged_at, status, ms, client, sql, error\nFROM onelake_logs\nWHERE NOT setup\nORDER BY logged_at DESC\nLIMIT 1000;"])).rows;
+  assert.ok(shown.some(r => r.sql.includes("find me in the log")), "Logs lists it");
+  assert.ok(!shown.some(r => /^\s*(create|drop|attach|detach)\b/i.test(r.sql)), "and no setup");
   for (const sql of ["DELETE FROM onelake_logs", "DROP VIEW onelake_logs", "INSERT INTO studio_logs.logs SELECT * FROM studio_logs.logs",
                      "DELETE FROM studio_logs.logs", "DETACH studio_logs"]) {
     await assert.rejects(tab.call("query", [sql]), /Not run|read-only/, sql);

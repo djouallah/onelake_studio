@@ -584,16 +584,11 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     const tabs = async () => (await drive("state")).tabs.join(", ");
     await drive("exec", { command: "onelakeStudio.showPerformance" });
     await until("the Performance tab", async () => /Performance/.test(await tabs()), 15000);
-    await drive("exec", { command: "onelakeStudio.showLogs" });
-    await until("the Logs tab", async () => /Logs/.test(await tabs()), 15000);
-    const listed = await until("a statement in Logs", async () => {
-      for (const f of page.frames()) {
-        if (f.isDetached() || !await f.locator("#filter").count().catch(() => 0)) continue;
-        if (/from a saved query/.test(await f.locator("#list").innerText().catch(() => ""))) return true;
-      }
-      return false;
-    }, 20000).catch(() => false);
-    check("what ran earlier is listed", listed);
+    const r = await openLogs();
+    settled("Logs", r);
+    check("Logs is a tab of SQL over onelake_logs, run at once", /FROM onelake_logs/.test(r.box) && !isError(r) && /Logs/.test(await tabs()), r.status);
+    const missing = await logsMissing([/from a saved query/]).catch(e => e.message);
+    check("what ran earlier is listed", missing === "none", missing);
   });
 
   await step("Tree: Select Top Rows runs from the box", async () => {
@@ -677,17 +672,27 @@ async function modelMatrix() {
   }, 180000);
 }
 
-// What the Logs tab lists, as written, with setup hidden as it is by default.
-async function logsListed() {
-  await drive("exec", { command: "onelakeStudio.showLogs" });
-  return until("the Logs tab's rows", async () => {
-    for (const f of page.frames()) {
-      if (f.isDetached() || !await f.locator("#filter").count().catch(() => 0)) continue;
-      const rows = await f.locator("#list tbody tr").evaluateAll(trs => trs.map(tr => ({ status: tr.children[1].textContent, sql: tr.querySelector(".one").textContent })));
-      if (rows.length) return rows;
-    }
-    return false;
-  }, 30000);
+// Logs: a tab of SQL over onelake_logs (extension.js LOGS_SQL), run as it opens.
+const openLogs = () => act(() => drive("exec", { command: "onelakeStudio.showLogs" }));
+// Asked in that tab: which of these, by a word of their own, the log doesn't have yet ("none" when it has them all).
+// The log is moved every 2 s, so it is asked again for a while. Its own queries are left out: they name them too.
+async function logsMissing(res) {
+  const sql = `SELECT coalesce(string_agg(m, ' | '), 'none') AS missing FROM (VALUES ${res.map(re => `('${re.source}')`).join(", ")}) t(m)
+WHERE NOT EXISTS (SELECT 1 FROM onelake_logs WHERE NOT setup AND sql NOT LIKE '%onelake_logs%' AND regexp_matches(sql, m))`;
+  let said = "";
+  await until("the log has them", async () => {
+    const r = await runIt(sql);
+    said = isError(r) ? r.status : /none/.test(r.table) ? 'none' : r.table;
+    return said === "none";
+  }, 30000).catch(() => {});
+  return said;
+}
+// How many statements the log has, and the newest one's time, in ms.
+async function logsCounted(sql) {
+  const r = await runIt(sql);
+  const m = /n=(d+);last=(d+)/.exec(r.table);
+  if (!m) throw new Error(r.table || r.status);
+  return { n: Number(m[1]), last: Number(m[2]) };
 }
 // Statements every matrix above runs, by a word of their own: each one is in Logs.
 const RAN = [/select 101 as first_one/, /select 102 as by_button/, /fromm where/, /select 901 as planned/, /select 902 as explained/,
@@ -943,10 +948,13 @@ async function main() {
   await planMatrix();
   await cachedPlanMatrix();
   await modelMatrix();
-  let before = [];
+  let before = null;
   await step("Logs: everything that ran is listed", async () => {
-    before = await logsListed().catch(() => []);
-    for (const re of RAN) check(`Logs lists ${re.source}`, before.some(r => re.test(r.sql)), `${before.length} rows`);
+    settled("Logs", await openLogs());
+    const missing = await logsMissing(RAN).catch(e => e.message);
+    check("Logs lists every statement the matrices ran", missing === "none", missing);
+    before = await logsCounted("SELECT 'n=' || count(*) || ';last=' || max(epoch_ms(logged_at)) AS kept FROM onelake_logs").catch(e => ({ error: e.message }));
+    check("the log counts them", before.n > 0, JSON.stringify(before));
     // A query's box in front again, for the steps after: the Report left the model on screen, and Logs is a tab of
     // its own. The engine is up, so no "DuckDB ready" comes again.
     await drive("exec", { command: "onelakeStudio.newQuery", timeoutMs: 60000 });
@@ -995,11 +1003,13 @@ async function main() {
     check("the catalog lists the tables after a restart", /orders/.test(listed.table), listed.table || listed.status);
   }, 240000);
   await step("Logs: nothing that ran before the restart is lost", async () => {
-    const after = await logsListed().catch(() => []);
-    const kept = new Set(after.map(r => `${r.status}|${r.sql}`));
-    const lost = before.filter(r => !kept.has(`${r.status}|${r.sql}`));
-    check("every statement listed before is still listed", before.length > 0 && lost.length === 0, `${lost.length} of ${before.length} lost: ${lost.slice(0, 5).map(r => r.sql).join(" | ")}`);
-    check("and what ran since is there too", after.some(r => /select 77 as still_works/.test(r.sql)), `${after.length} rows`);
+    settled("Logs", await openLogs());
+    const last = Number(before && before.last) || 0;
+    const after = await logsCounted(`SELECT 'n=' || count(*) FILTER (WHERE epoch_ms(logged_at) <= ${last}) || ';last=' || max(epoch_ms(logged_at)) AS kept FROM onelake_logs`)
+      .catch(e => ({ error: e.message }));
+    check("every statement there before is still there", before && before.n > 0 && after.n >= before.n, `before ${JSON.stringify(before)}, after ${JSON.stringify(after)}`);
+    const missing = await logsMissing([/select 77 as still_works/]).catch(e => e.message);
+    check("and what ran since is there too", missing === "none", missing);
   });
   await close();
 

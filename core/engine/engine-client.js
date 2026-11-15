@@ -346,7 +346,7 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
 }
 
 // Lines from a stream's text, in time linear in its length: each chunk is searched once, and a line
-// is joined from its pieces once it ends. An answer of tens of MB (the Logs tab's) comes in thousands of
+// is joined from its pieces once it ends. An answer of tens of MB comes in thousands of
 // chunks, and searching all of it again at each one froze the extension host for seconds.
 // `maxLine()` is the longest line taken, asked at each chunk since it can change (the server's is short until a
 // connection has said who it is). Past it nothing more is read and `onTooLong` is called once: what was held is
@@ -607,9 +607,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       deltaDetach: w => ask({ deltaDetach: w }),
       stats: () => ask({ stats: true }),
       othersRunning: () => ask({ othersRunning: true }),
-      logs: (limit, { after = 0, setup = true } = {}) => ask({ logs: { limit, after, setup } }),
-      logRow: id => ask({ logRow: { id } }),
-      clearLogs: () => ask({ clearLogs: true }),
+      logs: limit => ask({ logs: { limit } }),
       async connect() { return wrap(sql => route(sql)); },
       /**
        * A tab's own session on the server (engine-host.js tabSession): `connect()` gives what connect() does, its
