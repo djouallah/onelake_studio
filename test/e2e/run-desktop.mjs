@@ -76,7 +76,14 @@ try {
         "frames:", await page.locator("#pages iframe").evaluateAll(fs => fs.map(f => f.outerHTML)));
       throw e;
     });
-    assert.match(await box.inputValue(), /opened from disk/);
+    // The page is drawn first, and the file's text comes once it says it's ready.
+    let text = "";
+    for (let i = 0; i < 60 && !/opened from disk/.test(text); i++) {
+      text = await box.inputValue();
+      if (!/opened from disk/.test(text)) await page.waitForTimeout(500);
+    }
+    if (!/opened from disk/.test(text)) console.error("console:", said.join(" | "));
+    assert.match(text, /opened from disk/, `the box says ${JSON.stringify(text)} after 30 s`);
     await page.screenshot({ path: join(shots, "1a-file-from-disk.png") });
     await page.locator(".tab", { hasText: "from disk.sql" }).locator("button.close").click();
   });
