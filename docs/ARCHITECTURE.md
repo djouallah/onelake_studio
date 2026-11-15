@@ -986,7 +986,7 @@ and the command line's `export` takes no `--mode`.
   caller's applicable model permissions, including Build", and Fabric checks it on whoever publishes (the CI identity was
   refused with "Could not verify Build permission on semantic model"). But a viewer needs only Read: tried on 2026-11-11 with an account that
   was a workspace Viewer, Read on the model and no Build, the app's connector answered its DAX query.
-- `site/` holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
+- `site/public/` holds no DuckDB, extensions or DuckDB's Arrow, and no SAS is signed: the workspace
   setting for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))

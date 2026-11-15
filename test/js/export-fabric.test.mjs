@@ -134,8 +134,6 @@ async function published(s, said, zipName, engine, since) {
     if (!/\.(html|js)$/.test(path) || path.startsWith("vendor/")) continue;
     for (const [, spec] of bytes.toString("utf8").matchAll(/\b(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"'?]+\.js)(?:\?v=[\w-]+)?["']/g)) {
       const to = new URL(spec, new URL(path, "http://site/")).pathname.slice(1);
-      // The other engine's data source is left out (exportapp.js), and app.js imports it only when it is the site's.
-      if (to === (engine === "duckdb" ? "storage/modeldata.js" : "storage/data.js")) { assert.ok(!site.has(to), `${to} is the other engine's`); continue; }
       assert.ok(site.has(to), `${path} imports ${spec}, and the site has no ${to}`);
       imports++;
     }

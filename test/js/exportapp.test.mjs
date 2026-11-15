@@ -291,7 +291,9 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js", "site/public/storage/auth.js", "site/public/app.js", "site/public/explore/view.js"]) {
       assert.ok(files.has(p), p);
     }
-    assert.ok(![...files.keys()].some(f => /^site\/public\/storage\/(data|catalog)\.js$|vendor\//.test(f)), "no DuckDB data source, and no packages yet (setPackages)");
+    assert.ok(![...files.keys()].some(f => /vendor\//.test(f)), "no packages yet (setPackages)");
+    // Both data sources' scripts: app.js names both, and Vite (Fabricator's preview) refuses it when one is missing.
+    assert.ok(files.has("site/public/storage/data.js") && files.has("site/public/storage/catalog.js"));
     // The packages added at publish: the connector and its own Arrow, and not DuckDB's.
     const vendor = await vendorFiles(dirs.webappDir, engine);
     assert.deepEqual([...vendor.keys()].sort(), ["vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "vendor/npm/apache-arrow@21.2.0/+esm.js"]);
@@ -303,7 +305,7 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.match(agents, /The page turns it into DAX and runs it on the semantic model\./);
     assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
 
-    // Client side: the site has its DuckDB data source and not the semantic model's, and DuckDB's packages.
+    // Client side: the site has its DuckDB data source, the semantic model's too (app.js names it), and DuckDB's packages.
     assert.ok(!files.has("model.ossie.yaml") && !files.has("model.bim"), "a semantic model's app names the model, and holds no copy");
     const duck = await appFiles({ plan: { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), engine: "duckdb" },
                                   state: null, model, modelText: OSSIE, modelFile: "sales.yaml", ...dirs });
@@ -311,7 +313,7 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     // engine.json always: the hosting answers a file a site lacks with its index.html.
     assert.deepEqual(JSON.parse(duck.get("site/public/engine.json")), { engine: "duckdb" });
     assert.equal(engineOf(new Map(), {}), "duckdb", "an older client-side site, with no engine.json");
-    for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js"]) assert.ok(!duck.has(p), p);
+    for (const p of ["site/public/storage/modeldata.js", "site/public/storage/modelrows.js"]) assert.ok(duck.has(p), p);
     // Client side the app runs on its own model: the file's model.yaml, and the site's model.json made from it.
     assert.equal(duck.get("model.ossie.yaml").toString(), OSSIE);
     assert.deepEqual(JSON.parse(duck.get("site/public/model.json")), model);

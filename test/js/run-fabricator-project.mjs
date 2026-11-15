@@ -79,7 +79,7 @@ try {
   }
   const get = async (path, what) => {
     const r = await fetch(base + path);
-    if (r.status !== 200) fail(`${what}: HTTP ${r.status} for ${path}`);
+    if (r.status !== 200) fail(`${what}: HTTP ${r.status} for ${path}: ${(await r.text().catch(() => "")).slice(0, 1500)}`);
     return r;
   };
   const html = await (await get("/", "the page")).text();
