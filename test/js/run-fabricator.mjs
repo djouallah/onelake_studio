@@ -54,7 +54,8 @@ function diagnose(child) {
     catch (e) { console.log(`(powershell: ${String(e.message).split("\n")[0]})`); }
   };
   ps(`Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'rayfin|msedgewebview2' } |
-      ForEach-Object { '{0} {1} parent {2}: {3}' -f $_.Name, $_.ProcessId, $_.ParentProcessId, ([string]$_.CommandLine).Substring(0, [Math]::Min(600, ([string]$_.CommandLine).Length)) }`);
+      ForEach-Object { $c = [string]$_.CommandLine; if ($c -match '--type=') { $c = $c.Substring(0, [Math]::Min(200, $c.Length)) };
+                       '{0} {1} parent {2}: {3}' -f $_.Name, $_.ProcessId, $_.ParentProcessId, $c }`);
   ps(`$ids = (Get-Process msedgewebview2, rayfin-fabricator -ErrorAction SilentlyContinue).Id;
       Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.OwningProcess } |
       ForEach-Object { 'listening {0}:{1} pid {2}' -f $_.LocalAddress, $_.LocalPort, $_.OwningProcess }`);
@@ -72,9 +73,15 @@ const json = async p => JSON.parse((await readFile(p, "utf8")).replace(/^﻿/, "
 const shown = async page => (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 800);
 await mkdir(SHOTS, { recursive: true });
 
+// WebView2's DevTools port, for Fabricator's WebView2 alone: its per-app override (Software\Policies\Microsoft\
+// Edge\WebView2\AdditionalBrowserArguments, by the app's exe name), which WebView2 reads itself, and the
+// environment variable Fabricator's own docs-screenshots launcher uses.
+const DEVTOOLS = `--remote-debugging-port=${PORT}`;
+execFileSync("reg", ["add", "HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments",
+  "/v", "rayfin-fabricator.exe", "/t", "REG_SZ", "/d", DEVTOOLS, "/f"], { stdio: "inherit" });
 // Opened as a double-click opens it: the file as Fabricator's argument, the Import window its first screen.
 const fabricator = spawn(EXE, [FILE], {
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
+  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: DEVTOOLS },
   stdio: "ignore", detached: false,
 });
 let browser, main, preview;
