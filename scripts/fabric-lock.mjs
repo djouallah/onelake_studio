@@ -21,7 +21,12 @@ try {
   await writeFile(join(dir, "package.json"), projectPackage("fabric-app"));
   await mkdir(join(dir, "rayfin", "functions"), { recursive: true });
   await copyFile(join(root, "fabric_app", "rayfin", "functions", "package.json"), join(dir, "rayfin", "functions", "package.json"));
-  execSync("npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/",
+  // Only versions published BEFORE ten days ago. A company's npm mirror holds a new version back for days (one
+  // served nothing younger than about a week: tar 7.5.23 and postcss 8.5.33 were 404 there on 2026-11-16), and
+  // npm ci then fails on every package the lock names that the mirror has not taken yet. Every pin the project
+  // names must be older than this too: npm says ETARGET for one that is not.
+  const before = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  execSync(`npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ --before=${before}`,
            { cwd: dir, stdio: "inherit" });
   const lock = await readFile(join(dir, "package-lock.json"), "utf8");
   // Every package from the public registry, but the workspace's own link to rayfin/functions.
