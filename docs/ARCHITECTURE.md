@@ -818,16 +818,18 @@ A model file, an app's file or a `.sql` file on this machine opens in a tab, as 
   Fabric there publishes this file as it is: no Save dialog, and no question about its changes.
 - **A file named `<name>.ossie.yaml`** is a model by its name: the Apache Ossie spec names no extension, and Ossie's own
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
-- **In VS Code**, a `.fabricator`, a `.fabricapp`, a `*.ossie.yaml` and a `.sql` file open in OneLake Studio by default (custom editors
-  that hand them over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). None of them is a
-  text editor, so no SQL extension starts for a `.sql` file. They open in the extension even when the desktop app is
-  installed: VS Code is what was picked to open them, and it can't tell *Open with > Visual Studio Code* from a
-  double-click whose default is VS Code. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
+- **In VS Code**, a `.fabricator`, a `.fabricapp` and a `*.ossie.yaml` open in OneLake Studio by default (custom editors
+  that hand them over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). They open in
+  the extension even when the desktop app is installed: VS Code is what was picked to open them, and it can't tell
+  *Open with > Visual Studio Code* from a double-click whose default is VS Code. A `.sql` file opens as text: most
+  have nothing to do with OneLake. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
   what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
-  `.yaml`, `.yml`, `.bim`, `.fabricator` or `.fabricapp`.
-- **In the desktop app**, File › Open… (Ctrl+O) opens a `.fabricator` too, and a double-click on a `.fabricapp`, `.sql`, `.yaml`, `.yml` or `.bim`:
+  `.yaml`, `.yml`, `.bim`, `.fabricator`, `.fabricapp` or `.sql`, which opens without the file in an editor, so no SQL
+  extension starts.
+- **In the desktop app**, File › Open… (Ctrl+O) opens a `.fabricator` too, and a double-click on a `.fabricapp`, `.yaml`, `.yml` or `.bim`:
   the installer makes the app their default ([`desktop/src-tauri/hooks.nsh`](../desktop/src-tauri/hooks.nsh)), by
-  each extension's own default value, which Windows uses while the person has picked no program. A program picked
+  each extension's own default value, which Windows uses while the person has picked no program. A `.sql` file has
+  the app in *Open with* only, and an earlier install's default for it is put back. A program picked
   with *Open with › Always*, before the install or after it, is kept over it: the app never takes a file from the
   program the person picked. Uninstalling puts back the default each had. A file the app is started with reaches the Node
   process as a line on its stdin, `{"open":"<path>"}`, also when the app is already running (its single instance).

@@ -7,6 +7,10 @@
   the page's packages too (about 12 MB with DuckDB-WASM), a `package.json`, and once published the app as
   `rayfin up` records it. OneLake Studio still publishes it itself, with no Node or CLI. An earlier `.fabricapp`
   still opens, and is saved as a `.fabricator` the next time it is exported.
+- **A .sql file from disk opens where it did before OneLake Studio.** Most have nothing to do with OneLake: VS Code
+  opens one as text, and the desktop app is no longer Windows' default for `.sql`, which an upgrade gives back to
+  the program it had. Explorer's right-click > **Open in OneLake Studio**, or Windows' *Open with*, still opens one
+  in the SQL box. A `.sql` file in a lakehouse's `Files/` opens in the box from the tree, as before.
 - **A write finds where the catalog writes from the table itself.** OneLake's Iceberg catalog now names the
   workspace, not its GUID, in a table's metadata file path (since 2026-11-15), so every write asked the Fabric API
   for the GUID. It is read from the table's `write.data.path` property, which the catalog still gives by GUID. Only a workspace

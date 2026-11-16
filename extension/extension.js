@@ -810,12 +810,13 @@ async function activateInner(context) {
   const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
 
-  // A .fabricator or .fabricapp, a model named as Ossie's tools name one (*.ossie.yaml) or a .sql file, opened in VS Code, opens
+  // A .fabricator or .fabricapp, or a model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code, opens
   // in OneLake Studio here, by openPath, even with the desktop app installed: VS Code is what was picked to open it.
-  // Its editor closes its own empty tab ("Reopen Editor With… Text Editor" still shows the text). The desktop
-  // app's vscode has no custom editors: it opens files itself (desktop/node/main.js).
+  // Its editor closes its own empty tab ("Reopen Editor With… Text Editor" still shows the text). A .sql file
+  // is not taken: most have nothing to do with OneLake, so it opens as text, and Explorer's right-click opens it
+  // here. The desktop app's vscode has no custom editors: it opens files itself (desktop/node/main.js).
   if (vscode.window.registerCustomEditorProvider) {
-    for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel', 'onelakeStudio.sqlFile']) {
+    for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
       context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {
         openCustomDocument: uri => ({ uri, dispose() {} }),
         resolveCustomEditor: async (doc, webviewPanel) => {

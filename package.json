@@ -55,12 +55,6 @@
         "displayName": "OneLake Studio model",
         "selector": [{ "filenamePattern": "*.ossie.yaml" }],
         "priority": "default"
-      },
-      {
-        "viewType": "onelakeStudio.sqlFile",
-        "displayName": "OneLake Studio SQL",
-        "selector": [{ "filenamePattern": "*.sql" }],
-        "priority": "default"
       }
     ],
     "commands": [

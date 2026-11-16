@@ -15,8 +15,9 @@
   RMDir /r "$INSTDIR\app"
 !macroend
 
-; A model file, .yaml, .yml or .bim, and a .sql file: OneLake Studio is in Windows' "Open with" for each, and made
-; its default, as .fabricapp's is (tauri.conf.json fileAssociations). The default is the extension's own (Default)
+; A model file, .yaml, .yml or .bim, and a .sql file: OneLake Studio is in Windows' "Open with" for each. A model
+; file's default is made the app, as .fabricapp's is (tauri.conf.json fileAssociations); a .sql file's is not, as
+; most have nothing to do with OneLake, and an earlier install's default for it is put back (OpenWithOnly). The default is the extension's own (Default)
 ; value, the one Windows uses while the person has picked nothing: a program picked with Open with > Always is
 ; kept by Windows over it, so a choice made before or after the install stands. What the default was is kept
 ; under OneLakeStudio.Model\Previous and put back on uninstall. A YAML that is not a model goes on to the program
@@ -38,6 +39,12 @@
   Goto +2
   DeleteRegValue SHCTX "Software\Classes\${EXT}" ""
 !macroend
+; In "Open with" only: the default an earlier install made the app's goes back to what it was.
+!macro OpenWithOnly EXT
+  WriteRegStr SHCTX "Software\Classes\${EXT}\OpenWithProgids" "OneLakeStudio.Model" ""
+  !insertmacro RestoreDefault "${EXT}"
+  DeleteRegValue SHCTX "Software\Classes\OneLakeStudio.Model\Previous" "${EXT}"
+!macroend
 !macro NSIS_HOOK_POSTINSTALL
   WriteRegStr SHCTX "Software\Classes\OneLakeStudio.Model" "" "Semantic model"
   WriteRegStr SHCTX "Software\Classes\OneLakeStudio.Model\DefaultIcon" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
@@ -45,7 +52,7 @@
   !insertmacro OpenWithModel ".yaml"
   !insertmacro OpenWithModel ".yml"
   !insertmacro OpenWithModel ".bim"
-  !insertmacro OpenWithModel ".sql"
+  !insertmacro OpenWithOnly ".sql"
   System::Call 'shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
 !macroend
 
