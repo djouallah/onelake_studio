@@ -9,7 +9,8 @@
   still opens, and is saved as a `.fabricator` the next time it is exported.
 - **A .fabricator opens in Fabricator much faster.** The project ships a `package-lock.json`, so Fabricator's
   `npm install` takes the packages it names. Without one, npm asked the registry about each of some 300 packages
-  first: most of the two minutes an import took. Its `package.json` names the Rayfin SDK the page signs in with
+  first: most of the two minutes an import took. The lock takes only versions published ten days before it was
+  made, so a company's npm mirror, which holds a new version back for days, has every one. Its `package.json` names the Rayfin SDK the page signs in with
   (`@microsoft/rayfin-auth-provider-fabric`), which Fabricator's check flagged as missing. It also holds Rayfin's agent
   files (`.agents/skills/`, `.mcp.json`), as a project the Rayfin CLI makes does, so the coding agent in Fabricator
   has Rayfin's own skills.
