@@ -10,7 +10,9 @@
 // its own project file), installs its packages, previews it with its own Vite and publishes it with
 // `rayfin up`, over the same app this export made:
 //   package.json     the project (projectPackage): Vite, the Rayfin CLI and its local-dev plugin, which
-//                    Fabricator and rayfin-local run; rayfin/functions is its workspace
+//                    Fabricator and rayfin-local run, and the Rayfin SDK the page runs (its own copy is
+//                    in vendor/); rayfin/functions is its workspace
+//   package-lock.json  fabric_app/project/package-lock.json (projectLock): npm resolves nothing
 //   .gitignore       fabric_app/project/gitignore
 //   site/vite.config.mjs  fabric_app/project: Vite serves site/public/ as it is, no build
 //   site/public/     the page, as it is uploaded but its build stamp (SITE):
@@ -555,13 +557,34 @@ const PROJECT_PACKAGES = {
   typescript: '5.7.3',
   vite: '8.3.6',
 };
+// The Rayfin SDK the page signs in with, at the version of its copy in site/public/vendor/, the one it
+// runs. Named here because Fabricator's checks read package.json: a project whose rayfin.yml turns Fabric
+// sign-in on and whose package.json has no @microsoft/rayfin-auth-provider-fabric is flagged.
+const PAGE_PACKAGES = Object.fromEntries([WEBAPP.rayfinClient, WEBAPP.rayfinFabric].map(p => {
+  const at = p.lastIndexOf('@');
+  return [p.slice(0, at), p.slice(at + 1)];
+}));
 /** The project's package.json: `npm run dev` as the template's, and the function its workspace. */
 const projectPackage = name => JSON.stringify({
   name, private: true, version: '0.0.0', type: 'module',
   workspaces: ['rayfin/functions'],
   scripts: { dev: 'rayfin dev', 'dev:frontend': 'vite site', 'rayfin:up': 'rayfin up' },
+  dependencies: PAGE_PACKAGES,
   devDependencies: PROJECT_PACKAGES,
 }, null, 2) + '\n';
+
+/**
+ * The project's package-lock.json: fabric_app/project/package-lock.json (scripts/fabric-lock.mjs makes it
+ * from projectPackage and the function's package.json), named for this app. With it, Fabricator's
+ * `npm install` takes the packages it names; without it, npm asked the registry about each of some 300
+ * packages first, most of the minute and a half an import took.
+ */
+function projectLock(text, name) {
+  const lock = JSON.parse(text);
+  lock.name = name;
+  if (lock.packages && lock.packages['']) lock.packages[''].name = name;
+  return JSON.stringify(lock, null, 2) + '\n';
+}
 
 /** The page's packages in the app's entries: the extension's own, written again over what the file had. */
 function setPackages(files, vendor) {
@@ -633,6 +656,7 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
     ...await filesOf(join(fabricAppDir, 'rayfin'), 'rayfin/', rel => rel.split('/').includes('node_modules')),
     // The project around it, as the Rayfin CLI's template has one: what Fabricator and rayfin-local run.
     ['package.json', text(projectPackage(plan.name))],
+    ['package-lock.json', text(projectLock(await fsp.readFile(join(fabricAppDir, 'project', 'package-lock.json'), 'utf8'), plan.name))],
     ['.gitignore', await fsp.readFile(join(fabricAppDir, 'project', 'gitignore'))],
     ['site/vite.config.mjs', await fsp.readFile(join(fabricAppDir, 'project', 'vite.config.mjs'))],
   ]);
@@ -794,5 +818,5 @@ async function zip(files) {
 module.exports = { planExport, planOnModel, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
                    vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT,
                    APP_EXT, LEGACY_EXT, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT, MODEL_COPIES, setModelCopy, modelCopyOf,
-                   tablesOf, setPackages, setSecrets, setDeployment, projectPackage, workspaceKey, PROJECT_PACKAGES,
+                   tablesOf, setPackages, setSecrets, setDeployment, projectPackage, projectLock, workspaceKey, PROJECT_PACKAGES, PAGE_PACKAGES,
                    MAX_TOTAL_BYTES, MAX_ENTRIES };

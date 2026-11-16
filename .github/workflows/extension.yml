@@ -139,10 +139,10 @@ jobs:
           node-version: 24
       # A lockfile made behind a mirror names the mirror, and what ships then comes from there. The
       # "Refresh extension lockfile" workflow makes both again from the public registry.
-      - name: Both lockfiles resolve from the public registry
+      - name: Every lockfile resolves from the public registry
         run: |
           set -euo pipefail
-          for f in package-lock.json fabric_app/rayfin/functions/package-lock.json; do
+          for f in package-lock.json fabric_app/rayfin/functions/package-lock.json fabric_app/project/package-lock.json; do
             bad=$(grep -n '"resolved":' "$f" | grep -v '"resolved": "https://registry.npmjs.org/' || true)
             [ -z "$bad" ] || { echo "$f resolves outside registry.npmjs.org:"; echo "$bad" | head -20; exit 1; }
           done
@@ -410,7 +410,7 @@ jobs:
           # Export to Fabric writes its app from fabric_app/ and Studio's Explore (webview/explore),
           # and deploys the prebuilt function; fabric_app/project/ is the project around it (a .fabricator).
           for f in fabric_app/site/app.js fabric_app/site/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js \
-                   fabric_app/project/vite.config.mjs fabric_app/project/gitignore; do
+                   fabric_app/project/vite.config.mjs fabric_app/project/gitignore fabric_app/project/package-lock.json; do
             grep -qx "extension/$f" <<<"$files" || { echo "no $f in the vsix"; exit 1; }
           done
           # The web app's own packages (core/vendored.js VENDOR.webapp): its page loads nothing from a CDN.

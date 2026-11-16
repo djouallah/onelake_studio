@@ -36,8 +36,9 @@ for (const [path, bytes] of entries) {
   await writeFile(to, bytes);
 }
 console.log(`the project: ${project}`);
-execSync("npm install --no-audit --no-fund --loglevel=error", { cwd: project, stdio: ["ignore", "inherit", "inherit"] });
-ok("npm install, from the project's own package.json");
+// npm ci: from its lock file, which must agree with package.json, or npm refuses.
+execSync("npm ci --no-audit --no-fund --loglevel=error", { cwd: project, stdio: ["ignore", "inherit", "inherit"] });
+ok("npm ci, from the project's own package.json and lock file");
 
 // Every script of the site, as `rayfin up` checks it: as a module, else as a classic script.
 const site = join(project, ...SITE.split("/").filter(Boolean));

@@ -870,7 +870,13 @@ Rayfin project, so Fabricator (or the Rayfin CLI) can grow it and publish it too
 publishes it; VS Code and the desktop app open it too (Opening files from disk, above). It holds:
 - `package.json`: Vite, the Rayfin CLI and its local-dev plugin, pinned to the Rayfin version the page's SDK is
   (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The function,
-  `rayfin/functions`, is its workspace. None of these is in the page, and OneLake Studio needs none of them.
+  `rayfin/functions`, is its workspace. None of these is in the page, and OneLake Studio needs none of them. It also
+  names the Rayfin SDK the page signs in with (`PAGE_PACKAGES`), at the version of its copy in `vendor/`, the one the
+  page runs: Fabricator's checks read `package.json` for it.
+- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json), named for the
+  app, so Fabricator's `npm install` resolves nothing (without it, an import spent over a minute asking the registry
+  about each package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the
+  public registry; run it after changing any package the project names.
 - `site/public/`: the page as it is uploaded, but its build stamp, with its engine's one data source (`storage/source.js`
   names it: DuckDB in the browser, or the semantic model's connector) and its packages (`vendor/`: DuckDB-WASM, Arrow, the
   Rayfin SDK, ECharts, the extension's own, written again by every export). `rayfin.yml` serves it as it is

@@ -164,7 +164,10 @@ test("on fabriccat: a model file's app is published, client side, with its funct
 async function project(s, zipName, marker) {
   const { readApp, SITE, DEPLOYMENTS, CONFIG } = require("../../fabric_app/export/exportapp.js");
   const { files } = await readApp(join(s.dir, zipName));
-  assert.ok(JSON.parse(files.get("package.json").toString("utf8")).devDependencies["@microsoft/rayfin-cli"], "the project's own Rayfin CLI");
+  const pkg = JSON.parse(files.get("package.json").toString("utf8"));
+  assert.ok(pkg.devDependencies["@microsoft/rayfin-cli"], "the project's own Rayfin CLI");
+  assert.ok(pkg.dependencies["@microsoft/rayfin-auth-provider-fabric"], "the Fabric sign-in package, which Fabricator's check asks for");
+  assert.ok(files.has("package-lock.json"), "its lock file");
   assert.ok([...files.keys()].some(p => p.startsWith(`${SITE}vendor/npm/@duckdb/`)), "DuckDB-WASM is in the file");
   const reg = JSON.parse(files.get(DEPLOYMENTS).toString("utf8"));
   assert.equal(reg.deployments[reg.active].fabricItemId, marker.itemId, "rayfin up's record names the app just published");

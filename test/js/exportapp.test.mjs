@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 const require = createRequire(import.meta.url);
 const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
         appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT,
-        setPackages, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES } = require("../../fabric_app/export/exportapp.js");
+        setPackages, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES, PAGE_PACKAGES } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 
@@ -192,6 +192,7 @@ async function fixture(root) {
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
     "fabric_app/project/gitignore": "node_modules\n",
     "fabric_app/project/vite.config.mjs": "export default {};\n",
+    "fabric_app/project/package-lock.json": JSON.stringify({ name: "fabric-app", lockfileVersion: 3, packages: { "": { name: "fabric-app" } } }),
     "daxsql/src/index.js": "// dax-sql\n",
     "daxsql/src/dialects/duckdb.js": "// dialect\n",
     "daxsql/formats/tmsl.js": "// tmsl\n",
@@ -349,6 +350,15 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     assert.deepEqual(pkg.workspaces, ["rayfin/functions"]);
     assert.equal(pkg.scripts.dev, "rayfin dev");
     assert.deepEqual(pkg.devDependencies, PROJECT_PACKAGES);
+    // The SDK the page runs, as its vendored copy is: Fabricator's check wants the Fabric sign-in package named.
+    const { WEBAPP } = require("../../core/vendored.js");
+    assert.deepEqual(pkg.dependencies, { "@microsoft/rayfin-client": WEBAPP.rayfinClient.split("@").pop(),
+                                         "@microsoft/rayfin-auth-provider-fabric": WEBAPP.rayfinFabric.split("@").pop() });
+    assert.deepEqual(pkg.dependencies, PAGE_PACKAGES);
+    // The lock file, named for the app: npm installs what it names and resolves nothing.
+    const lock = JSON.parse(files.get("package-lock.json"));
+    assert.equal(lock.name, "sales-model-explore");
+    assert.equal(lock.packages[""].name, "sales-model-explore");
     for (const [name, v] of Object.entries(PROJECT_PACKAGES)) assert.match(v, /^\d+\.\d+\.\d+$/, `${name} is pinned`);
     assert.equal(PROJECT_PACKAGES["@microsoft/rayfin-core"], require("../../core/vendored.js").WEBAPP.rayfinClient.split("@").pop(),
       "the Rayfin the page's SDK is");
@@ -596,4 +606,20 @@ test("the project's dev server and ignore list ship, and rayfin.yml serves site/
   const yml = await readFile(new URL("../../fabric_app/rayfin/rayfin.yml", import.meta.url), "utf8");
   assert.match(yml, /^  staticHosting:\n    enabled: true\n    path: site\n    folder: public\n/m);
   assert.doesNotMatch(yml.split("staticHosting:")[1].split("storage:")[0], /buildCommand/, "no build: the site is uploaded as it is");
+});
+
+// The lock file every project ships (scripts/fabric-lock.mjs makes it): what package.json and the function's
+// ask for, from the public registry. CI's npm ci of a real export (run-fabricator-project.mjs) proves it installs.
+test("the project's lock file is the project's packages, from the public registry", async () => {
+  const lock = JSON.parse(await readFile(new URL("../../fabric_app/project/package-lock.json", import.meta.url), "utf8"));
+  const fn = JSON.parse(await readFile(new URL("../../fabric_app/rayfin/functions/package.json", import.meta.url), "utf8"));
+  const top = lock.packages[""];
+  assert.deepEqual(top.dependencies, PAGE_PACKAGES, "the page's SDK, at its vendored version: run scripts/fabric-lock.mjs");
+  assert.deepEqual(top.devDependencies, PROJECT_PACKAGES, "the project's packages: run scripts/fabric-lock.mjs");
+  assert.deepEqual(top.workspaces, ["rayfin/functions"]);
+  const ws = lock.packages["rayfin/functions"];
+  assert.deepEqual(ws.dependencies, fn.dependencies, "the function's packages: run scripts/fabric-lock.mjs");
+  assert.deepEqual(ws.devDependencies, fn.devDependencies, "the function's packages: run scripts/fabric-lock.mjs");
+  const off = Object.entries(lock.packages).filter(([, p]) => p.resolved && !p.resolved.startsWith("https://registry.npmjs.org/"));
+  assert.deepEqual(off.map(([k]) => k), [], "every package from the public registry");
 });

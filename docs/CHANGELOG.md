@@ -7,6 +7,10 @@
   the page's packages too (about 12 MB with DuckDB-WASM), a `package.json`, and once published the app as
   `rayfin up` records it. OneLake Studio still publishes it itself, with no Node or CLI. An earlier `.fabricapp`
   still opens, and is saved as a `.fabricator` the next time it is exported.
+- **A .fabricator opens in Fabricator much faster.** The project ships a `package-lock.json`, so Fabricator's
+  `npm install` takes the packages it names. Without one, npm asked the registry about each of some 300 packages
+  first: most of the two minutes an import took. Its `package.json` names the Rayfin SDK the page signs in with
+  (`@microsoft/rayfin-auth-provider-fabric`), which Fabricator's check flagged as missing.
 - **A .sql file from disk opens where it did before OneLake Studio.** Most have nothing to do with OneLake: VS Code
   opens one as text, and the desktop app is no longer Windows' default for `.sql`, which an upgrade gives back to
   the program it had. Explorer's right-click > **Open in OneLake Studio**, or Windows' *Open with*, still opens one
