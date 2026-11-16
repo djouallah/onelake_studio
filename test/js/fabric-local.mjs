@@ -32,7 +32,8 @@ const npm = (what, cwd) => execSync(`npm ${what} --no-audit --no-fund --loglevel
  */
 export async function serveApp(name, { plan, model, report = null, engine, env = {}, extra = {}, user = null }) {
   const files = await appFiles({ plan, state: null, model, kept: report ? Buffer.from(JSON.stringify(report)) : null,
-                                 fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"), daxSqlDir: join(root, "vendor", "npm", PINS.daxSql) });
+                                 fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"), daxSqlDir: join(root, "vendor", "npm", PINS.daxSql),
+                                 agentFiles: join(root, "fabric-function", "agent-files.json") });
   setPackages(files, await vendorFiles(join(root, "vendor", "webapp"), engine));
   // The project as the export's file holds it, unpacked as Fabricator unpacks one. Not published, it has no
   // rayfin.config.json: the backend's to answer, where it is and its key.

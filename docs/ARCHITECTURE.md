@@ -877,6 +877,10 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
   app, so Fabricator's `npm install` resolves nothing (without it, an import spent over a minute asking the registry
   about each package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the
   public registry; run it after changing any package the project names.
+- `.agents/skills/`, `.mcp.json`, `rayfin/.lockfile.json`: Rayfin's agent files, as `rayfin init ai-files install` writes
+  them at the project's CLI version. `scripts/function-bundle.mjs` makes them at package time, into
+  `fabric-function/agent-files.json`, and every export writes them. The CLI's own `AGENTS.md` is not written: the
+  export writes its own.
 - `site/public/`: the page as it is uploaded, but its build stamp, with its engine's one data source (`storage/source.js`
   names it: DuckDB in the browser, or the semantic model's connector) and its packages (`vendor/`: DuckDB-WASM, Arrow, the
   Rayfin SDK, ECharts, the extension's own, written again by every export). `rayfin.yml` serves it as it is

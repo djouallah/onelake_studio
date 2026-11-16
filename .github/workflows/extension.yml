@@ -421,7 +421,7 @@ jobs:
           for f in $webapp; do
             grep -qxF "extension/vendor/webapp/$f" <<<"$files" || { echo "no vendor/webapp/$f in the vsix"; exit 1; }
           done
-          for f in source.zip deploymetadata.json; do
+          for f in source.zip deploymetadata.json agent-files.json; do
             grep -qx "extension/fabric-function/$f" <<<"$files" || { echo "no fabric-function/$f in the vsix"; exit 1; }
           done
           stray=$(grep -E '^extension/(src|core|extension|xmla|cli|fabric_app/export)/' <<<"$files"                   | grep -vxE 'extension/cli/(cli.mjs|bridge.js|SKILL.md)' || true)

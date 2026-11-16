@@ -46,6 +46,8 @@
 //                    agent's) is published by opening the file and exporting it. A semantic model's app has none:
 //                    its record names the semantic model.
 //   AGENTS.md        how the app is made, and how to grow its report
+//   .agents/skills/, .mcp.json, rayfin/.lockfile.json  Rayfin's agent files, as `rayfin init ai-files install`
+//                    writes them at the project's CLI version (fabric-function/agent-files.json)
 //   .fabricator/export.json   what Fabricator's Import window shows: the project's name, who exported it, when
 //   .onelake-studio/export.json  our record (MARKER): the app item, its redirects, the entries' hashes
 // The upload is the site stamped with the build, its packages and rayfin.config.json, built in memory.
@@ -640,10 +642,13 @@ function setDeployment(files, { config, name, workspace, hostingUrl, deployedAt 
  * `model`: the model the page runs on, read (modelDoc's doc): model.json.
  * `modelText`, `modelFile`: client side, the model's text and its file's name, kept as model.ossie.yaml (setModelCopy).
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (page/, or
- * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>.
+ * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>; `agentFiles`: fabric-function/agent-files.json.
  */
-async function appFiles({ plan, state, model, modelText = null, modelFile = 'model.yaml', kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir, maxRows = null }) {
+async function appFiles({ plan, state, model, modelText = null, modelFile = 'model.yaml', kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir, agentFiles, maxRows = null }) {
   if (!model) throw new Error('an app needs the model it runs on');
+  // Rayfin's agent files, as `rayfin init ai-files install` writes them (scripts/function-bundle.mjs).
+  const agents = JSON.parse(await fsp.readFile(agentFiles, 'utf8'));
+  if (!agents['.agents/skills/rayfin/SKILL.md']) throw new Error(`${agentFiles} has no .agents/skills/rayfin/SKILL.md`);
   const sql = onModel(plan);
   const text = s => Buffer.from(s, 'utf8');
   const files = new Map([
@@ -659,6 +664,7 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
     ['package-lock.json', text(projectLock(await fsp.readFile(join(fabricAppDir, 'project', 'package-lock.json'), 'utf8'), plan.name))],
     ['.gitignore', await fsp.readFile(join(fabricAppDir, 'project', 'gitignore'))],
     ['site/vite.config.mjs', await fsp.readFile(join(fabricAppDir, 'project', 'vite.config.mjs'))],
+    ...Object.entries(agents).map(([p, t]) => [p, text(t)]),
   ]);
   files.set('rayfin/rayfin.yml', text(rayfinYml(files.get('rayfin/rayfin.yml').toString('utf8'), plan.name, redirects,
                                                 sql ? plan.semanticModel : null)));

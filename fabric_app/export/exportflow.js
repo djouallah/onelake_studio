@@ -288,7 +288,8 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
             const kept = (local && local.files.get(REPORT)) || (studioReport && await fsp.readFile(studioReport).catch(() => null)) || null;
             files = await appFiles({ plan, state, model: definition, modelText: text, modelFile: file, kept,
                                      redirects: marker.redirects || [], fabricAppDir, appDir, maxRows: maxRows(),
-                                     daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql) });
+                                     daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql),
+                                     agentFiles: join(ext, 'fabric-function', 'agent-files.json') });
             fromStudio = kept && studioReport ? studioReport : null;
             // The app `rayfin up` would update, kept while this publishes: a publish that fails leaves the file naming it.
             for (const p of [DEPLOYMENTS, CONFIG]) if (local && local.files.has(p)) files.set(p, local.files.get(p));

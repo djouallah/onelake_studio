@@ -10,7 +10,9 @@
 - **A .fabricator opens in Fabricator much faster.** The project ships a `package-lock.json`, so Fabricator's
   `npm install` takes the packages it names. Without one, npm asked the registry about each of some 300 packages
   first: most of the two minutes an import took. Its `package.json` names the Rayfin SDK the page signs in with
-  (`@microsoft/rayfin-auth-provider-fabric`), which Fabricator's check flagged as missing.
+  (`@microsoft/rayfin-auth-provider-fabric`), which Fabricator's check flagged as missing. It also holds Rayfin's agent
+  files (`.agents/skills/`, `.mcp.json`), as a project the Rayfin CLI makes does, so the coding agent in Fabricator
+  has Rayfin's own skills.
 - **A .sql file from disk opens where it did before OneLake Studio.** Most have nothing to do with OneLake: VS Code
   opens one as text, and the desktop app is no longer Windows' default for `.sql`, which an upgrade gives back to
   the program it had. Explorer's right-click > **Open in OneLake Studio**, or Windows' *Open with*, still opens one

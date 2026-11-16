@@ -1,0 +1,181 @@
+// An export's .fabricator in Fabricator itself (github.com/spatney/rayfin-fabricator), the release a person
+// installs, on Windows (CI, after export-fabric.test.mjs published the app and saved the file): opened as a
+// double-click opens it, imported with its Import button, installed and run by Fabricator on its own local
+// backend, and its preview signed in and drawing the Report from the lakehouse. Then what Fabricator says of it:
+// its Advisor's checks, how it installed the packages, and how long from Import to a running app.
+//
+// Fabricator is driven over the DevTools protocol of its WebView2 (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS), as
+// its own scripts/docs-screenshots do. Nothing of Fabricator or the app is stood in for. The one step a person
+// does that is skipped: Fabricator's Setup screen, which waits for a GitHub Copilot sign-in that importing and
+// running an app do not need (its localStorage key fabricator.setupComplete, as Setup's Enter button sets it).
+//
+// The app's function reads OneLake as whoever `az` is signed in as (rayfin-local's token source), here the CI
+// identity, as it is the person on their own machine.
+//
+// FABRICATOR_OUT: the file. FABRICATOR_EXE: the installed rayfin-fabricator.exe. SHOTS: a folder for screenshots.
+import { spawn, execFileSync } from "node:child_process";
+import { readFile, readdir, mkdir, stat, cp } from "node:fs/promises";
+import { join } from "node:path";
+import { chromium } from "playwright-core";
+
+const { FABRICATOR_OUT: FILE, FABRICATOR_EXE: EXE, APPDATA, LOCALAPPDATA } = process.env;
+const SHOTS = process.env.SHOTS || join(process.env.RUNNER_TEMP || ".", "fabricator-shots");
+const PORT = 9333;
+// The table the app's Report reads, as make_tables.py writes it (test/js/run-fabric-local.mjs).
+const TOTAL = 238834;
+// Fabricator's Advisor findings that may stand, each for its reason. Any other fails.
+const ALLOWED = {
+  // A note (no points off) on every app with functions: Fabric's Functions are not in every region.
+  "platform/functions-availability": "every app with functions has it",
+  // Rayfin 1.36.2 is npm's latest; the app is on 1.36.1, as the page's vendored SDK is (core/vendored.js).
+  "platform/cli-outdated": "the app's Rayfin is 1.36.1, npm's latest 1.36.2",
+  "platform/sdk-outdated": "the app's Rayfin is 1.36.1, npm's latest 1.36.2",
+};
+
+const checks = [];
+const check = (ok, what) => { checks.push(ok); console.log(`${ok ? "ok  " : "FAIL"} ${what}`); };
+const fail = what => { console.log(`FAIL ${what}`); process.exitCode = 1; };
+if (!FILE || !EXE) { fail("FABRICATOR_OUT and FABRICATOR_EXE are set by the lake's workflow"); process.exit(1); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const until = async (what, fn, ms) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await fn().catch(() => null);
+    if (v) return v;
+    if (Date.now() > end) throw new Error(`${what}: not in ${Math.round(ms / 1000)} s`);
+    await sleep(500);
+  }
+};
+const data = join(APPDATA, "Rayfin Fabricator");
+const json = async p => JSON.parse((await readFile(p, "utf8")).replace(/^﻿/, ""));
+const shown = async page => (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 800);
+await mkdir(SHOTS, { recursive: true });
+
+// Opened as a double-click opens it: the file as Fabricator's argument, the Import window its first screen.
+const fabricator = spawn(EXE, [FILE], {
+  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
+  stdio: "ignore", detached: false,
+});
+let browser, main, preview;
+const shoot = async (page, name) => page && page.screenshot({ path: join(SHOTS, `${name}.png`) }).catch(() => {});
+try {
+  await until("Fabricator's DevTools endpoint", async () => (await fetch(`http://127.0.0.1:${PORT}/json/version`)).ok, 120_000);
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+  const pages = () => browser.contexts().flatMap(c => c.pages());
+  main = await until("Fabricator's window", async () => pages().find(p => !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(p.url())), 60_000);
+  main.on("pageerror", e => console.log("[fabricator pageerror]", e.message));
+  console.log(`Fabricator's window: ${main.url()}`);
+
+  // Setup, which waits for a Copilot sign-in: passed as its Enter button passes it.
+  await main.waitForLoadState("domcontentloaded");
+  await main.evaluate(() => localStorage.setItem("fabricator.setupComplete", "1"));
+  await main.reload();
+
+  // The Import window, for the file it was opened with.
+  const dialog = main.locator(".project-file-modal[role=dialog]");
+  await dialog.waitFor({ timeout: 120_000 }).catch(async e => { await shoot(main, "no-import-window"); throw new Error(`no Import window: ${e.message.split("\n")[0]}; Fabricator shows: ${await shown(main)}`); });
+  const button = dialog.locator(".modal-footer .btn.btn--primary");
+  await until("the Import button", async () => (await button.isEnabled()) && /^Import$/.test((await button.innerText()).trim()), 60_000)
+    .catch(async e => { await shoot(main, "import-window"); throw new Error(`${e.message}; the window says: ${(await dialog.innerText()).replace(/\s+/g, " ")}`); });
+  check(true, `Fabricator's Import window: ${(await dialog.innerText()).replace(/\s+/g, " ").slice(0, 200)}`);
+  await shoot(main, "import-window");
+  const clicked = Date.now();
+  await button.click();
+  await dialog.waitFor({ state: "detached", timeout: 120_000 });
+
+  // The project Fabricator made of it, and its own log of what it did.
+  const studio = await until("the project in studio.json", async () => {
+    const s = await json(join(data, "studio.json"));
+    return s.activeProjectId && s.projects.find(p => p.id === s.activeProjectId);
+  }, 60_000);
+  console.log(`the project: ${studio.name} in ${studio.path}`);
+  const activity = async () => {
+    const dir = join(data, "logs");
+    const out = [];
+    for (const f of (await readdir(dir)).filter(f => /^activity-.*\.jsonl$/.test(f))) {
+      for (const line of (await readFile(join(dir, f), "utf8")).split(/\r?\n/)) { try { out.push(JSON.parse(line)); } catch { /* not a line */ } }
+    }
+    return out.filter(e => e.projectId === studio.id || /Imported/.test(e.message || ""));
+  };
+  const started = await until("the local backend", async () => (await activity()).find(e => e.event === "local.started"), 15 * 60_000)
+    .catch(async e => { await shoot(main, "no-backend"); throw new Error(`${e.message}; Fabricator shows: ${await shown(main)}; its log: ${JSON.stringify(await activity())}`); });
+  const appUrl = String(started.message).match(/https?:\/\/[^\s]+/)?.[0];
+  const seconds = Math.round((Date.parse(started.time) - clicked) / 1000);
+  console.log(`Import to a running app: ${seconds} s (${started.message})`);
+  for (const e of await activity()) console.log(`  ${e.time} ${e.level} ${e.event}: ${e.message}`);
+
+  // How it installed the packages: npm ci, from the project's lock file, not a resolve of every package.
+  const logs = join(LOCALAPPDATA, "npm-cache", "_logs");
+  const installs = [];
+  for (const f of await readdir(logs).catch(() => [])) {
+    const text = await readFile(join(logs, f), "utf8").catch(() => "");
+    const argv = text.match(/verbose argv (.*)/)?.[1] ?? "";
+    const cwd = text.match(/verbose cwd (.*)/)?.[1]?.trim() ?? "";
+    if (/"(ci|install|i)"/.test(argv) && cwd.toLowerCase() === studio.path.toLowerCase()) {
+      installs.push({ argv, packuments: (text.match(/http fetch GET 200 \S+ \d+ms/g) || []).filter(l => !/\.tgz /.test(l)).length });
+    }
+  }
+  for (const i of installs) console.log(`  npm ${i.argv}: ${i.packuments} package lookups`);
+  check(installs.length > 0 && installs.every(i => /^"ci"/.test(i.argv)), `Fabricator installed the project with npm ci (${installs.map(i => i.argv.split(" ")[0]).join(", ") || "no npm log"})`);
+  check(installs.every(i => i.packuments === 0), "npm looked up no package: the lock file names them all");
+
+  // The preview: Fabricator's own view of the app, its own Vite on its own local backend.
+  preview = await until("Fabricator's preview of the app", async () => pages().find(p => appUrl && p.url().startsWith(new URL(appUrl).origin)), 120_000)
+    .catch(async e => { await shoot(main, "no-preview"); throw new Error(`${e.message}; pages: ${pages().map(p => p.url()).join(", ")}`); });
+  preview.on("pageerror", e => console.log("[app pageerror]", e.message));
+  preview.on("console", m => { if (m.type() === "error") console.log("[app console.error]", m.text().split(/\r?\n/)[0].slice(0, 300)); });
+  preview.on("response", r => { if (r.status() >= 400) console.log(`[app ${r.status()}]`, r.url().slice(0, 200)); });
+  console.log(`the preview: ${preview.url()}`);
+  // Not in Fabric's frame, so no silent sign-in: the gate's button, and the popup it opens, which the local
+  // backend answers as the person signed in to `az`.
+  const signIn = preview.getByRole("button", { name: "Sign in with Fabric" });
+  await signIn.waitFor({ timeout: 120_000 }).catch(async e => { await shoot(preview, "no-sign-in"); throw new Error(`no sign-in button: ${e.message.split("\n")[0]}; the app shows: ${await shown(preview)}`); });
+  check(true, "the preview asks to sign in");
+  await shoot(preview, "sign-in");
+  await signIn.click();
+  // The Report: both tiles, each with its rows, the total the table holds.
+  await preview.waitForFunction(() => {
+    const tiles = [...document.querySelectorAll(".rp-tile")];
+    return tiles.length >= 2 && tiles.every(t => t.querySelector("table td, .ex-error"));
+  }, null, { timeout: 180_000 }).catch(async e => { await shoot(preview, "no-report"); throw new Error(`the Report never drew: ${e.message.split("\n")[0]}; the app shows: ${await shown(preview)}`); });
+  await shoot(preview, "report");
+  const tiles = await preview.evaluate(() => [...document.querySelectorAll(".rp-tile")].map(t => t.innerText.replace(/\s+/g, " ").trim()));
+  const digits = s => s.replace(/[,\s]/g, "");
+  const all = tiles.find(t => t.startsWith("All of it")) ?? "", by = tiles.find(t => t.startsWith("By region")) ?? "";
+  check(digits(all).includes(String(TOTAL)), `the preview's Report: "${all.slice(0, 120)}" has the table's total ${TOTAL}`);
+  check(["north", "south", "east"].every(r => by.includes(r)) && !/error/i.test(by), `by region, north, south and east: "${by.slice(0, 200)}"`);
+
+  // The Advisor, which Fabricator runs on every project it opens: what it found, once it has the Rayfin versions.
+  const advisor = join(data, "advisor", `${studio.id.replace(/[^A-Za-z0-9_-]/g, "_")}.state.json`);
+  await until("the Advisor's checks", async () => (await json(advisor)).lastQuick, 120_000);
+  await sleep(15_000);   // its version checks run again once the versions arrive
+  const found = (await json(advisor)).lastQuick;
+  for (const f of Object.values(found)) console.log(`  Advisor: ${f.severity} ${f.ruleId}: ${f.title}${ALLOWED[f.ruleId] ? ` (stands: ${ALLOWED[f.ruleId]})` : ""}`);
+  const bad = Object.values(found).filter(f => !ALLOWED[f.ruleId]);
+  check(bad.length === 0, `the Advisor finds nothing else${bad.length ? `: ${bad.map(f => `${f.ruleId} (${f.title})`).join("; ")}` : ""}`);
+
+  // The local backend's own log: no error.
+  const backendLog = join(data, "logs", "local-backend", `${studio.id}.log`);
+  const lines = (await readFile(backendLog, "utf8").catch(() => "")).split(/\r?\n/);
+  const errors = lines.filter(l => / (error|fatal) /i.test(l));
+  for (const l of errors.slice(0, 20)) console.log(`  [backend] ${l.slice(0, 300)}`);
+  check(errors.length === 0, `the local backend logged no error (${lines.length} lines)`);
+  console.log(`Fabricator ${(await stat(EXE)).size} bytes; Import to a running app ${seconds} s`);
+} catch (e) {
+  check(false, String(e?.stack || e));
+  await shoot(main, "fabricator-at-failure");
+  await shoot(preview, "app-at-failure");
+} finally {
+  await browser?.close().catch(() => {});
+  fabricator.kill();
+  // Fabricator's local backend and its Vite outlive the window: stop them, as quitting Fabricator does.
+  for (const name of ["rayfin-fabricator.exe", "rayfin-local.exe"]) {
+    try { execFileSync("taskkill", ["/F", "/T", "/IM", name], { stdio: "ignore" }); } catch { /* not running */ }
+  }
+  // Fabricator's own logs and Advisor state, beside the screenshots, for CI to keep.
+  for (const d of ["logs", "advisor"]) await cp(join(data, d), join(SHOTS, d), { recursive: true }).catch(() => {});
+  await cp(join(data, "studio.json"), join(SHOTS, "studio.json")).catch(() => {});
+}
+if (!checks.length || !checks.every(Boolean)) process.exitCode = 1;
+else console.log("the .fabricator imports, installs, runs and draws its Report in Fabricator");
+process.exit(process.exitCode ?? 0);

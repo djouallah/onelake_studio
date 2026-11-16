@@ -148,6 +148,12 @@ test("on fabriccat: a model file's app is published, client side, with its funct
   const s = await setup();
   const text = JSON.stringify(bimOf(s.workspaceId, s.lakehouseId, "lakeci"), null, 2);
   await s.writer.writeFile(WS, PATH, Buffer.from(text, "utf8"));
+  // The Report tab's tiles, as Add to report keeps them before the model has a zip: what the app opens on, and
+  // what the Fabricator step (run-fabricator.mjs) checks the preview draws.
+  await s.flow.reportSave({ workspace: WS, model: "lakeci", spec: { pages: [{ name: "Page 1", tiles: [
+    { title: "All of it", kind: "pivot", pivot: { rows: [], values: ["Total amount"], mark: "table" } },
+    { title: "By region", kind: "pivot", pivot: { rows: [`${TABLE}.region`], values: ["Total amount"], mark: "table" } },
+  ] }] } });
   const since = Date.now();
   const said = await s.flow.exportExplore({ file: FILE, name: "lakeci", text, state: null, workspace: WS, path: PATH });
   assert.match(said, /^Published to Fabric: https:/);
@@ -168,6 +174,8 @@ async function project(s, zipName, marker) {
   assert.ok(pkg.devDependencies["@microsoft/rayfin-cli"], "the project's own Rayfin CLI");
   assert.ok(pkg.dependencies["@microsoft/rayfin-auth-provider-fabric"], "the Fabric sign-in package, which Fabricator's check asks for");
   assert.ok(files.has("package-lock.json"), "its lock file");
+  assert.ok(files.has(".agents/skills/rayfin/SKILL.md"), "Rayfin's agent files");
+  assert.equal(JSON.parse(files.get("site/public/report.json").toString("utf8")).pages[0].tiles.length, 2, "the Report tab's tiles");
   assert.ok([...files.keys()].some(p => p.startsWith(`${SITE}vendor/npm/@duckdb/`)), "DuckDB-WASM is in the file");
   const reg = JSON.parse(files.get(DEPLOYMENTS).toString("utf8"));
   assert.equal(reg.deployments[reg.active].fabricItemId, marker.itemId, "rayfin up's record names the app just published");

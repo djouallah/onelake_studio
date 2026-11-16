@@ -11,6 +11,8 @@
 #   export:  Export to Fabric from this checkout, published to the same workspace (test/js/export-fabric.test.mjs);
 #            its .fabricator as Fabricator takes one (test/js/run-fabricator-project.mjs); then the app's page in Chrome, reading a table of that lakehouse (test/js/run-fabric-app.mjs), and
 #            the app whole on a local Rayfin backend, from its sign-in to its Report (test/js/run-fabric-local.mjs).
+#   fabricator: that .fabricator in Fabricator itself, on Windows: imported, run, its preview signed in and drawing
+#            the Report, and Fabricator's Advisor checks (test/js/run-fabricator.mjs).
 #
 # Signing in to fabriccat: no secret. The job's OIDC subject is what the federated credential on the Entra app
 # `fabric-github-deploy` trusts (onelake-studio-main), the app the other repos' workflows sign in as. Subjects carry the owner's and the repository's ids, so it is
@@ -261,6 +263,13 @@ jobs:
         run: node test/js/run-fabricator-project.mjs
         env:
           FABRICATOR_OUT: ${{ runner.temp }}/lakeci.fabricator
+      # The same file, for the Fabricator job: Fabricator itself, on Windows.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: lakeci-fabricator
+          path: ${{ runner.temp }}/lakeci.fabricator
+          if-no-files-found: error
+          retention-days: 3
       # The two tests below open the app in Chrome, on a local Rayfin backend: playwright-core, Chrome, rayfin-local.
       - if: always()
         run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
@@ -308,3 +317,62 @@ jobs:
           FABRIC_APP_TABLE: aemo.price
           FABRIC_APP_SUM: RRP
           FABRIC_APP_BY: REGIONID
+
+  # The export's .fabricator in Fabricator itself (test/js/run-fabricator.mjs), the release a person installs, by its
+  # checksum: opened as a double-click opens it, imported, installed and run on Fabricator's local backend, its
+  # preview signed in and drawing the Report from the lakehouse; then Fabricator's Advisor checks, how it installed
+  # the packages, and how long Import took. `az` is signed in as the CI identity: the function reads OneLake as it.
+  fabricator:
+    needs: export
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: lakeci-fabricator
+          path: ${{ runner.temp }}
+      # playwright-core, which drives Fabricator's WebView2 over the DevTools protocol.
+      - run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+      - name: Fabricator
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FABRICATOR_VERSION: 1.55.0
+          FABRICATOR_SHA256: 6449b6cbc5df20a553c0c40e17c988f2078edf2297157d9d95809cf68ee2b9f9
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = "Rayfin.Fabricator_${env:FABRICATOR_VERSION}_x64-setup.exe"
+          gh release download "v$env:FABRICATOR_VERSION" -R spatney/rayfin-fabricator -p $setup -D $env:RUNNER_TEMP
+          $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $env:RUNNER_TEMP $setup)).Hash.ToLower()
+          if ($hash -ne $env:FABRICATOR_SHA256) { throw "Fabricator's installer is $hash, not $env:FABRICATOR_SHA256" }
+          Start-Process -Wait -FilePath (Join-Path $env:RUNNER_TEMP $setup) -ArgumentList '/S'
+          $dir = Join-Path $env:LOCALAPPDATA 'Rayfin Fabricator'
+          $exe = Join-Path $dir 'rayfin-fabricator.exe'
+          if (-not (Test-Path $exe)) { throw "no $exe after the install" }
+          & (Join-Path $dir 'rayfin-local.exe') --version
+          "FABRICATOR_EXE=$exe" >> $env:GITHUB_ENV
+      - name: Sign in to fabriccat as fabric-github-deploy
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.ONELAKE_CI_CLIENT_ID }}
+          tenant-id: ${{ vars.ONELAKE_CI_TENANT_ID }}
+          allow-no-subscriptions: true
+      - run: node test/js/run-fabricator.mjs
+        env:
+          FABRICATOR_OUT: ${{ runner.temp }}/lakeci.fabricator
+          SHOTS: ${{ runner.temp }}/fabricator-shots
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fabricator-shots
+          # Screenshots, and Fabricator's logs and Advisor state (run-fabricator.mjs copies them in).
+          path: ${{ runner.temp }}/fabricator-shots
+          if-no-files-found: ignore
+          retention-days: 7

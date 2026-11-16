@@ -31,6 +31,7 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
   await mkdir(join(ext, "fabric-function"));
   await writeFile(join(ext, "fabric-function", "source.zip"), "zip");
   await writeFile(join(ext, "fabric-function", "deploymetadata.json"), "{}");
+  await writeFile(join(ext, "fabric-function", "agent-files.json"), JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n" }));
   await mkdir(join(ext, "vendor", "webapp"), { recursive: true });
   const asked = [], published = [];
   const kept = new Map();

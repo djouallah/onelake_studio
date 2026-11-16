@@ -193,6 +193,7 @@ async function fixture(root) {
     "fabric_app/project/gitignore": "node_modules\n",
     "fabric_app/project/vite.config.mjs": "export default {};\n",
     "fabric_app/project/package-lock.json": JSON.stringify({ name: "fabric-app", lockfileVersion: 3, packages: { "": { name: "fabric-app" } } }),
+    "agent-files.json": JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n", ".mcp.json": "{}\n", "rayfin/.lockfile.json": "{}\n" }),
     "daxsql/src/index.js": "// dax-sql\n",
     "daxsql/src/dialects/duckdb.js": "// dialect\n",
     "daxsql/formats/tmsl.js": "// tmsl\n",
@@ -211,7 +212,7 @@ async function fixture(root) {
     await writeFile(join(root, p), s);
   }
   return { fabricAppDir: join(root, "fabric_app"), daxSqlDir: join(root, "daxsql"), appDir: join(root, "page"),
-           webappDir: join(root, "webapp") };
+           webappDir: join(root, "webapp"), agentFiles: join(root, "agent-files.json") };
 }
 
 // The zip's entries, read back through its central directory: path -> bytes.
@@ -355,6 +356,9 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     assert.deepEqual(pkg.dependencies, { "@microsoft/rayfin-client": WEBAPP.rayfinClient.split("@").pop(),
                                          "@microsoft/rayfin-auth-provider-fabric": WEBAPP.rayfinFabric.split("@").pop() });
     assert.deepEqual(pkg.dependencies, PAGE_PACKAGES);
+    // Rayfin's agent files, as the CLI writes them: what Fabricator's ai-files check looks for.
+    assert.equal(files.get(".agents/skills/rayfin/SKILL.md").toString(), "# rayfin\n");
+    assert.ok(files.has(".mcp.json") && files.has("rayfin/.lockfile.json"));
     // The lock file, named for the app: npm installs what it names and resolves nothing.
     const lock = JSON.parse(files.get("package-lock.json"));
     assert.equal(lock.name, "sales-model-explore");

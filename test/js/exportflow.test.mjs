@@ -31,6 +31,7 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     await mkdir(join(ext, "fabric-function"));
     await writeFile(join(ext, "fabric-function", "source.zip"), "zip");
     await writeFile(join(ext, "fabric-function", "deploymetadata.json"), "{}");
+    await writeFile(join(ext, "fabric-function", "agent-files.json"), JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n" }));
   }
   const asked = [];
   const looked = [];
