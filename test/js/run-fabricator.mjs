@@ -4,8 +4,9 @@
 // backend, and its preview signed in and drawing the Report from the lakehouse. Then what Fabricator says of it:
 // its Advisor's checks, how it installed the packages, and how long from Import to a running app.
 //
-// Fabricator is driven over the DevTools protocol of its WebView2 (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS), as
-// its own scripts/docs-screenshots do. Nothing of Fabricator or the app is stood in for. The one step a person
+// Fabricator is driven over the DevTools protocol of its WebView2, as its own scripts/docs-screenshots do: the
+// runner's own WebView2 runtime, whose browser CI starts with a DevTools port (WEBVIEW2_BROWSER_EXECUTABLE_FOLDER,
+// test/fabricator/devtools-launcher.cs). Nothing of Fabricator or the app is stood in for. The one step a person
 // does that is skipped: Fabricator's Setup screen, which waits for a GitHub Copilot sign-in that importing and
 // running an app do not need (its localStorage key fabricator.setupComplete, as Setup's Enter button sets it).
 //
@@ -73,17 +74,10 @@ const json = async p => JSON.parse((await readFile(p, "utf8")).replace(/^﻿/, "
 const shown = async page => (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 800);
 await mkdir(SHOTS, { recursive: true });
 
-// WebView2's DevTools port, for Fabricator's WebView2 alone: its per-app override (Software\Policies\Microsoft\
-// Edge\WebView2\AdditionalBrowserArguments, by the app's exe name), which WebView2 reads itself, and the
-// environment variable Fabricator's own docs-screenshots launcher uses.
-const DEVTOOLS = `--remote-debugging-port=${PORT}`;
-execFileSync("reg", ["add", "HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments",
-  "/v", "rayfin-fabricator.exe", "/t", "REG_SZ", "/d", DEVTOOLS, "/f"], { stdio: "inherit" });
+// The WebView2 runtime whose browser has the DevTools port (fabricator.yml's WebView2 step).
+if (!process.env.WEBVIEW2_BROWSER_EXECUTABLE_FOLDER) { fail("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER is set by fabricator.yml"); process.exit(1); }
 // Opened as a double-click opens it: the file as Fabricator's argument, the Import window its first screen.
-const fabricator = spawn(EXE, [FILE], {
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: DEVTOOLS },
-  stdio: "ignore", detached: false,
-});
+const fabricator = spawn(EXE, [FILE], { env: { ...process.env, FABRICATOR_DEVTOOLS_PORT: String(PORT) }, stdio: "ignore" });
 let browser, main, preview;
 const shoot = async (page, name) => page && page.screenshot({ path: join(SHOTS, `${name}.png`) }).catch(() => {});
 try {

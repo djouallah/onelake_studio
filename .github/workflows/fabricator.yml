@@ -64,6 +64,25 @@ jobs:
           # An installer that starts the app leaves one running without the DevTools port: none may run yet.
           Get-Process rayfin-fabricator -ErrorAction SilentlyContinue | ForEach-Object { "running after the install: $($_.Id)"; Stop-Process -Id $_.Id -Force }
           "FABRICATOR_EXE=$exe" >> $env:GITHUB_ENV
+      # Fabricator's WebView2 with a DevTools port (test/fabricator/devtools-launcher.cs): the runner's own WebView2
+      # runtime, copied, whose msedgewebview2.exe starts the real one with --remote-debugging-port. Fabricator takes
+      # it through WEBVIEW2_BROWSER_EXECUTABLE_FOLDER; it sets the browser's arguments itself, so WebView2 ignores
+      # WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS.
+      - name: WebView2, with a DevTools port
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application' -Directory |
+            Where-Object { $_.Name -match '^\d+(\.\d+){3}$' } | Sort-Object { [version]$_.Name } | Select-Object -Last 1
+          if (-not $runtime) { throw 'no WebView2 runtime on this runner' }
+          $copy = Join-Path $env:RUNNER_TEMP "webview2\$($runtime.Name)"
+          Copy-Item $runtime.FullName $copy -Recurse
+          Rename-Item (Join-Path $copy 'msedgewebview2.exe') 'msedgewebview2-real.exe'
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          & $csc /nologo /out:(Join-Path $copy 'msedgewebview2.exe') test\fabricator\devtools-launcher.cs
+          if ($LASTEXITCODE) { throw "csc: $LASTEXITCODE" }
+          "WebView2 $($runtime.Name), copied to $copy"
+          "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$copy" >> $env:GITHUB_ENV
       - name: Sign in to fabriccat as fabric-github-deploy
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
