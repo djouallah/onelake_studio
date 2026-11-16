@@ -19,9 +19,14 @@ static class DevToolsLauncher {
     string port = Environment.GetEnvironmentVariable("FABRICATOR_DEVTOOLS_PORT") ?? "9333";
     // The browser process alone: its children (renderers, GPU, utilities) are started by it, with --type.
     if (!args.Contains("--type=")) args = "--remote-debugging-port=" + port + " " + args.TrimStart();
+    // Each start, for CI's log: what WebView2 asked for, and how the browser ended.
+    string log = Environment.GetEnvironmentVariable("FABRICATOR_LAUNCHER_LOG");
+    Action<string> say = s => { if (log != null) try { File.AppendAllText(log, DateTime.UtcNow.ToString("o") + " " + s + Environment.NewLine); } catch { } };
+    say("start " + args);
     var start = new ProcessStartInfo(real, args) { UseShellExecute = false };
     using (var browser = Process.Start(start)) {
       browser.WaitForExit();
+      say("exit " + browser.ExitCode);
       return browser.ExitCode;
     }
   }

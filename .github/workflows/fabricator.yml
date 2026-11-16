@@ -80,8 +80,13 @@ jobs:
           Rename-Item (Join-Path $copy 'msedgewebview2.exe') 'msedgewebview2-real.exe'
           $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
           $launcher = Join-Path $copy 'msedgewebview2.exe'
-          & $csc /nologo "/out:$launcher" test\fabricator\devtools-launcher.cs
+          # The runtime's own version, as the real msedgewebview2.exe has it: WebView2 reads the runtime's version there.
+          $version = (Get-Item (Join-Path $copy 'msedgewebview2-real.exe')).VersionInfo.FileVersion
+          $info = Join-Path $env:RUNNER_TEMP 'launcher-version.cs'
+          "[assembly: System.Reflection.AssemblyFileVersion(`"$version`")]`n[assembly: System.Reflection.AssemblyInformationalVersion(`"$version`")]`n[assembly: System.Reflection.AssemblyVersion(`"$version`")]" | Set-Content -Encoding utf8 $info
+          & $csc /nologo "/out:$launcher" test\fabricator\devtools-launcher.cs $info
           if ($LASTEXITCODE) { throw "csc: $LASTEXITCODE" }
+          "the launcher: $((Get-Item $launcher).VersionInfo.FileVersion)"
           "WebView2 $($runtime.Name), copied to $copy"
           "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$copy" >> $env:GITHUB_ENV
       - name: Sign in to fabriccat as fabric-github-deploy

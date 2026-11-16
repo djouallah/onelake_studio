@@ -16,6 +16,7 @@
 // FABRICATOR_OUT: the file. FABRICATOR_EXE: the installed rayfin-fabricator.exe. SHOTS: a folder for screenshots.
 import { spawn, execFileSync } from "node:child_process";
 import { readFile, readdir, mkdir, stat, cp } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 
@@ -50,6 +51,8 @@ const data = join(APPDATA, "Rayfin Fabricator");
 // the desktop as it looks.
 function diagnose(child) {
   console.log(`Fabricator's process ${child.pid}: ${child.exitCode == null ? "running" : `exited ${child.exitCode}`}`);
+  try { console.log(`the launcher:
+${readFileSync(join(SHOTS, "launcher.log"), "utf8").slice(0, 4000)}`); } catch { console.log("the launcher never ran"); }
   const ps = script => {
     try { console.log(execFileSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf8", timeout: 60_000 })); }
     catch (e) { console.log(`(powershell: ${String(e.message).split("\n")[0]})`); }
@@ -77,7 +80,8 @@ await mkdir(SHOTS, { recursive: true });
 // The WebView2 runtime whose browser has the DevTools port (fabricator.yml's WebView2 step).
 if (!process.env.WEBVIEW2_BROWSER_EXECUTABLE_FOLDER) { fail("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER is set by fabricator.yml"); process.exit(1); }
 // Opened as a double-click opens it: the file as Fabricator's argument, the Import window its first screen.
-const fabricator = spawn(EXE, [FILE], { env: { ...process.env, FABRICATOR_DEVTOOLS_PORT: String(PORT) }, stdio: "ignore" });
+const fabricator = spawn(EXE, [FILE], { env: { ...process.env, FABRICATOR_DEVTOOLS_PORT: String(PORT),
+  FABRICATOR_LAUNCHER_LOG: join(SHOTS, "launcher.log") }, stdio: "ignore" });
 let browser, main, preview;
 const shoot = async (page, name) => page && page.screenshot({ path: join(SHOTS, `${name}.png`) }).catch(() => {});
 try {
