@@ -1,0 +1,84 @@
+# An export's .fabricator in Fabricator itself (test/js/run-fabricator.mjs), the release a person installs, by
+# its checksum, on Windows: opened as a double-click opens it, imported, installed and run on Fabricator's local
+# backend, its preview signed in and drawing the Report from the lakehouse; then Fabricator's Advisor checks, how
+# it installed the packages, and how long Import took. `az` is signed in as the CI identity: the app's function
+# reads OneLake as it, as it reads it as the person on their own machine.
+#
+# The Lake tables workflow calls it after its export job, on that run's lakeci-fabricator artifact. Run it alone
+# (gh workflow run fabricator.yml -f run-id=<a Lake tables run>) to try Fabricator again on that run's file.
+name: Fabricator
+
+on:
+  workflow_call:
+    inputs:
+      run-id:
+        description: The run whose lakeci-fabricator artifact is opened (default, the calling run)
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: A Lake tables run whose lakeci-fabricator artifact is opened
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+jobs:
+  fabricator:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: lakeci-fabricator
+          path: ${{ runner.temp }}
+          run-id: ${{ inputs.run-id || github.run_id }}
+          github-token: ${{ github.token }}
+      # playwright-core, which drives Fabricator's WebView2 over the DevTools protocol.
+      - run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+      - name: Fabricator
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FABRICATOR_VERSION: 1.55.0
+          FABRICATOR_SHA256: 6449b6cbc5df20a553c0c40e17c988f2078edf2297157d9d95809cf68ee2b9f9
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = "Rayfin.Fabricator_${env:FABRICATOR_VERSION}_x64-setup.exe"
+          gh release download "v$env:FABRICATOR_VERSION" -R spatney/rayfin-fabricator -p $setup -D $env:RUNNER_TEMP
+          $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $env:RUNNER_TEMP $setup)).Hash.ToLower()
+          if ($hash -ne $env:FABRICATOR_SHA256) { throw "Fabricator's installer is $hash, not $env:FABRICATOR_SHA256" }
+          Start-Process -Wait -FilePath (Join-Path $env:RUNNER_TEMP $setup) -ArgumentList '/S'
+          $dir = Join-Path $env:LOCALAPPDATA 'Rayfin Fabricator'
+          $exe = Join-Path $dir 'rayfin-fabricator.exe'
+          if (-not (Test-Path $exe)) { throw "no $exe after the install" }
+          & (Join-Path $dir 'rayfin-local.exe') --version
+          # An installer that starts the app leaves one running without the DevTools port: none may run yet.
+          Get-Process rayfin-fabricator -ErrorAction SilentlyContinue | ForEach-Object { "running after the install: $($_.Id)"; Stop-Process -Id $_.Id -Force }
+          "FABRICATOR_EXE=$exe" >> $env:GITHUB_ENV
+      - name: Sign in to fabriccat as fabric-github-deploy
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.ONELAKE_CI_CLIENT_ID }}
+          tenant-id: ${{ vars.ONELAKE_CI_TENANT_ID }}
+          allow-no-subscriptions: true
+      - run: node test/js/run-fabricator.mjs
+        env:
+          FABRICATOR_OUT: ${{ runner.temp }}/lakeci.fabricator
+          SHOTS: ${{ runner.temp }}/fabricator-shots
+      # Screenshots, and Fabricator's logs and Advisor state (run-fabricator.mjs copies them in).
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fabricator-shots
+          path: ${{ runner.temp }}/fabricator-shots
+          if-no-files-found: ignore
+          retention-days: 7

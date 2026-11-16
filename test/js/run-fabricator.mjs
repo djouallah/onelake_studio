@@ -44,6 +44,30 @@ const until = async (what, fn, ms) => {
   }
 };
 const data = join(APPDATA, "Rayfin Fabricator");
+// What WebView2 was started with, when its DevTools port never opened: Fabricator's processes and WebView2's,
+// their command lines and listening ports, the profile's DevToolsActivePort, any Edge or WebView2 policy, and
+// the desktop as it looks.
+function diagnose(child) {
+  console.log(`Fabricator's process ${child.pid}: ${child.exitCode == null ? "running" : `exited ${child.exitCode}`}`);
+  const ps = script => {
+    try { console.log(execFileSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf8", timeout: 60_000 })); }
+    catch (e) { console.log(`(powershell: ${String(e.message).split("\n")[0]})`); }
+  };
+  ps(`Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'rayfin|msedgewebview2' } |
+      ForEach-Object { '{0} {1} parent {2}: {3}' -f $_.Name, $_.ProcessId, $_.ParentProcessId, ([string]$_.CommandLine).Substring(0, [Math]::Min(600, ([string]$_.CommandLine).Length)) }`);
+  ps(`$ids = (Get-Process msedgewebview2, rayfin-fabricator -ErrorAction SilentlyContinue).Id;
+      Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.OwningProcess } |
+      ForEach-Object { 'listening {0}:{1} pid {2}' -f $_.LocalAddress, $_.LocalPort, $_.OwningProcess }`);
+  ps(`Get-ChildItem -Recurse -Force -Filter DevToolsActivePort "$env:LOCALAPPDATA\\com.rayfin.fabricator" -ErrorAction SilentlyContinue |
+      ForEach-Object { "$($_.FullName): $(Get-Content -Raw $_.FullName)" }; 'profiles:';
+      Get-ChildItem -Force "$env:LOCALAPPDATA\\com.rayfin.fabricator" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }`);
+  ps(`foreach ($k in 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge', 'HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge') {
+        if (Test-Path $k) { Get-ChildItem -Recurse $k | ForEach-Object { $_.Name; $_.Property } ; (Get-ItemProperty $k | Out-String) } else { "no $k" } }`);
+  ps(`Add-Type -AssemblyName System.Windows.Forms, System.Drawing; $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;
+      $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($bmp);
+      $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $bmp.Save('${join(SHOTS, "desktop.png").replace(/'/g, "''")}');
+      "desktop $($b.Width)x$($b.Height) saved"`);
+}
 const json = async p => JSON.parse((await readFile(p, "utf8")).replace(/^﻿/, ""));
 const shown = async page => (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 800);
 await mkdir(SHOTS, { recursive: true });
@@ -56,7 +80,8 @@ const fabricator = spawn(EXE, [FILE], {
 let browser, main, preview;
 const shoot = async (page, name) => page && page.screenshot({ path: join(SHOTS, `${name}.png`) }).catch(() => {});
 try {
-  await until("Fabricator's DevTools endpoint", async () => (await fetch(`http://127.0.0.1:${PORT}/json/version`)).ok, 120_000);
+  await until("Fabricator's DevTools endpoint", async () => (await fetch(`http://127.0.0.1:${PORT}/json/version`)).ok, 120_000)
+    .catch(e => { diagnose(fabricator); throw e; });
   browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
   const pages = () => browser.contexts().flatMap(c => c.pages());
   main = await until("Fabricator's window", async () => pages().find(p => !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(p.url())), 60_000);

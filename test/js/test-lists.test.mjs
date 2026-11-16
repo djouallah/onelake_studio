@@ -10,7 +10,7 @@ const steps = yaml => yaml.split("\n").filter(l => !l.trim().startsWith("#")).jo
 
 test("every test file runs somewhere, and every name is a file", async () => {
   const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
-  const workflow = (await Promise.all(["extension.yml", "lake-tables.yml"].map(f =>
+  const workflow = (await Promise.all(["extension.yml", "lake-tables.yml", "fabricator.yml"].map(f =>
     readFile(new URL(`../../.github/workflows/${f}`, import.meta.url), "utf8")))).join("\n");
   const files = (await readdir(new URL("./", import.meta.url))).filter(f => f.endsWith(".test.mjs"));
   const uses = [...named(pkg.scripts.test), ...named(steps(workflow))];
@@ -33,7 +33,7 @@ test("every test that needs OneLake is run by the lake's workflow", async () => 
 // The scripts that drive a browser or an installed build are run by name too.
 // By the Extension workflow, or by the lake's, which has the tokens one of them needs.
 test("every run-*.mjs is run by a workflow", async () => {
-  const workflow = (await Promise.all(["extension.yml", "lake-tables.yml"].map(f =>
+  const workflow = (await Promise.all(["extension.yml", "lake-tables.yml", "fabricator.yml"].map(f =>
     readFile(new URL(`../../.github/workflows/${f}`, import.meta.url), "utf8")))).join("\n");
   for (const dir of ["js", "e2e"]) {
     const scripts = (await readdir(new URL(`../${dir}/`, import.meta.url))).filter(f => /^run-.+\.mjs$/.test(f));
