@@ -27,9 +27,6 @@ const TOTAL = 238834;
 const ALLOWED = {
   // A note (no points off) on every app with functions: Fabric's Functions are not in every region.
   "platform/functions-availability": "every app with functions has it",
-  // Rayfin 1.36.2 is npm's latest; the app is on 1.36.1, as the page's vendored SDK is (core/vendored.js).
-  "platform/cli-outdated": "the app's Rayfin is 1.36.1, npm's latest 1.36.2",
-  "platform/sdk-outdated": "the app's Rayfin is 1.36.1, npm's latest 1.36.2",
 };
 
 const checks = [];

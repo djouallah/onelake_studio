@@ -13,6 +13,9 @@
   (`@microsoft/rayfin-auth-provider-fabric`), which Fabricator's check flagged as missing. It also holds Rayfin's agent
   files (`.agents/skills/`, `.mcp.json`), as a project the Rayfin CLI makes does, so the coding agent in Fabricator
   has Rayfin's own skills.
+- **An exported app is on Rayfin 1.36.2**, Rayfin's latest: the page's SDK, its semantic-model connector, the
+  function's runtime and the project's CLI. Fabricator flagged 1.36.1 as out of date, and team workspaces need
+  1.36.2.
 - **A .sql file from disk opens where it did before OneLake Studio.** Most have nothing to do with OneLake: VS Code
   opens one as text, and the desktop app is no longer Windows' default for `.sql`, which an upgrade gives back to
   the program it had. Explorer's right-click > **Open in OneLake Studio**, or Windows' *Open with*, still opens one

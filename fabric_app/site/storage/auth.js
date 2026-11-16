@@ -19,8 +19,8 @@
 // The site's own copy (vendor/, core/vendored.js WEBAPP). Keep these on the same version: their
 // shared deps (rayfin-auth, rayfin-lib) are the same vendored files, so the provider operates on
 // the client's own Auth instance.
-const RAYFIN_CLIENT_ESM = new URL("../vendor/npm/@microsoft/rayfin-client@1.36.1/+esm.js", import.meta.url).href;
-const RAYFIN_FABRIC_ESM = new URL("../vendor/npm/@microsoft/rayfin-auth-provider-fabric@1.36.1/+esm.js", import.meta.url).href;
+const RAYFIN_CLIENT_ESM = new URL("../vendor/npm/@microsoft/rayfin-client@1.36.2/+esm.js", import.meta.url).href;
+const RAYFIN_FABRIC_ESM = new URL("../vendor/npm/@microsoft/rayfin-auth-provider-fabric@1.36.2/+esm.js", import.meta.url).href;
 
 // --- Rayfin provider: Fabric SSO session (no second login; inside the Fabric portal iframe the
 // session is handed over by postMessage). Backend URL, key and Fabric coordinates come from the

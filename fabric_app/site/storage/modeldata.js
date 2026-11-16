@@ -26,7 +26,7 @@ import { ossieToTmsl } from "../semantic/formats/ossie.js";
 
 // The site's own copy (vendor/, core/vendored.js WEBAPP.rayfinSemanticModel): the connector's
 // runtime, which decodes its Arrow answer.
-const SEMANTIC_MODEL_ESM = new URL("../vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", import.meta.url).href;
+const SEMANTIC_MODEL_ESM = new URL("../vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2/+esm.js", import.meta.url).href;
 // The connector's name in the app's settings (fabric_app/export/fabricapp.js, MODEL_CONNECTOR).
 const CONNECTOR = "model";
 // The model the semantic model was made from (fabric_app/export/exportapp.js, writeModel), of this build.

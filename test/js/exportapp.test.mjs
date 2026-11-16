@@ -204,7 +204,7 @@ async function fixture(root) {
     "webapp/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js": 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
     "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n",
     "webapp/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
-    "webapp/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js": 'import{F}from"../../apache-arrow@21.2.0/+esm.js";\n',
+    "webapp/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2/+esm.js": 'import{F}from"../../apache-arrow@21.2.0/+esm.js";\n',
     "webapp/npm/apache-arrow@21.2.0/+esm.js": "// the connector's arrow\n",
   };
   for (const [p, s] of Object.entries(files)) {
@@ -297,7 +297,7 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.ok(![...files.keys()].some(f => /^site\/public\/storage\/(data|catalog)\.js$|vendor\//.test(f)), "no DuckDB data source, and no packages yet (setPackages)");
     // The packages added at publish: the connector and its own Arrow, and not DuckDB's.
     const vendor = await vendorFiles(dirs.webappDir, engine);
-    assert.deepEqual([...vendor.keys()].sort(), ["vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "vendor/npm/apache-arrow@21.2.0/+esm.js"]);
+    assert.deepEqual([...vendor.keys()].sort(), ["vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2/+esm.js", "vendor/npm/apache-arrow@21.2.0/+esm.js"]);
     assert.match(text("rayfin/rayfin.yml"), /^connectors:\n  - name: model\n[\s\S]*itemId: m1\n[\s\S]*type: delegated\n/m);
     const agents = text("AGENTS.md");
     assert.match(agents, /Semantic model: `sales`, as it is in Fabric: the export changed nothing in it/);
