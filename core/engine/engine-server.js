@@ -173,7 +173,9 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     sock.setEncoding('utf8');
     sock.on('error', () => {});
     // A connection that says nothing holds a handle here for as long as it likes, unless it is closed.
-    const hello = setTimeout(() => { if (!who) sock.destroy(); }, helloMs);
+    // Each drop is in the log: a window refused prints its end, and says only how its pipe failed.
+    const drop = why => { log(`dropped a connection: ${why}`); sock.destroy(); };
+    const hello = setTimeout(() => { if (!who) drop(`no hello in ${helloMs / 1000}s`); }, helloMs);
     sock.on('close', () => {
       clearTimeout(hello);
       if (!who) return;
@@ -188,7 +190,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
       // Anything that isn't an object asks nothing: `null` is JSON too, and has no token to read.
       if (!msg || typeof msg !== 'object') msg = {};
       if (!who) {
-        if (!sameToken(msg.token, token)) { sock.destroy(); return; }
+        if (!sameToken(msg.token, token)) { drop('a wrong token'); return; }
         clearTimeout(hello);
         who = { window: String(msg.window || ''), sock };
         clients.add(who);
@@ -202,7 +204,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
         answer(msg).then(value => ({ value }), e => ({ error: (e && e.message) || String(e) }))
           .then(reply => tell({ id: msg.id, ...reply }));
       }
-    }, { maxLine: () => (who ? MAX_LINE : MAX_HELLO), onTooLong: () => sock.destroy() }));
+    }, { maxLine: () => (who ? MAX_LINE : MAX_HELLO), onTooLong: () => drop('a line too long') }));
   });
 
   // The pipe first: it is what says this is the one server for this key.

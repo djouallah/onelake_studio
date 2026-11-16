@@ -41,6 +41,7 @@ const BOOT_MS = 180_000;       // a first boot may be downloading its extensions
 const LOCK_STALE_MS = 200_000;
 const TOKEN_LOST_MS = 90_000;  // longer than a server waits with no window left
 const CANCEL_TRIES = 20;
+const HELLO_TRIES = 3;         // a just-started server that dropped a late hello
 const CANCEL_EVERY_MS = 100;   // a Stop can land before the statement reaches the server
 const MAX_ATTACHES = 8;
 
@@ -90,13 +91,20 @@ function pipePath(key) {
 function connectControl(path, token, window, waitMs = BOOT_MS, why = {}) {
   return new Promise(resolve => {
     const sock = net.connect(path);
-    let buf = '', settled = false;
+    let buf = '', settled = false, connectedAt = 0;
     const done = (v, reason) => { clearTimeout(timer); if (!settled && v == null) why.reason = reason; settled = true; resolve(v); };
+    // Dropped: the server let go of a connection it had taken, before any answer. One that was up says so
+    // when a hello reaches it late (engine-server.js HELLO_MS), and takes the next.
+    const lost = what => {
+      if (!settled && connectedAt && !buf) why.dropped = true;
+      done(null, connectedAt ? `${what}, ${((Date.now() - connectedAt) / 1000).toFixed(1)}s after it connected` : what);
+    };
     let timer = setTimeout(() => { sock.destroy(); done(null, `no connection to its pipe in ${CONNECT_MS / 1000}s`); }, CONNECT_MS);
     sock.setEncoding('utf8');
-    sock.on('error', e => done(null, `its pipe: ${e.code || e.message}`));
-    sock.on('close', () => done(null, buf ? 'it closed the pipe after answering' : 'it closed the pipe before answering'));
+    sock.on('error', e => lost(`its pipe: ${e.code || e.message}`));
+    sock.on('close', () => lost(buf ? 'it closed the pipe after answering' : 'it closed the pipe before answering'));
     sock.on('connect', () => {
+      connectedAt = Date.now();
       clearTimeout(timer);
       timer = setTimeout(() => { sock.destroy(); done(null, `no answer in ${waitMs / 1000}s`); }, waitMs);
       sock.write(`${JSON.stringify({ token, window })}\n`);
@@ -214,8 +222,16 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
       if (!await pipeHeld(pipe)) said = await spawnServer({ ...server, token, pipe });
     }
     if (said.taken) throw new Error('an engine with another session is still running: try again in a minute');
-    const why = {};
-    const up = await connectControl(pipe, token, window, BOOT_MS, why);
+    // The server has said it is ready, so one that drops this window's hello took it too late (a loop held
+    // up on either side): it takes the next.
+    const until = Date.now() + BOOT_MS;
+    let why = {};
+    let up = await connectControl(pipe, token, window, BOOT_MS, why);
+    for (let i = 0; !up && why.dropped && i < HELLO_TRIES && Date.now() < until; i++) {
+      await sleep(200);
+      why = {};
+      up = await connectControl(pipe, token, window, Math.max(1, until - Date.now()), why);
+    }
     // How the connection failed, and what the server said of itself, its log's last lines: why it went, or what it was doing.
     if (!up) throw new Error(`the engine started and then refused this window (${why.reason}). Its log ends:\n${logTail(server.logFile)}`);
     return { ...up, token };
