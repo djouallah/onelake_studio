@@ -72,7 +72,8 @@ async function run(name, { seen, ...app }) {
   const before = checks.length;
   let served = null;
   try {
-    served = await serveApp(name, { ...app, user: USER });
+    // As Fabricator's preview serves it: the project's own Vite, with Rayfin's local-dev plugin.
+    served = await serveApp(name, { ...app, user: USER, vite: true });
     const { ready } = served;
     const watch = page => {
       page.on("pageerror", e => console.log("[pageerror]", e.message));

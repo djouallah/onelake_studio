@@ -65,6 +65,10 @@ import { columnsIn, readsAll, columnRanges, tailOf, piecesOf } from "./ranges.js
 import { splitPlan, carried } from "./split.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
 
+// This module's URL, held: Vite's dev server (Fabricator's preview) rewrites a `new URL("<path>", import.meta.url)`
+// written out, a folder's to one without its trailing slash. The site is served as it is.
+const here = import.meta.url;
+
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
 // How many times a query is run again after the store said it lacked bytes it read: each time
 // downloads what was missed, with whole columns, so a query needs one or two at most.
@@ -72,7 +76,7 @@ const HEALS = 8;
 const BATCH_MS = 20;   // how long a larger table's new columns gather into one download
 // The site's own copy of the engine (vendor/, core/vendored.js WEBAPP), the base build: the page
 // needs Chrome or Edge 121+, which always runs it.
-const VENDOR = new URL('../vendor/', import.meta.url).href;
+const VENDOR = new URL('../vendor/', here).href;
 const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/dist/`;
 const BUNDLE = { mainModule: `${WASM}duckdb-base.wasm`, mainWorker: `${WASM}duckdb-browser-base.worker.js`, pthreadWorker: null };
 // The DuckDB that build is: its extensions are vendored under this version, and an engine that

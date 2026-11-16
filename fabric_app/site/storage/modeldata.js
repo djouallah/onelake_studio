@@ -24,9 +24,13 @@ import { printDaxQuery } from "../semantic/src/sql.js";
 import { tmslToModel } from "../semantic/formats/tmsl.js";
 import { ossieToTmsl } from "../semantic/formats/ossie.js";
 
+// This module's URL, held: Vite's dev server (Fabricator's preview) rewrites a `new URL("<path>", import.meta.url)`
+// written out, a folder's to one without its trailing slash. The site is served as it is.
+const here = import.meta.url;
+
 // The site's own copy (vendor/, core/vendored.js WEBAPP.rayfinSemanticModel): the connector's
 // runtime, which decodes its Arrow answer.
-const SEMANTIC_MODEL_ESM = new URL("../vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2/+esm.js", import.meta.url).href;
+const SEMANTIC_MODEL_ESM = new URL("../vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2/+esm.js", here).href;
 // The connector's name in the app's settings (fabric_app/export/fabricapp.js, MODEL_CONNECTOR).
 const CONNECTOR = "model";
 // The model the semantic model was made from (fabric_app/export/exportapp.js, writeModel), of this build.

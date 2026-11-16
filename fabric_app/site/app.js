@@ -19,6 +19,11 @@ import { tmslToModel } from "./semantic/formats/tmsl.js";
 import { ossieToTmsl } from "./semantic/formats/ossie.js";
 
 const v = new URL(import.meta.url).search;
+// This module's URL, held. Vite's dev server (Fabricator's preview, `npm run dev:frontend`) rewrites a
+// `new URL(<path>, import.meta.url)` written out: a template, into an import of every file in the folder, and
+// rayfin.config.json, which Rayfin's local-dev plugin answers as JSON, stopped app.js from loading; a path, into
+// an import of that file. The site is served as it is (test/js/exportapp.test.mjs keeps it so).
+const here = import.meta.url;
 const status = (s, kind = "") => {
   const el = document.getElementById("status");
   el.textContent = s || "";
@@ -43,7 +48,7 @@ const boot = {
 // chart is drawn. The site's own copy (vendor/, core/vendored.js WEBAPP).
 const echartsReady = new Promise((resolve, reject) => {
   const s = Object.assign(document.createElement("script"),
-    { src: new URL("./vendor/npm/echarts@5.5.1/dist/echarts.min.js", import.meta.url).href, async: true });
+    { src: new URL("./vendor/npm/echarts@5.5.1/dist/echarts.min.js", here).href, async: true });
   s.onload = () => resolve(window.echarts);
   s.onerror = () => reject(new Error("the chart library could not be loaded"));
   document.head.append(s);
@@ -51,7 +56,7 @@ const echartsReady = new Promise((resolve, reject) => {
 echartsReady.catch(() => {});
 // The world's outline a map draws over, read the first time a map is drawn.
 const worldMap = async () => {
-  const r = await fetch(new URL("./vendor/npm/echarts@4.9.0/map/json/world.json", import.meta.url));
+  const r = await fetch(new URL("./vendor/npm/echarts@4.9.0/map/json/world.json", here));
   if (!r.ok) throw new Error(`the world's map: ${r.status}`);
   return r.json();
 };
@@ -65,7 +70,7 @@ const resultOf = table => ({
 
 // One of the site's JSON files, or `missing` when it has none: the hosting answers a file a site
 // lacks with its index.html (200), which is not JSON.
-const siteJson = (name, missing) => fetch(new URL(`./${name}${v}`, import.meta.url))
+const siteJson = (name, missing) => fetch(new URL(`./${name}${v}`, here))
   .then(r => (r.ok ? r.text() : null), () => null)
   .then(text => { try { return text == null ? missing : JSON.parse(text); } catch { return missing; } });
 

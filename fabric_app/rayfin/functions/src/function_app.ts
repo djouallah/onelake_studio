@@ -87,6 +87,19 @@ async function getJson(url: string, token: string): Promise<{ status: number; bo
   }
 }
 
+// Who a storage token is for, from its own claims, for an error to say: OneLake answers a token of another
+// tenant with "The given warehouse does not exist". Locally (Fabricator, rayfin-local) the token is the Azure
+// CLI's default account, which can be another tenant's than the app's. Never the token itself.
+function whoOf(token: string): string {
+  try {
+    const c = JSON.parse(Buffer.from(String(token).split('.')[1] ?? '', 'base64url').toString('utf8'));
+    const who = c.upn ?? c.unique_name ?? c.preferred_username ?? c.app_displayname ?? c.appid;
+    return who || c.tid ? `, as ${who ?? 'an identity'} of tenant ${c.tid ?? 'unknown'}` : '';
+  } catch {
+    return '';
+  }
+}
+
 // fn over every item, at most `limit` at a time.
 async function eachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
@@ -216,10 +229,12 @@ udf.func(
     sas: Record<string, string>; expiresOn: string;
   } | { error: string }> => {
     let step = 'the table names';
+    let as = '';
     try {
       const asked = [...new Set(String(tables ?? '').split(',').map(s => s.trim()).filter(Boolean))];
       step = 'the storage token of the app identity';
       const token = ctx.Tokens.Storage;
+      as = whoOf(token);
       step = "the setting TABLES (the model's tables)";
       const inModel = appTables(ctx);
       let names = asked.length ? asked.filter(t => inModel.includes(t)) : inModel;
@@ -231,7 +246,7 @@ udf.func(
       step = 'the setting CATALOG_URL';
       const { endpoint, ws, lh } = catalogUrl(ctx);
       const { start, expiry } = sasWindow();
-      step = 'the catalog and the OneLake user delegation key';
+      step = `the catalog and the OneLake user delegation key${as}`;
       const [catalog, key] = await Promise.all([
         catalogPrefix(endpoint, ws, lh, token).then(prefix => loadTables(endpoint, prefix, names, token)),
         getDelegationKey(token, start, expiry),

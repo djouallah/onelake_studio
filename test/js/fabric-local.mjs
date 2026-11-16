@@ -29,8 +29,10 @@ const npm = (what, cwd) => execSync(`npm ${what} --no-audit --no-fund --loglevel
  * `plan`, `model`, `report`: an export's (exportapp.js appFiles); `engine`: duckdb or semanticModel;
  * `env`: the function's secrets and rayfin-local's tokens; `extra`: path -> text, files put in the site beside its own;
  * `user`: { name, password }, a user of the local backend's own.
+ * `vite`: the site served by the project's own Vite, as Fabricator's preview serves it (rayfin-local's
+ * frontend, with Rayfin's local-dev plugin); else as it is, as Fabric's hosting serves the published site.
  */
-export async function serveApp(name, { plan, model, report = null, engine, env = {}, extra = {}, user = null }) {
+export async function serveApp(name, { plan, model, report = null, engine, env = {}, extra = {}, user = null, vite = false }) {
   const files = await appFiles({ plan, state: null, model, kept: report ? Buffer.from(JSON.stringify(report)) : null,
                                  fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"), daxSqlDir: join(root, "vendor", "npm", PINS.daxSql),
                                  agentFiles: join(root, "fabric-function", "agent-files.json") });
@@ -47,7 +49,7 @@ export async function serveApp(name, { plan, model, report = null, engine, env =
   if (user) execFileSync(RAYFIN_LOCAL, ["users", "add", user.name, "--password", user.password, "-C", project], { stdio: ["ignore", "ignore", "inherit"] });
 
   const said = [];
-  const server = spawn(RAYFIN_LOCAL, ["serve", "--static", "--reuse-build", "--json", "--sign-in-as", "developer", "-C", project],
+  const server = spawn(RAYFIN_LOCAL, ["serve", ...(vite ? [] : ["--static", "--reuse-build"]), "--json", "--sign-in-as", "developer", "-C", project],
     { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
   const stop = async ok => {
     if (!ok) for (const line of said.slice(-40)) console.log(`  ${String(line).trimEnd().slice(0, 400)}`);

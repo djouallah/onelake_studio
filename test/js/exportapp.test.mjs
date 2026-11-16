@@ -600,6 +600,27 @@ test("once published, the app as rayfin up records it: its next publish, Fabrica
   assert.deepEqual(JSON.parse(files.get(CONFIG)), config, "the site's backend, which rayfin up keeps and Vite serves");
 });
 
+// Vite's dev server (Fabricator's preview) rewrites `new URL(<a string>, import.meta.url)`, as its
+// vite:asset-import-meta-url plugin matches it: a template became an import of every file in site/public/, and
+// Rayfin's local-dev plugin answered rayfin.config.json's as JSON, so app.js never ran; a folder lost its
+// trailing slash (DuckDB's worker at /vendornpm/…). The site's scripts hold their module's URL instead.
+test("no script of the site is one Vite's dev server rewrites", async () => {
+  const VITE = /\bnew\s+URL\s*\(\s*('[^']+'|"[^"]+"|`[^`]+`)\s*,\s*import\.meta\.url\s*(?:,\s*)?\)/;
+  const scripts = [];
+  for (const dir of ["fabric_app/site", "page/explore"]) {
+    for (const f of await readdir(new URL(`../../${dir}/`, import.meta.url), { recursive: true })) {
+      if (/\.(m?js|html)$/.test(f)) scripts.push(`${dir}/${f.split("\\").join("/")}`);
+    }
+  }
+  scripts.push("page/paths.js");
+  assert.ok(scripts.length > 20, `the site's scripts are found: ${scripts.length}`);
+  for (const f of scripts) {
+    const text = await readFile(new URL(`../../${f}`, import.meta.url), "utf8");
+    const hit = text.split(/\r?\n/).findIndex(l => !l.trim().startsWith("//") && VITE.test(l));
+    assert.equal(hit, -1, `${f}:${hit + 1} is a new URL(<string>, import.meta.url) Vite rewrites: use the module's URL held in a const`);
+  }
+});
+
 test("the project's dev server and ignore list ship, and rayfin.yml serves site/public as it is", async () => {
   const vite = await readFile(new URL("../../fabric_app/project/vite.config.mjs", import.meta.url), "utf8");
   assert.match(vite, /root: resolve\(import\.meta\.dirname, 'public'\)/);
