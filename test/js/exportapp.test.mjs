@@ -620,6 +620,8 @@ test("the project's lock file is the project's packages, from the public registr
   const ws = lock.packages["rayfin/functions"];
   assert.deepEqual(ws.dependencies, fn.dependencies, "the function's packages: run scripts/fabric-lock.mjs");
   assert.deepEqual(ws.devDependencies, fn.devDependencies, "the function's packages: run scripts/fabric-lock.mjs");
-  const off = Object.entries(lock.packages).filter(([, p]) => p.resolved && !p.resolved.startsWith("https://registry.npmjs.org/"));
+  const off = Object.entries(lock.packages).filter(([, p]) => p.resolved && !p.link && !p.resolved.startsWith("https://registry.npmjs.org/"));
   assert.deepEqual(off.map(([k]) => k), [], "every package from the public registry");
+  // The one link: the workspace, the function.
+  assert.deepEqual(Object.entries(lock.packages).filter(([, p]) => p.link).map(([, p]) => p.resolved), ["rayfin/functions"]);
 });

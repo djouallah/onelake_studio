@@ -143,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           for f in package-lock.json fabric_app/rayfin/functions/package-lock.json fabric_app/project/package-lock.json; do
-            bad=$(grep -n '"resolved":' "$f" | grep -v '"resolved": "https://registry.npmjs.org/' || true)
+            bad=$(grep -n '"resolved":' "$f" | grep -v '"resolved": "https://registry.npmjs.org/' | grep -v '"resolved": "rayfin/functions"' || true)
             [ -z "$bad" ] || { echo "$f resolves outside registry.npmjs.org:"; echo "$bad" | head -20; exit 1; }
           done
       - name: No known hole in what ships

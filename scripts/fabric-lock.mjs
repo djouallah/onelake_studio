@@ -24,7 +24,9 @@ try {
   execSync("npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/",
            { cwd: dir, stdio: "inherit" });
   const lock = await readFile(join(dir, "package-lock.json"), "utf8");
-  const others = [...lock.matchAll(/"resolved": "([^"]+)"/g)].map(m => m[1]).filter(u => !u.startsWith("https://registry.npmjs.org/"));
+  // Every package from the public registry, but the workspace's own link to rayfin/functions.
+  const others = Object.entries(JSON.parse(lock).packages)
+    .filter(([, p]) => p.resolved && !p.link && !p.resolved.startsWith("https://registry.npmjs.org/")).map(([k, p]) => `${k}: ${p.resolved}`);
   if (others.length) throw new Error(`resolved off the public registry: ${others.slice(0, 3).join(", ")}`);
   await writeFile(join(root, "fabric_app", "project", "package-lock.json"), lock);
   console.log(`fabric_app/project/package-lock.json: ${Object.keys(JSON.parse(lock).packages).length - 1} packages`);
