@@ -4,9 +4,11 @@
 // backend, and its preview signed in and drawing the Report from the lakehouse. Then what Fabricator says of it:
 // its Advisor's checks, how it installed the packages, and how long from Import to a running app.
 //
-// Fabricator is driven over the DevTools protocol of its WebView2, as its own scripts/docs-screenshots do: the
-// runner's own WebView2 runtime, whose browser CI starts with a DevTools port (WEBVIEW2_BROWSER_EXECUTABLE_FOLDER,
-// test/fabricator/devtools-launcher.cs). Nothing of Fabricator or the app is stood in for. The one step a person
+// Fabricator is driven over the DevTools protocol of its WebView2, opened as VS Code's JavaScript debugger opens
+// any WebView2 app's (vscode-js-debug, edgeLauncher.ts) and as Fabricator's own scripts/docs-screenshots do: a
+// user data folder of its own and the DevTools port (WEBVIEW2_USER_DATA_FOLDER, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS),
+// and WebView2's debugger pipe, on which it says the port it opened. The port alone was ignored: Fabricator sets
+// the browser's arguments itself. Nothing of Fabricator or the app is stood in for. The one step a person
 // does that is skipped: Fabricator's Setup screen, which waits for a GitHub Copilot sign-in that importing and
 // running an app do not need (its localStorage key fabricator.setupComplete, as Setup's Enter button sets it).
 //
@@ -17,7 +19,10 @@
 import { spawn, execFileSync } from "node:child_process";
 import { readFile, readdir, mkdir, stat, cp } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
+import { tmpdir } from "node:os";
+import { createServer } from "node:net";
+import { randomBytes } from "node:crypto";
 import { chromium } from "playwright-core";
 
 const { FABRICATOR_OUT: FILE, FABRICATOR_EXE: EXE, APPDATA, LOCALAPPDATA } = process.env;
@@ -51,8 +56,9 @@ const data = join(APPDATA, "Rayfin Fabricator");
 // the desktop as it looks.
 function diagnose(child) {
   console.log(`Fabricator's process ${child.pid}: ${child.exitCode == null ? "running" : `exited ${child.exitCode}`}`);
-  try { console.log(`the launcher:
-${readFileSync(join(SHOTS, "launcher.log"), "utf8").slice(0, 4000)}`); } catch { console.log("the launcher never ran"); }
+  console.log(`WebView2's debugger pipe: ${piped.length ? piped.join(" | ") : "nothing"}`);
+  try { console.log(`DevToolsActivePort: ${readFileSync(join(USER_DATA, "EBWebView", "DevToolsActivePort"), "utf8")}`); }
+  catch { try { console.log(`DevToolsActivePort: ${readFileSync(join(USER_DATA, "DevToolsActivePort"), "utf8")}`); } catch { console.log("no DevToolsActivePort"); } }
   const ps = script => {
     try { console.log(execFileSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf8", timeout: 60_000 })); }
     catch (e) { console.log(`(powershell: ${String(e.message).split("\n")[0]})`); }
@@ -77,17 +83,34 @@ const json = async p => JSON.parse((await readFile(p, "utf8")).replace(/^﻿/, "
 const shown = async page => (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 800);
 await mkdir(SHOTS, { recursive: true });
 
-// The WebView2 runtime whose browser has the DevTools port (fabricator.yml's WebView2 step).
-if (!process.env.WEBVIEW2_BROWSER_EXECUTABLE_FOLDER) { fail("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER is set by fabricator.yml"); process.exit(1); }
+// WebView2's debugger pipe (\\.\pipe\WebView2\Debugger\<exe>\<name>, WEBVIEW2_PIPE_FOR_SCRIPT_DEBUGGER): each
+// WebView2 the app starts says on it the DevTools port it opened ({ devtoolsActivePort: "<port>\n…", type, id }).
+const USER_DATA = join(process.env.RUNNER_TEMP || tmpdir(), "fabricator-webview2");
+const pipeName = `fabricator_${randomBytes(9).toString("hex")}`;
+const piped = [];
+let pipedPort = null;
+const pipe = createServer(stream => stream.on("data", d => {
+  piped.push(String(d).replace(/\s+/g, " ").slice(0, 300));
+  try { pipedPort = parseInt(String(JSON.parse(String(d)).devtoolsActivePort).split("\n")[0], 10) || pipedPort; } catch { /* not JSON */ }
+}));
+pipe.listen(`\\\\.\\pipe\\WebView2\\Debugger\\${basename(EXE)}\\${pipeName}`);
 // Opened as a double-click opens it: the file as Fabricator's argument, the Import window its first screen.
-const fabricator = spawn(EXE, [FILE], { env: { ...process.env, FABRICATOR_DEVTOOLS_PORT: String(PORT),
-  FABRICATOR_LAUNCHER_LOG: join(SHOTS, "launcher.log") }, stdio: "ignore" });
+const fabricator = spawn(EXE, [FILE], { env: { ...process.env,
+  WEBVIEW2_USER_DATA_FOLDER: USER_DATA,
+  WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
+  WEBVIEW2_PIPE_FOR_SCRIPT_DEBUGGER: pipeName,
+}, stdio: "ignore" });
 let browser, main, preview;
 const shoot = async (page, name) => page && page.screenshot({ path: join(SHOTS, `${name}.png`) }).catch(() => {});
 try {
-  await until("Fabricator's DevTools endpoint", async () => (await fetch(`http://127.0.0.1:${PORT}/json/version`)).ok, 120_000)
+  // The port WebView2 says on its pipe, else the one asked for.
+  const port = await until("Fabricator's DevTools endpoint", async () => {
+    for (const p of new Set([pipedPort, PORT].filter(Boolean))) if ((await fetch(`http://127.0.0.1:${p}/json/version`).catch(() => null))?.ok) return p;
+    return null;
+  }, 120_000)
     .catch(e => { diagnose(fabricator); throw e; });
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+  console.log(`WebView2's DevTools on port ${port}; its debugger pipe: ${piped.join(" | ") || "nothing"}`);
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const pages = () => browser.contexts().flatMap(c => c.pages());
   main = await until("Fabricator's window", async () => pages().find(p => !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(p.url())), 60_000);
   main.on("pageerror", e => console.log("[fabricator pageerror]", e.message));
@@ -195,6 +218,7 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   fabricator.kill();
+  pipe.close();
   // Fabricator's local backend and its Vite outlive the window: stop them, as quitting Fabricator does.
   for (const name of ["rayfin-fabricator.exe", "rayfin-local.exe"]) {
     try { execFileSync("taskkill", ["/F", "/T", "/IM", name], { stdio: "ignore" }); } catch { /* not running */ }

@@ -15,20 +15,12 @@ on:
         description: The run whose lakeci-fabricator artifact is opened (default, the calling run)
         type: string
         default: ''
-      launcher:
-        description: The copied WebView2's browser started by the DevTools launcher
-        type: boolean
-        default: true
   workflow_dispatch:
     inputs:
       run-id:
         description: A Lake tables run whose lakeci-fabricator artifact is opened
         type: string
         required: true
-      launcher:
-        description: The copied WebView2's browser started by the DevTools launcher (false, its own, to tell the two apart)
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -72,32 +64,6 @@ jobs:
           # An installer that starts the app leaves one running without the DevTools port: none may run yet.
           Get-Process rayfin-fabricator -ErrorAction SilentlyContinue | ForEach-Object { "running after the install: $($_.Id)"; Stop-Process -Id $_.Id -Force }
           "FABRICATOR_EXE=$exe" >> $env:GITHUB_ENV
-      # Fabricator's WebView2 with a DevTools port (test/fabricator/devtools-launcher.cs). Fabricator sets the browser's
-      # arguments itself, so WebView2 ignores WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, and it refuses a browser it did
-      # not sign. So: the runner's own runtime, copied as it is (WEBVIEW2_BROWSER_EXECUTABLE_FOLDER), and Windows
-      # starts the launcher in place of that copy's msedgewebview2.exe (Image File Execution Options, filtered to its
-      # path), which starts the installed runtime's browser, the same version, with --remote-debugging-port.
-      - name: WebView2, with a DevTools port
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $runtime = Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application' -Directory |
-            Where-Object { $_.Name -match '^\d+(\.\d+){3}$' } | Sort-Object { [version]$_.Name } | Select-Object -Last 1
-          if (-not $runtime) { throw 'no WebView2 runtime on this runner' }
-          $copy = Join-Path $env:RUNNER_TEMP "webview2\$($runtime.Name)"
-          Copy-Item $runtime.FullName $copy -Recurse
-          "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$copy" >> $env:GITHUB_ENV
-          "FABRICATOR_BROWSER=$(Join-Path $runtime.FullName 'msedgewebview2.exe')" >> $env:GITHUB_ENV
-          if ('${{ inputs.launcher }}' -eq 'false') { "WebView2 $($runtime.Name), copied to $copy, its own browser kept"; exit 0 }
-          $launcher = Join-Path $env:RUNNER_TEMP 'devtools-launcher.exe'
-          & (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe') /nologo "/out:$launcher" test\fabricator\devtools-launcher.cs
-          if ($LASTEXITCODE) { throw "csc: $LASTEXITCODE" }
-          $ifeo = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\msedgewebview2.exe'
-          New-Item -Force -Path "$ifeo\fabricator" | Out-Null
-          New-ItemProperty -Force -Path $ifeo -Name UseFilter -PropertyType DWord -Value 1 | Out-Null
-          New-ItemProperty -Force -Path "$ifeo\fabricator" -Name FilterFullPath -Value (Join-Path $copy 'msedgewebview2.exe') | Out-Null
-          New-ItemProperty -Force -Path "$ifeo\fabricator" -Name Debugger -Value "`"$launcher`"" | Out-Null
-          "WebView2 $($runtime.Name), copied to $copy; its browser starts $launcher"
       - name: Sign in to fabriccat as fabric-github-deploy
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
