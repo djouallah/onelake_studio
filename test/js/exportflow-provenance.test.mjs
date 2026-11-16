@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, cp } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +13,7 @@ const require = createRequire(import.meta.url);
 const { createExport } = require("../../fabric_app/export/exportflow.js");
 const { writeApp, readApp, SITE } = require("../../fabric_app/export/exportapp.js");
 const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
+const { PINS } = require("../../core/vendored.js");
 const semantic = await import("../../page/semantic.js");
 
 const URL_ = "https://onelake.dfs.fabric.microsoft.com/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555";
@@ -138,6 +140,60 @@ test("saving over a file from elsewhere asks too: it would publish over the app 
   assert.match(asked[0].rest[0].detail, /is replaced by this Explore/);
   await rm(dir, { recursive: true, force: true });
   await done();
+});
+
+// What a new file is written from (appFiles): this checkout's fabric_app/ and page/, in the extension's folder as
+// a build lays them out, and a stand-in for dax-sql, which the suite runs without (vendor/ is fetched).
+async function buildable(ext) {
+  const root = new URL("../../", import.meta.url);
+  for (const d of ["site", "project", "rayfin"]) {
+    await cp(new URL(`fabric_app/${d}/`, root), join(ext, "fabric_app", d), { recursive: true, filter: s => !/node_modules/.test(s) });
+  }
+  // Studio's Explore, where pageDir() says (the extension's folder, in setup).
+  await cp(new URL("page/explore/", root), join(ext, "explore"), { recursive: true });
+  await cp(new URL("page/paths.js", root), join(ext, "paths.js"));
+  const dax = join(ext, "vendor", "npm", PINS.daxSql);
+  await mkdir(join(dax, "src"), { recursive: true });
+  await mkdir(join(dax, "formats"), { recursive: true });
+  await writeFile(join(dax, "src", "index.js"), "// dax-sql\n");
+  await writeFile(join(dax, "formats", "tmsl.js"), "// tmsl\n");
+}
+
+// A Save As to another file: the Report tab drew the model's Report from the file it was exported to before (or
+// from Studio's own file, before any export), and draws the new file's from now on. The new file starts from
+// those tiles. It started empty, and the Report tab then drew no tiles at all (the user's nem, 2026-11-17).
+test("an export saved to another file keeps the Report the Report tab drew", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "provenance-saveas-"));
+  const TILES = { pages: [{ name: "Page 1", tiles: [{ title: "Generation MW by year", kind: "pivot", pivot: { rows: [], values: ["MW"] } }] }] };
+  const MODEL = { workspace: "power bi", model: "sales" };
+  // The earlier file, which the Report tab draws, with its tiles.
+  const earlier = await appFile(dir, { itemId: "the-item" });
+  const a = await setup({ answers: [join(dir, "sales-client-side.fabricator")] });
+  await buildable(a.ext);
+  a.kept.set("exportReport:power bi/sales", earlier);
+  a.kept.set("exportedItems", { "the-item": earlier });
+  const { stamp } = await a.flow.reportOf(MODEL);
+  await a.flow.reportSave({ ...MODEL, spec: TILES, stamp });
+  await a.flow.exportExplore({ ...REQUEST, file: "sales.yaml" });
+  const saved = await readApp(join(dir, "sales-client-side.fabricator"));
+  assert.deepEqual(JSON.parse(saved.files.get(`${SITE}report.json`).toString("utf8")), TILES, "the new file has the tiles");
+  const drawn = await a.flow.reportOf(MODEL);
+  assert.equal(drawn.from, join(dir, "sales-client-side.fabricator"), "the Report tab draws the new file");
+  assert.deepEqual(drawn.spec, TILES, "with the same tiles");
+  assert.deepEqual(JSON.parse((await readApp(earlier)).files.get(`${SITE}report.json`).toString("utf8")), TILES, "the earlier file keeps its own");
+  await a.done();
+
+  // Before any export: the tiles are in Studio's own file, and the first file starts from them.
+  const b = await setup({ answers: [join(dir, "first.fabricator")] });
+  await buildable(b.ext);
+  await b.flow.reportSave({ ...MODEL, spec: TILES, stamp: 0 });
+  const studio = (await b.flow.reportOf(MODEL)).from;
+  await b.flow.exportExplore({ ...REQUEST, file: "sales.yaml" });
+  assert.deepEqual(JSON.parse((await readApp(join(dir, "first.fabricator"))).files.get(`${SITE}report.json`).toString("utf8")), TILES);
+  assert.deepEqual((await b.flow.reportOf(MODEL)).spec, TILES);
+  assert.equal(existsSync(studio), false, "Studio's own file goes: the zip holds the Report now");
+  await b.done();
+  await rm(dir, { recursive: true, force: true });
 });
 
 test("a tile added while the export publishes is still in the file when it is done", async () => {

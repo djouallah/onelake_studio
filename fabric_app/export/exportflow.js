@@ -183,6 +183,10 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       const local = await readApp(outZip);
       const before = local ? local.marker : oldDir ? await oldMarker(oldDir) : null;
       await memento.update(`exportZip:${appKey}`, outZip);
+      // Where the Report tab drew this model's Report from until now: an earlier zip (this export saved to another
+      // file), or Studio's own file before the model had one. A zip with no Report of its own starts from it:
+      // pointed at a new file, the Report tab would otherwise draw an empty one.
+      const reportWas = await reportHome({ workspace: pbi.workspace, model: name });
       // Studio's Report tab for this model draws this zip's report (reportOf).
       await memento.update(reportKey(pbi.workspace, name), outZip);
       // One client for the export. Its lines go to the log, and while publishing also to the
@@ -283,9 +287,14 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
             if (!marker.report) marker = { ...marker, report: { workspace: pbi.workspace, model: name } };
           } else {
             say(`app ${plan.name}: writing the local copy to ${outZip}`);
-            // The zip's Report, else the one Studio kept for this model before it had a zip.
-            const studioReport = local && local.files.get(REPORT) ? null : reportDir && join(reportDir, reportName(pbi.workspace, name));
-            const kept = (local && local.files.get(REPORT)) || (studioReport && await fsp.readFile(studioReport).catch(() => null)) || null;
+            // The zip's Report, else the one the Report tab drew before this export (reportWas): an earlier zip's,
+            // or the one Studio kept for this model before it had a zip.
+            const was = local && local.files.get(REPORT) ? null : reportWas;
+            const wasReport = !was || !was.st ? null
+              : was.zipPath ? ((await readApp(was.zipPath).catch(() => null))?.files.get(REPORT) || null)
+              : await fsp.readFile(was.file).catch(() => null);
+            const studioReport = was && was.file && wasReport ? was.file : null;
+            const kept = (local && local.files.get(REPORT)) || wasReport || null;
             files = await appFiles({ plan, state, model: definition, modelText: text, modelFile: file, kept,
                                      redirects: marker.redirects || [], fabricAppDir, appDir, maxRows: maxRows(),
                                      daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql),
