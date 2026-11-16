@@ -21,6 +21,10 @@ on:
         description: A Lake tables run whose lakeci-fabricator artifact is opened
         type: string
         required: true
+      launcher:
+        description: The copied WebView2's browser started by the DevTools launcher (false, its own, to tell the two apart)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -77,6 +81,8 @@ jobs:
           if (-not $runtime) { throw 'no WebView2 runtime on this runner' }
           $copy = Join-Path $env:RUNNER_TEMP "webview2\$($runtime.Name)"
           Copy-Item $runtime.FullName $copy -Recurse
+          "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$copy" >> $env:GITHUB_ENV
+          if ('${{ inputs.launcher }}' -eq 'false') { "WebView2 $($runtime.Name), copied to $copy, its own browser kept"; exit 0 }
           Rename-Item (Join-Path $copy 'msedgewebview2.exe') 'msedgewebview2-real.exe'
           $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
           $launcher = Join-Path $copy 'msedgewebview2.exe'
@@ -88,7 +94,6 @@ jobs:
           if ($LASTEXITCODE) { throw "csc: $LASTEXITCODE" }
           "the launcher: $((Get-Item $launcher).VersionInfo.FileVersion)"
           "WebView2 $($runtime.Name), copied to $copy"
-          "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$copy" >> $env:GITHUB_ENV
       - name: Sign in to fabriccat as fabric-github-deploy
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
