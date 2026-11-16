@@ -410,7 +410,7 @@ jobs:
           # Export to Fabric writes its app from fabric_app/ and Studio's Explore (webview/explore),
           # and deploys the prebuilt function; fabric_app/project/ is the project around it (a .fabricator).
           for f in fabric_app/site/app.js fabric_app/site/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js \
-                   fabric_app/project/vite.config.mjs fabric_app/project/gitignore fabric_app/project/package-lock.json; do
+                   fabric_app/project/vite.config.mjs fabric_app/project/gitignore fabric_app/project/package-lock.json fabric_app/project/validate-report.mjs; do
             grep -qx "extension/$f" <<<"$files" || { echo "no $f in the vsix"; exit 1; }
           done
           # The web app's own packages (core/vendored.js VENDOR.webapp): its page loads nothing from a CDN.

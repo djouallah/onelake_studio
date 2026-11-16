@@ -44,7 +44,7 @@ function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
   // One init, whoever asks first.
   let _init = null;
   const init = () => _init ??= (async () => {
-    const [rayfin, fabric, wired] = await Promise.all([import(RAYFIN_CLIENT_ESM), import(RAYFIN_FABRIC_ESM),
+    const [rayfin, fabric, wired] = await Promise.all([import(/* @vite-ignore */ RAYFIN_CLIENT_ESM), import(/* @vite-ignore */ RAYFIN_FABRIC_ESM),
                                                        connectors ? connectors() : null]);
     const resolved = await rayfin.resolveRayfinConfig({});
     if (!resolved.baseUrl) throw new Error('rayfin.config.json not found — deploy with `rayfin up`');

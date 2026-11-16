@@ -319,9 +319,16 @@ again: edit it freely, then export again to publish it. Delete it and the next e
 draws this same file from this zip, and draws it again when the zip changes; its Visual's **Add to report**
 and a tile's ✕ write it here.
 
-${onModel(plan) ? '' : `\`model.ossie.yaml\` (\`model.bim\` for a .bim model), at the root, is the model the app runs on: read it for the
-tables, columns and measures a tile can name.
+${onModel(plan) ? '' : `\`model.ossie.yaml\` (\`model.bim\` for a .bim model), at the root, is the model the app runs on: read it for what
+its columns and measures mean.
 `}
+**The fields a tile can name**, exactly as a tile names them, by table: \`npm run validate -- --fields\`.
+
+**After every change to the Report, run \`npm run validate\`** and fix what it says. It checks
+\`site/public/report.json\` with the page's own code: every page and tile, every field each one names (with the
+nearest names when one is wrong), every filter, mark and layout, the filter bar, and${onModel(plan) ? '' : ' that'} each tile's
+query${onModel(plan) ? ' is one the page makes' : ' compiles as the page compiles it'}. It reads no data, so a tile it passes can still show no rows: look at it in the preview.
+
 \`\`\`json
 { "pages": [
   { "name": "Sales", "tiles": [
@@ -390,6 +397,7 @@ tables, columns and measures a tile can name.
 | Layer | Path | |
 |---|---|---|
 | Report | \`site/public/report.json\` | the pages the app shows: yours, kept by every export |
+| Checker | \`scripts/validate-report.mjs\` | \`npm run validate\`: the Report checked with the page's own code, no browser |
 | Page | \`site/public/index.html\`, \`site/public/app.js\` | the Report over the data source |
 | Explore | \`site/public/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report, with Visual's drawing for a pivot tile |
 | Compiler | \`site/public/semantic/src/\`, \`site/public/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
@@ -570,7 +578,9 @@ const PAGE_PACKAGES = Object.fromEntries([WEBAPP.rayfinClient, WEBAPP.rayfinFabr
 const projectPackage = name => JSON.stringify({
   name, private: true, version: '0.0.0', type: 'module',
   workspaces: ['rayfin/functions'],
-  scripts: { dev: 'rayfin dev', 'dev:frontend': 'vite site', 'rayfin:up': 'rayfin up' },
+  scripts: { dev: 'rayfin dev', 'dev:frontend': 'vite site', 'rayfin:up': 'rayfin up',
+             // The Report checked with the page's own code (fabric_app/project/validate-report.mjs).
+             validate: 'node scripts/validate-report.mjs' },
   dependencies: PAGE_PACKAGES,
   devDependencies: PROJECT_PACKAGES,
 }, null, 2) + '\n';
@@ -664,8 +674,13 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
     ['package-lock.json', text(projectLock(await fsp.readFile(join(fabricAppDir, 'project', 'package-lock.json'), 'utf8'), plan.name))],
     ['.gitignore', await fsp.readFile(join(fabricAppDir, 'project', 'gitignore'))],
     ['site/vite.config.mjs', await fsp.readFile(join(fabricAppDir, 'project', 'vite.config.mjs'))],
+    ['scripts/validate-report.mjs', await fsp.readFile(join(fabricAppDir, 'project', 'validate-report.mjs'))],
     ...Object.entries(agents).map(([p, t]) => [p, text(t)]),
   ]);
+  // The function's metadata as rayfin-local writes it on every build, with no newline at its end: as the repo has
+  // it, every Fabricator session changed it, and each chat turn's commit carried it.
+  const META = 'rayfin/functions/runtimemetadata.json';
+  if (files.has(META)) files.set(META, text(files.get(META).toString('utf8').replace(/\s+$/, '')));
   files.set('rayfin/rayfin.yml', text(rayfinYml(files.get('rayfin/rayfin.yml').toString('utf8'), plan.name, redirects,
                                                 sql ? plan.semanticModel : null)));
   files.set(REPORT, kept ?? text(EMPTY_REPORT));
@@ -714,9 +729,19 @@ const DUCKDB_ONLY = {
 };
 
 /** The packages the page runs, as site/vendor/ is uploaded: `webappDir` (vendor/webapp), less DuckDB's on a semantic model. */
-const vendorFiles = (webappDir, engine) => {
+const vendorFiles = async (webappDir, engine) => {
   const sql = engine !== 'duckdb';
-  return filesOf(webappDir, 'vendor/', rel => sql && DUCKDB_ONLY.vendor.some(re => re.test(rel)));
+  const files = await filesOf(webappDir, 'vendor/', rel => sql && DUCKDB_ONLY.vendor.some(re => re.test(rel)));
+  // Each script as it is, but its source map comment: jsDelivr's name maps on its own site (/sm/<hash>.map), which
+  // no copy of the site has, and Vite (Fabricator's preview) logs a warning for every one, where Fabricator's agent
+  // reads the backend's recent errors.
+  for (const [p, bytes] of files) {
+    if (!/\.m?js$/.test(p)) continue;
+    const s = bytes.toString('utf8');
+    const t = s.replace(/\n?\/\/[#@] sourceMappingURL=[^\n]*\s*$/, '\n');
+    if (t !== s) files.set(p, Buffer.from(t, 'utf8'));
+  }
+  return files;
 };
 
 // What the packages weigh: { total, parts: [[name, bytes]] }, a part per package

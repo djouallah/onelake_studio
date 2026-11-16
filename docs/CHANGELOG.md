@@ -14,6 +14,14 @@
   (`@microsoft/rayfin-auth-provider-fabric`), which Fabricator's check flagged as missing. It also holds Rayfin's agent
   files (`.agents/skills/`, `.mcp.json`), as a project the Rayfin CLI makes does, so the coding agent in Fabricator
   has Rayfin's own skills.
+- **An agent can check the Report it edits.** Every exported project has `npm run validate`, which checks
+  `site/public/report.json` with the page's own code: each page and tile, every field it names (with the nearest
+  names when one is wrong), its filters, mark and layout, the filter bar, and that each tile's query compiles.
+  `npm run validate -- --fields` lists the fields a tile can name. `AGENTS.md` says to run it after every change.
+  Fabricator's agent had only a check it wrote itself, after searching the model six times for field names.
+- **Quieter in Fabricator.** The packages lose the source-map comments that made Vite log a warning for each
+  one, the page's own imports no longer warn, and the function's metadata is written as rayfin-local writes it,
+  so it no longer shows as changed in every chat turn's commit.
 - **An exported app is on Rayfin 1.36.2**, Rayfin's latest: the page's SDK, its semantic-model connector, the
   function's runtime and the project's CLI. Fabricator flagged 1.36.1 as out of date, and team workspaces need
   1.36.2.

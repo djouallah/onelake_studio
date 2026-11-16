@@ -58,6 +58,32 @@ for (const rel of await readdir(site, { recursive: true })) {
 }
 ok(`${checked} scripts of the site parse`);
 
+// The Report's checker, as an agent runs it after an edit (npm run validate): the export's own Report passes, and
+// one with a field the model has not, a mark the page does not draw and a filter-bar field it has not fails, each named.
+const validate = () => { try { return { code: 0, out: execSync("npm run validate --silent", { cwd: project, encoding: "utf8" }) }; }
+                         catch (e) { return { code: e.status, out: `${e.stdout}${e.stderr}` }; } };
+const fine = validate();
+if (fine.code !== 0) fail(`npm run validate on the export's own Report: ${fine.out.slice(0, 1500)}`);
+ok(`npm run validate: ${fine.out.trim().split("\n").pop()}`);
+const fields = execSync("npm run validate --silent -- --fields", { cwd: project, encoding: "utf8" });
+if (!/\bTotal amount\b/.test(fields) || !/lakeci_plain\.region/.test(fields)) fail(`npm run validate -- --fields lists no model fields: ${fields.slice(0, 800)}`);
+ok("npm run validate -- --fields lists the model's columns and measures");
+const reportPath = join(site, "report.json");
+const report = await readFile(reportPath, "utf8");
+const broken = JSON.parse(report);
+const firstTile = (broken.pages ?? [broken])[0].tiles[0];
+firstTile.pivot.values = [...firstTile.pivot.values, "Totl amount"];
+firstTile.pivot.mark = "lines";
+broken.filters = [{ field: "lakeci_plain.regin", style: "dropdown" }];
+await writeFile(reportPath, JSON.stringify(broken));
+const bad = validate();
+await writeFile(reportPath, report);
+if (bad.code !== 1) fail(`npm run validate passed a broken Report: ${bad.out.slice(0, 800)}`);
+for (const said of ['"Totl amount"', '"lines"', '"lakeci_plain.regin"', "near: Total amount"]) {
+  if (!bad.out.includes(said)) fail(`npm run validate did not name ${said}: ${bad.out.slice(0, 1500)}`);
+}
+ok("npm run validate names a misspelt measure (with the near one), a mark the page has not and a filter-bar field the model has not");
+
 // The function, as rayfin up builds it: rayfin.yml's buildCommand, in rayfin/functions.
 execSync("npm run build", { cwd: join(project, "rayfin", "functions"), stdio: ["ignore", "inherit", "inherit"] });
 ok("the function builds (npm run build in rayfin/functions)");

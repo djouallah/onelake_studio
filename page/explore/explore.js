@@ -67,11 +67,11 @@ const ICON_PATHS = {
   folder: 'M2 4.5h4.5L8 6h6v7H2z',
 };
 export const icon = name => el('svg:svg', { class: 'ex-ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, el('svg:path', { d: ICON_PATHS[name] }));
-const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
+export const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
   ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['treemap', 'Treemap'], ['calendar', 'Calendar'],
   ['map', 'Map'], ['slicer', 'Slicer'], ['card', 'Card']];
 // How a slicer is drawn (slicerView); Range only for a date or a number.
-const SLICER_STYLES = [['list', 'List'], ['buttons', 'Buttons'], ['dropdown', 'Dropdown'], ['range', 'Range']];
+export const SLICER_STYLES = [['list', 'List'], ['buttons', 'Buttons'], ['dropdown', 'Dropdown'], ['range', 'Range']];
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
 // A column on Values is summarised, as Power BI does it: a number summed, anything else
 // counted; its chip changes the summary. On the shelf it is "\0sum\0Table.Column".

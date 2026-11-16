@@ -190,6 +190,8 @@ async function fixture(root) {
     "fabric_app/site/storage/modelrows.js": "// modelrows\n",
     "fabric_app/rayfin/rayfin.yml": "id: explore\nname: explore\nservices:\n  auth:\n    allowedRedirectUris:\n      - http://localhost:5173\n",
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
+    "fabric_app/rayfin/functions/runtimemetadata.json": '{ "functions": [] }\n',
+    "fabric_app/project/validate-report.mjs": "// validate\n",
     "fabric_app/project/gitignore": "node_modules\n",
     "fabric_app/project/vite.config.mjs": "export default {};\n",
     "fabric_app/project/package-lock.json": JSON.stringify({ name: "fabric-app", lockfileVersion: 3, packages: { "": { name: "fabric-app" } } }),
@@ -202,7 +204,7 @@ async function fixture(root) {
     "page/explore/explore.js": "// explore\n", "page/explore/model.js": "// model\n",
     "page/explore/explore.css": "/* css */\n", "page/paths.js": "// paths\n",
     "webapp/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js": 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
-    "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n",
+    "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n//# sourceMappingURL=/sm/0123abcd.map",
     "webapp/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
     "webapp/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2/+esm.js": 'import{F}from"../../apache-arrow@21.2.0/+esm.js";\n',
     "webapp/npm/apache-arrow@21.2.0/+esm.js": "// the connector's arrow\n",
@@ -324,6 +326,8 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.match(duck.get("AGENTS.md").toString(), /`model\.ossie\.yaml` in this file[\s\S]*the app\s+runs on it/);
     assert.match(duck.get("AGENTS.md").toString(), /`TABLES` setting\), and never reads the model/);
     assert.equal((await vendorFiles(dirs.webappDir, "duckdb")).size, 5, "every package");
+    // A script's source map comment goes: jsDelivr's maps are on its site, and Vite warns for each one it can't read.
+    assert.equal((await vendorFiles(dirs.webappDir, "duckdb")).get("vendor/npm/apache-arrow@17.0.0/+esm.js").toString(), "// arrow\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -356,6 +360,13 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     assert.deepEqual(pkg.dependencies, { "@microsoft/rayfin-client": WEBAPP.rayfinClient.split("@").pop(),
                                          "@microsoft/rayfin-auth-provider-fabric": WEBAPP.rayfinFabric.split("@").pop() });
     assert.deepEqual(pkg.dependencies, PAGE_PACKAGES);
+    // The Report's checker, for an agent to run after an edit, and what AGENTS.md says of it.
+    assert.equal(pkg.scripts.validate, "node scripts/validate-report.mjs");
+    assert.equal(files.get("scripts/validate-report.mjs").toString(), "// validate\n");
+    assert.match(files.get("AGENTS.md").toString(), /run `npm run validate`/);
+    assert.match(files.get("AGENTS.md").toString(), /npm run validate -- --fields/);
+    // The function's metadata as rayfin-local writes it, with no newline at its end: Fabricator sees no change.
+    assert.equal(files.get("rayfin/functions/runtimemetadata.json").toString(), '{ "functions": [] }');
     // Rayfin's agent files, as the CLI writes them: what Fabricator's ai-files check looks for.
     assert.equal(files.get(".agents/skills/rayfin/SKILL.md").toString(), "# rayfin\n");
     assert.ok(files.has(".mcp.json") && files.has("rayfin/.lockfile.json"));

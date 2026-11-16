@@ -67,7 +67,7 @@ export { MAX_ROWS };
 export function createModelSource({ onStatus = () => {} } = {}) {
   const auth = createAuth({
     connectors: async () => {
-      const { fabricSemanticModel } = await import(SEMANTIC_MODEL_ESM);
+      const { fabricSemanticModel } = await import(/* @vite-ignore */ SEMANTIC_MODEL_ESM);
       return { configs: { [CONNECTOR]: { connector: "fabric-semanticmodel" } }, runtimes: { [CONNECTOR]: fabricSemanticModel() } };
     },
   });

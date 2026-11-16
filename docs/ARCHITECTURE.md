@@ -877,6 +877,10 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
   app, so Fabricator's `npm install` resolves nothing (without it, an import spent over a minute asking the registry
   about each package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the
   public registry; run it after changing any package the project names.
+- `scripts/validate-report.mjs` ([`fabric_app/project/validate-report.mjs`](../fabric_app/project/validate-report.mjs)),
+  `npm run validate`: the Report checked with the page's own modules (Explore's `modelFields`, `pivotQuery`, the
+  Report's `reportPages`, dax-sql), in Node, with no browser and no data. `-- --fields` lists the model's fields.
+  `AGENTS.md` tells an agent to run it after every change to the Report.
 - `.agents/skills/`, `.mcp.json`, `rayfin/.lockfile.json`: Rayfin's agent files, as `rayfin init ai-files install` writes
   them at the project's CLI version. `scripts/function-bundle.mjs` makes them at package time, into
   `fabric-function/agent-files.json`, and every export writes them. The CLI's own `AGENTS.md` is not written: the
