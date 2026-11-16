@@ -199,10 +199,31 @@ jobs:
           path: duckdb-extensions
           key: duckdb-extensions-${{ matrix.target }}-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
       - run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
+      # engine-server.test.mjs's process has died with no word on Linux, in its concurrency test (2026-11-15,
+      # 2026-11-16): the test runner says only "test failed". A crash leaves a core here, read below.
+      - if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.core_pattern="$RUNNER_TEMP/core.%e.%p"
       # NO_SKIP: the bundle was fetched just above, so a test that would skip for want of it fails.
-      - run: node --test test/js/engine-host.test.mjs test/js/engine-server.test.mjs
+      - shell: bash
+        run: |
+          [ "$RUNNER_OS" != Linux ] || ulimit -c unlimited
+          node --test test/js/engine-host.test.mjs test/js/engine-server.test.mjs
         env:
           NO_SKIP: 1
+      # Where a crashed process was, in every thread: the native stack the test runner never prints.
+      - name: Where a crashed test process was
+        if: failure() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          cores=("$RUNNER_TEMP"/core.*)
+          [ ${#cores[@]} -gt 0 ] || { echo "no core: no process crashed"; exit 0; }
+          sudo apt-get install -y -qq gdb > /dev/null
+          for core in "${cores[@]}"; do
+            echo "::group::$core"
+            sudo gdb -batch -ex "thread apply all bt 30" "$(command -v node)" "$core" 2>&1 | grep -v "^\[New LWP" | tail -400
+            echo "::endgroup::"
+          done
       # test/sql/*.test (sqllogictest) through the command line's sql: needs dax-sql (vendor/),
       # the tree the prepare job keeps in the cache.
       - if: runner.os == 'Linux'
