@@ -79,7 +79,8 @@ jobs:
           Copy-Item $runtime.FullName $copy -Recurse
           Rename-Item (Join-Path $copy 'msedgewebview2.exe') 'msedgewebview2-real.exe'
           $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-          & $csc /nologo /out:(Join-Path $copy 'msedgewebview2.exe') test\fabricator\devtools-launcher.cs
+          $launcher = Join-Path $copy 'msedgewebview2.exe'
+          & $csc /nologo "/out:$launcher" test\fabricator\devtools-launcher.cs
           if ($LASTEXITCODE) { throw "csc: $LASTEXITCODE" }
           "WebView2 $($runtime.Name), copied to $copy"
           "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$copy" >> $env:GITHUB_ENV
