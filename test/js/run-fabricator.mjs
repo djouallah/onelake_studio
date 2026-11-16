@@ -118,7 +118,11 @@ try {
   for (const e of await activity()) console.log(`  ${e.time} ${e.level} ${e.event}: ${e.message}`);
 
   // How it installed the packages: npm ci, from the project's lock file, not a resolve of every package.
-  const logs = join(LOCALAPPDATA, "npm-cache", "_logs");
+  // Its logs, where npm keeps them on this machine (a runner sets its own cache).
+  let cache = join(LOCALAPPDATA, "npm-cache");
+  try { cache = execFileSync("npm", ["config", "get", "cache"], { encoding: "utf8", shell: true }).trim() || cache; } catch { /* the default */ }
+  const logs = join(cache, "_logs");
+  console.log(`npm's logs: ${logs}`);
   const installs = [];
   for (const f of await readdir(logs).catch(() => [])) {
     const text = await readFile(join(logs, f), "utf8").catch(() => "");
