@@ -17,7 +17,7 @@
 const net = require('node:net');
 const os = require('node:os');
 const fs = require('node:fs');
-const { join, dirname } = require('node:path');
+const { join, dirname, isAbsolute } = require('node:path');
 const { createHash } = require('node:crypto');
 
 const MAX_REQUEST = 1024 * 1024;
@@ -78,14 +78,33 @@ function checkRequest(request) {
   return null;
 }
 
-function bridgePath() {
-  if (process.env.ONELAKE_STUDIO_BRIDGE) return process.env.ONELAKE_STUDIO_BRIDGE;
-  const user = createHash('sha256').update(os.userInfo().username).digest('hex').slice(0, 12);
-  if (process.platform === 'win32') return `\\\\.\\pipe\\onelake-studio-${user}`;
-  // In a folder of this user's own, not in the temp folder itself: on Linux that is /tmp, which everyone
-  // writes to, and whoever made a socket of this name first would be asked the questions and answer them.
-  return join(os.tmpdir(), `onelake-studio-${user}`, 'bridge.sock');
+// This user's own runtime folder, where the system gives one (Linux: /run/user/<uid>, which only they can
+// open). Found the same way whether or not XDG_RUNTIME_DIR reached this process: the extension and a command
+// line started from a shell that lacks it still name one place.
+function runtimeDir() {
+  const isDir = d => { try { return fs.statSync(d).isDirectory(); } catch (_) { return false; } };
+  const said = process.env.XDG_RUNTIME_DIR;
+  if (said && isAbsolute(said) && isDir(said)) return said;
+  if (process.platform === 'linux' && typeof process.getuid === 'function') {
+    const usual = `/run/user/${process.getuid()}`;
+    if (isDir(usual)) return usual;
+  }
+  return null;
 }
+
+// Where the socket can be, the first being where it is served. In a folder of this user's own, never in the
+// temp folder itself: on Linux that is /tmp, which everyone writes to, and whoever made a socket of this name
+// first would be asked the questions and answer them. The runtime folder comes first: a folder in /tmp has a
+// name anyone can work out and make before this user does, and the command line then refuses it.
+function bridgePaths() {
+  if (process.env.ONELAKE_STUDIO_BRIDGE) return [process.env.ONELAKE_STUDIO_BRIDGE];
+  const user = createHash('sha256').update(os.userInfo().username).digest('hex').slice(0, 12);
+  if (process.platform === 'win32') return [`\\\\.\\pipe\\onelake-studio-${user}`];
+  const runtime = runtimeDir();
+  return [...(runtime ? [join(runtime, 'onelake-studio', 'bridge.sock')] : []),
+    join(os.tmpdir(), `onelake-studio-${user}`, 'bridge.sock')];
+}
+const bridgePath = () => bridgePaths()[0];
 
 /**
  * The folder a socket is in, made if it isn't there, or why it can't be used: it must be this user's, a real
@@ -176,7 +195,17 @@ function serveBridge({ handle, log = () => {}, path = bridgePath() }) {
  * One request to the running extension. Rejects with code 'NO_EXTENSION' when none listens or
  * it goes away before answering, and 'TIMEOUT' after `timeoutMs` (0: wait for the answer).
  */
-function askBridge(request, path = bridgePath(), { timeoutMs = 0 } = {}) {
+async function askBridge(request, path, opts = {}) {
+  if (path) return askAt(request, path, opts);
+  // An extension from before the runtime folder was used, or one that found none, serves in the temp folder.
+  const paths = bridgePaths();
+  for (const [i, p] of paths.entries()) {
+    try { return await askAt(request, p, opts); }
+    catch (e) { if (!(e && e.nobody) || i === paths.length - 1) throw e; }
+  }
+}
+
+function askAt(request, path, { timeoutMs = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const noExtension = message => Object.assign(new Error(message), { code: 'NO_EXTENSION' });
     // A socket in a folder someone else made is someone else's: nothing is sent to it.
@@ -197,7 +226,8 @@ function askBridge(request, path = bridgePath(), { timeoutMs = 0 } = {}) {
     });
     sock.on('error', e => {
       if (e.code === 'ENOENT' || e.code === 'ECONNREFUSED') {
-        reject(noExtension('OneLake Studio is not running — open VS Code with the OneLake Studio extension, signed in.'));
+        // `nobody`: nothing was sent, so the next place the socket can be is asked.
+        reject(Object.assign(noExtension('OneLake Studio is not running — open VS Code with the OneLake Studio extension, signed in.'), { nobody: true }));
       } else reject(e);
     });
     // A reset with no 'end' and no 'error' still has to answer, or the caller waits for nothing.
@@ -208,4 +238,4 @@ function askBridge(request, path = bridgePath(), { timeoutMs = 0 } = {}) {
   });
 }
 
-module.exports = { serveBridge, askBridge, EXIT, exitName, failureJson, COMMANDS, checkRequest, MAX_REQUEST, bridgePath, socketFolder };
+module.exports = { serveBridge, askBridge, EXIT, exitName, failureJson, COMMANDS, checkRequest, MAX_REQUEST, bridgePath, bridgePaths, socketFolder };

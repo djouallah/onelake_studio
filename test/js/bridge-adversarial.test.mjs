@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { eachSeed } from "./fuzz.mjs";
 
 const require = createRequire(import.meta.url);
-const { serveBridge, askBridge, checkRequest, COMMANDS, MAX_REQUEST, bridgePath, socketFolder } = require("../../cli/bridge.js");
+const { serveBridge, askBridge, checkRequest, COMMANDS, MAX_REQUEST, bridgePath, bridgePaths, socketFolder } = require("../../cli/bridge.js");
 
 const WINDOWS = process.platform === "win32";
 const pathFor = name => (WINDOWS ? `\\\\.\\pipe\\onelake-studio-adv-${process.pid}-${name}` : join(tmpdir(), `onelake-studio-adv-${process.pid}-${name}.sock`));
@@ -110,9 +110,28 @@ test("on Linux and macOS the socket is in a folder of this user's own, and one t
   const was = process.env.ONELAKE_STUDIO_BRIDGE;
   delete process.env.ONELAKE_STUDIO_BRIDGE;
   t.after(() => { if (was !== undefined) process.env.ONELAKE_STUDIO_BRIDGE = was; });
-  const own = bridgePath();
+  const runtimeWas = process.env.XDG_RUNTIME_DIR;
+  t.after(() => { if (runtimeWas === undefined) delete process.env.XDG_RUNTIME_DIR; else process.env.XDG_RUNTIME_DIR = runtimeWas; });
+  // The last place it can be is the temp folder's, in a folder of its own there.
+  const own = bridgePaths().at(-1);
   assert.notEqual(dirname(own), tmpdir(), "not in the temp folder itself, which everyone writes to");
   assert.equal(dirname(dirname(own)), tmpdir());
+
+  // With a runtime folder of this user's own, it is served there: a name in /tmp anyone could make first.
+  const runtime = mkdtempSync(join(tmpdir(), "rt-"));
+  t.after(() => rmSync(runtime, { recursive: true, force: true }));
+  process.env.XDG_RUNTIME_DIR = runtime;
+  assert.equal(bridgePath(), join(runtime, "onelake-studio", "bridge.sock"));
+  assert.deepEqual(bridgePaths(), [bridgePath(), own], "and the temp folder's is still asked, after it");
+  const served = serveBridge({ handle: async () => ({ out: "from the runtime folder", err: "", code: 0 }) });
+  try {
+    await sleep(100);
+    assert.equal(statSync(join(runtime, "onelake-studio")).mode & 0o777, 0o700);
+    assert.equal((await askBridge({ args: ["ls"] })).out, "from the runtime folder", "a client that names no path finds it");
+  } finally { served.dispose(); }
+  // One that is no folder is not believed.
+  process.env.XDG_RUNTIME_DIR = join(runtime, "not-there");
+  assert.notEqual(dirname(dirname(bridgePath())), join(runtime, "not-there"));
 
   const base = mkdtempSync(join(tmpdir(), "bridge-folder-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
