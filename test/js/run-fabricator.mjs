@@ -85,7 +85,12 @@ await mkdir(SHOTS, { recursive: true });
 }
 
 // Opened as a double-click opens it: the file as Fabricator's argument, the Import window its first screen.
-fabricator = spawn(EXE, [FILE], { env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: USER_DATA }, stdio: "ignore" });
+// npm keeps its last 10 logs, and Fabricator runs more npm commands than that after the install: keep them all,
+// so the install's log is still there when it is read.
+fabricator = spawn(EXE, [FILE], {
+  env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: USER_DATA, npm_config_logs_max: "200" },
+  stdio: "ignore",
+});
 try {
   // The Import window, for the file it was opened with, and its Import button.
   await until("Fabricator's Import window", async () => uia("has", "^Import project$"), 180_000)
