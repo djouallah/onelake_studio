@@ -67,7 +67,9 @@ async function retried(fn, renew = null) {
     }
   }
 }
-const failed = (r, what) => Object.assign(new Error(`${what}HTTP ${r.status}`), { status: r.status });
+// A 401 to a SAS is OneLake taking no SAS in this workspace: said, as nothing in "HTTP 401" names the setting.
+export const SAS_OFF = ' OneLake refused the SAS of the app: check that the workspace setting "Authenticate with OneLake user-delegated SAS tokens" is on.';
+const failed = (r, what) => Object.assign(new Error(`${what}HTTP ${r.status}${r.status === 401 ? `.${SAS_OFF}` : ''}`), { status: r.status });
 
 // `url`: a function, so a request made again after `renew` is signed with the new SAS.
 const get = (url, table, renew = null) => limited(() => retried(async () => {

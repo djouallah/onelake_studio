@@ -66,7 +66,7 @@ import { createAuth } from "./auth.js";
 import { createCatalog } from "./catalog.js";
 import { createSnapshots } from "./snapshots.js";
 import { createKv } from "./kv.js";
-import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
+import { planTable, prefetchFiles, prioritize, SAS_OFF } from "./prefetch.js";
 import { columnsIn, readsAll, columnRanges, tailOf, piecesOf } from "./ranges.js";
 import { splitPlan, carried } from "./split.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
@@ -640,7 +640,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       await renewSas().catch(() => {});
       r = await fetch(https(location, sas || access.sas));
     }
-    if (!r.ok) throw new Error(`metadata.json: HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`metadata.json: HTTP ${r.status}${r.status === 401 ? `.${SAS_OFF}` : ''}`);
     return r.json();
   }
   // Each table's size, from its metadata.json, all at once (the page's own requests, in
