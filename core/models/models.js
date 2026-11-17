@@ -106,6 +106,27 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     await fetchModel(n, { fresh: true, say });
     return fsp.readFile(modelBimPath(n));
   }
+  // A copy written as an earlier Ossie spec had it, written again as the spec is now when it is next
+  // read: from itself (dax-sql reads the spec before), so nothing is asked of Fabric, offline too, and
+  // a change made in Fabric still waits for Refresh. A copy that cannot be read so is kept as it is.
+  async function asSpecNow(n, path, text) {
+    const { compiler } = await modules();
+    const was = /^version:\s*["']?([^\s"'#]+)/m.exec(text);
+    if (!was || !compiler.tmslToOssie) return text;
+    try {
+      const now = compiler.tmslToOssie({ model: { tables: [] } }).version;
+      if (was[1] === now) return text;
+      const doc = compiler.parseYaml(text);
+      const next = compiler.stringifyYaml(compiler.tmslToOssie(compiler.ossieToTmsl(doc), doc.name), { lineWidth: 0 });
+      await writeWhole(path, next);
+      log(`${n.workspace}/${n.model}: its local copy was Ossie ${was[1]}, and is written as ${now}`);
+      onModelChanged(n);
+      return next;
+    } catch (e) {
+      log(`${n.workspace}/${n.model}: its local copy is Ossie ${was[1]} and could not be written as the spec is now, so it is kept — ${e.message}`);
+      return text;
+    }
+  }
   function fetchModel(n, { fresh = false, say = () => {} } = {}) {
     const path = modelPath(n);
     const key = `${path}|${!!fresh}`.toLowerCase();
@@ -113,7 +134,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       await modelsAdopted;
       if (!fresh) {
         const kept = await fsp.readFile(path, 'utf8').catch(() => null);
-        if (kept != null) return { path, text: kept };
+        if (kept != null) return { path, text: await asSpecNow(n, path, kept) };
       }
       say('reading its definition from Fabric…');
       const bim = await fabric.getBim(n.workspace, n.modelId);

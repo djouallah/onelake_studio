@@ -27,7 +27,7 @@ const ITEMS = {
   empty: [{ name: "nb.Notebook", kind: "Notebook" }],
 };
 
-async function setup({ bim = named, views = [], items = ITEMS } = {}) {
+async function setup({ bim = named, views = [], items = ITEMS, compiler = { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bim } } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "modelfile-"));
   const models = createModels({
     onelake: {
@@ -38,7 +38,7 @@ async function setup({ bim = named, views = [], items = ITEMS } = {}) {
       itemNamed: async () => ({ workspace: "aemo", item: "lake.Lakehouse" }),
     },
     fabric: {}, semviews: { list: async () => views },
-    modules: async () => ({ semantic, compiler: { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bim } }),
+    modules: async () => ({ semantic, compiler }),
     modelsFolder: () => dir, account: () => "a", oldModels: join(dir, "old"),
     nameTables: async () => [], notify() {}, onModelChanged() {}, log() {},
   });
@@ -108,5 +108,35 @@ test("a semantic model's TMSL is Fabric's model.bim kept beside its Ossie copy, 
   await mkdir(dirname(models.modelBimPath(n)), { recursive: true });
   await writeFile(models.modelBimPath(n), '{"model":{}}');
   assert.equal((await models.fetchModelBim(n)).toString("utf8"), '{"model":{}}', "the kept file, as it is: fabric is {} here");
+  await done();
+});
+
+test("a local copy of an earlier Ossie spec is written as the spec is now when it is read, with no request", async () => {
+  // dax-sql's part, stood in for: it reads either spec and writes the one of now.
+  let written = 0;
+  const compiler = {
+    parseYaml: text => ({ name: /^name: (.*)$/m.exec(text)[1], broken: /broken/.test(text) }),
+    ossieToTmsl: doc => { if (doc.broken) throw new Error("not read"); return { name: doc.name, model: { tables: [] } }; },
+    tmslToOssie: (bim, name) => ({ version: "0.3.0.dev0", name: bim.name ?? name }),
+    stringifyYaml: doc => { written++; return `version: ${doc.version}\nname: ${doc.name}\n`; },
+  };
+  const { models, done } = await setup({ compiler });
+  const { mkdir, readFile } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const n = { kind: "semanticModel", workspace: "aemo", model: "NEM Sales", modelId: "m1" };
+  const path = models.modelPath(n);
+  await mkdir(dirname(path), { recursive: true });
+  // fabric is {} here: a read of Fabric would throw.
+  await writeFile(path, "version: 0.2.0.dev0\nname: NEM Sales\ncustom_extensions: []\n");
+  assert.equal((await models.fetchModel(n)).text, "version: 0.3.0.dev0\nname: NEM Sales\n");
+  assert.equal(await readFile(path, "utf8"), "version: 0.3.0.dev0\nname: NEM Sales\n", "the file too");
+  // As the spec is now: read as it is, not written.
+  assert.equal((await models.fetchModel(n)).text, "version: 0.3.0.dev0\nname: NEM Sales\n");
+  assert.equal(written, 1);
+  // One that cannot be read so is kept.
+  const old = "version: 0.2.0.dev0\nname: broken\n";
+  await writeFile(path, old);
+  assert.equal((await models.fetchModel(n)).text, old);
+  assert.equal(await readFile(path, "utf8"), old);
   await done();
 });
