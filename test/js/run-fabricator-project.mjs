@@ -164,6 +164,17 @@ try {
     const text = await (await get(p, `the page's ${p}`)).text();
     if (/\[plugin:vite:|Failed to resolve import/.test(text)) fail(`Vite could not serve ${p}: ${text.slice(0, 1500)}`);
   }
+  // DuckDB's worker script, as an engine's worker asks for it (importScripts): data.js imports where it is
+  // (?url), and the script is then asked for itself. It names a source map its package does not hold, and Vite
+  // warned for it each time, in Fabricator's backend log: served without that line (site/vite.config.mjs).
+  const data = await (await get("/src/storage/data.js", "data.js")).text();
+  const asked = /["']([^"']*duckdb-browser-base\.worker\.js\?[^"']*)["']/.exec(data)?.[1];
+  if (!asked) fail(`data.js, as Vite serves it, does not import DuckDB's worker: ${data.slice(0, 1500)}`);
+  const where = /export default ["']([^"']+)["']/.exec(await (await get(asked, "where DuckDB's worker is")).text())?.[1];
+  if (!where) fail(`Vite did not say where DuckDB's worker is, asked ${asked}`);
+  const worker = await (await get(where, "DuckDB's worker")).text();
+  if (worker.length < 100_000) fail(`DuckDB's worker is ${worker.length} characters: ${worker.slice(0, 300)}`);
+  if (/sourceMappingURL=/.test(worker.slice(-500))) fail("DuckDB's worker is served with its source map's name, which Vite warns it cannot read");
   await get("/report.json", "the Report");
   await get("/world.json", "the world's outline");
   const config = await (await get("/rayfin.config.json", "the backend's config")).json();

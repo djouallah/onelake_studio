@@ -7,13 +7,30 @@
 // published app's, in public/, is served.
 // OneLake Studio's own publish uploads this same build, made when the extension was packaged
 // (scripts/site-bundle.mjs), with this project's public/.
+import { readFile } from 'node:fs/promises';
 import { rayfinLocalDev } from '@microsoft/rayfin-local-dev/vite';
 import { defineConfig } from 'vite';
+
+// DuckDB-WASM's worker script ends by naming a source map its package does not hold. The dev server reads the
+// map of every script it serves, and logged a warning for this one each time an engine started, where
+// Fabricator's agent reads the backend's recent errors. Served without that line, there is no map to look for.
+// The build is not concerned: it copies the worker as it is.
+const WORKER = /[\\/]@duckdb[\\/]duckdb-wasm[\\/]dist[\\/][\w.-]+\.worker\.js$/;
+const workerWithoutMap = () => ({
+  name: 'duckdb-worker-without-map',
+  apply: 'serve',
+  enforce: 'pre',
+  async load(id) {
+    // The script itself, as a worker asks for it: not its `?url` import, which answers where it is.
+    if (id.includes('?') || !WORKER.test(id)) return null;
+    return (await readFile(id, 'utf8')).replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, '\n');
+  },
+});
 
 export default defineConfig({
   // Every URL relative: the site is served from wherever the app's hosting puts it.
   base: './',
-  plugins: [rayfinLocalDev()],
+  plugins: [workerWithoutMap(), rayfinLocalDev()],
   build: {
     outDir: 'dist',
     emptyOutDir: true,
