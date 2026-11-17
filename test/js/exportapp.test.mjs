@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, staticFiles, siteBuild, sizeOf, buildDist, zip, crc32, rayfinYml,
         appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT,
         setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES,
-        sitePackages, lockName, ENGINES, RAYFIN_RANGE } = require("../../fabric_app/export/exportapp.js");
+        sitePackages, projectPackages, lockName, ENGINES, RAYFIN_RANGE } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/src/storage/modelrows.js");
 
@@ -312,6 +312,8 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.deepEqual(Object.keys(deps), ["@microsoft/rayfin-auth-provider-fabric", "@microsoft/rayfin-client", "@microsoft/rayfin-connector-fabric-semanticmodel", "echarts"]);
     assert.deepEqual(deps, sitePackages(engine));
     assert.ok(!JSON.parse(text("package-lock.json")).packages["node_modules/@duckdb/duckdb-wasm"], "the semantic model's lock file");
+    assert.equal(JSON.parse(text("package.json")).dependencies, undefined, "and no Arrow of the project's: the connector's own");
+    assert.equal(projectPackages(engine), null);
     assert.equal(lockName(engine), "package-lock.model.json");
     // The site's files npm has not, added at publish: the world's outline, and no DuckDB extension.
     assert.deepEqual([...(await staticFiles(dirs.webappDir, engine)).keys()], ["world.json"]);
@@ -381,7 +383,10 @@ test("the local copy is one zip: the whole project, written and read back; the u
     assert.equal(pkg.scripts.dev, "rayfin dev");
     assert.equal(pkg.scripts.build, "npm run build -w site");
     assert.deepEqual(pkg.devDependencies, PROJECT_PACKAGES);
-    assert.equal(pkg.dependencies, undefined, "the page's packages are the page's own (site/package.json)");
+    // The page's packages are the page's own (site/package.json), but Arrow, which the project names too: the one
+    // copy DuckDB-WASM and the page share.
+    assert.deepEqual(pkg.dependencies, { "apache-arrow": require("../../core/vendored.js").WEBAPP.arrow.split("@").pop() });
+    assert.deepEqual(pkg.dependencies, projectPackages("duckdb"));
     // The page's packages, the ones it imports and Vite bundles: Fabricator's check wants the Fabric sign-in package named.
     const sitePkg = JSON.parse(files.get("site/package.json"));
     assert.equal(sitePkg.name, "sales-model-explore-site");
@@ -760,7 +765,7 @@ test("each engine's lock file is its project's packages, from the public registr
     const name = lockName(engine);
     const lock = JSON.parse(await readFile(new URL(`../../fabric_app/project/${name}`, import.meta.url), "utf8"));
     const top = lock.packages[""];
-    assert.equal(top.dependencies, undefined, `${name}: the page's packages are its workspace's`);
+    assert.deepEqual(top.dependencies ?? null, projectPackages(engine), `${name}: the project's own packages: run scripts/fabric-lock.mjs`);
     assert.deepEqual(top.devDependencies, PROJECT_PACKAGES, `${name}: the project's packages: run scripts/fabric-lock.mjs`);
     assert.deepEqual(top.workspaces, ["site", "rayfin/functions"]);
     const page = lock.packages.site;
@@ -774,5 +779,18 @@ test("each engine's lock file is its project's packages, from the public registr
     // The links: the workspaces, the page and the function.
     assert.deepEqual(Object.entries(lock.packages).filter(([, p]) => p.link).map(([, p]) => p.resolved).sort(), ["rayfin/functions", "site"]);
     assert.equal(!!lock.packages["node_modules/@duckdb/duckdb-wasm"], engine === "duckdb", `${name}: DuckDB-WASM client side only`);
+    // One copy of each package the page's scripts share with another package: DuckDB-WASM's Arrow is the page's
+    // (a table it answers must be a Table to the page's Arrow), and the Rayfin packages share one rayfin-auth.
+    const copies = name_ => Object.keys(lock.packages).filter(k => k.endsWith(`node_modules/${name_}`));
+    if (engine === "duckdb") {
+      const { WEBAPP } = require("../../core/vendored.js");
+      const arrows = copies("apache-arrow").filter(k => lock.packages[k].version.split(".")[0] === WEBAPP.arrow.split("@").pop().split(".")[0]);
+      assert.deepEqual(arrows, ["node_modules/apache-arrow"], `${name}: one copy of DuckDB-WASM's Arrow, the page's`);
+      assert.equal(lock.packages["node_modules/apache-arrow"].version, WEBAPP.arrow.split("@").pop());
+    }
+    for (const k of Object.keys(lock.packages).filter(k => /node_modules\/@microsoft\/rayfin-[\w-]+$/.test(k))) {
+      const pkg = k.split("node_modules/").pop();
+      assert.deepEqual(copies(pkg), [`node_modules/${pkg}`], `${name}: one copy of ${pkg}`);
+    }
   }
 });
