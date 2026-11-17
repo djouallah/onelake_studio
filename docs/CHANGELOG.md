@@ -41,6 +41,13 @@
   `USE`, drops a lakehouse's schema as its Iceberg catalog drops one. Any `DROP` but `DROP TABLE` was refused.
 - **Fixed: DROP TABLE after a USE named its table in full.** `USE ws.lh.schema;` then `DROP TABLE IF EXISTS t` was refused as
   no lakehouse table: every other write took the bare name under the USE, and DROP did not.
+- **A Report's slicer makes its tiles faster.** dax-sql 0.2.1: a year or a region picked on a dimension now skips the
+  fact table's rows it leaves out, where every tile still read the whole table. A year and a borough over 590 million
+  taxi trips: 5 s a tile before, 2 s now.
+- **The command line reads and writes a model's Report.** `report <ws> <model>` (or `report <ws> <item>
+  <Files/path>` for a model file) prints the Report as JSON, with every field a tile can name; `--set <file.json>`
+  writes one, checked first as the Report tab reads it, and refused with each problem named. The Report tab draws it at
+  once. The agent skill says how to build one.
 
 ## 0.2.25
 
