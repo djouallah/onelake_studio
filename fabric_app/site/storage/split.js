@@ -9,8 +9,8 @@
 // added up by one engine, which runs the rest:
 //   partial   the CTE's body, v_<table> written p_<table>
 //   final     the statement, the body now a GROUP BY over the partial answers
-// Rows never cross engines, only groups: a tile's scan has no filter of its own to push (the
-// filters are on the dimensions), so the rows would not fit in one engine's memory.
+// Rows never cross engines, only groups: a tile's scan keeps what its filters on the dimensions keep
+// (rowTests) and no more, so the rows would not fit in one engine's memory.
 // Only what adds up is split: SUM, MIN, MAX and the counts. Anything else (a distinct count, an
 // average, a median, a measure the compiler left as a subquery) leaves the statement as it is.
 // Read from the SQL's text, as ranges.js reads its columns: the compiler's own structure
@@ -100,10 +100,27 @@ function mergeOf(expr) {
 }
 const sumLike = expr => /^(?:SUM|COUNT)\s*\(/i.test(expr) || /^NULLIF\s*\(\s*COUNT\s*\(/i.test(expr);
 
+// `plain` (the body flattened, flat) with each row's own test against a table that is not split taken out:
+// x IN (SELECT key FROM v_<dimension> WHERE …), the keys a slicer on a dimension keeps (dax-sql writes it in
+// the scan, so the engine skips the rows). Every engine holds that table whole, and it keeps or drops each
+// row alone, so a share's rows are kept as the same rows of the whole are. One that reads a split table, or
+// holds anything NEVER names, stays.
+function rowTests(body, plain, large) {
+  let out = plain;
+  for (const m of plain.matchAll(/\bIN\s*\(\s*SELECT\b/gi)) {
+    const open = plain.indexOf('(', m.index), close = closeOf(body, open);
+    if (close < 0) continue;
+    const sub = flat(body.slice(open + 1, close), false);
+    if ([...sub.matchAll(/\bv_(\w+)\b/g)].some(n => large(n[1])) || NEVER.test(sub)) continue;
+    out = out.slice(0, m.index) + ' '.repeat(close + 1 - m.index) + out.slice(close + 1);
+  }
+  return out;
+}
+
 // A CTE's body as its partial and its merge, or null. `large(name)`: a table worth splitting.
 function splitBody(body, large) {
   // "a IS NOT DISTINCT FROM b" is a comparison: neither a DISTINCT nor a FROM.
-  const plain = flat(body, false).replace(/\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi, m => ' '.repeat(m.length));
+  const plain = rowTests(body, flat(body, false).replace(/\bIS\s+(?:NOT\s+)?DISTINCT\s+FROM\b/gi, m => ' '.repeat(m.length)), large);
   if (NEVER.test(plain)) return null;
   const named = [...plain.matchAll(/\bv_(\w+)\b/g)].filter(m => large(m[1]));
   if (named.length !== 1) return null;
