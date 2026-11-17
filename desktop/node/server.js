@@ -142,9 +142,11 @@ function createServer({ uiDir, extensionDir, pageOf, rpc, roots = ['webview', 'p
   // `pages`: the pages' port, which serves their files and nothing else.
   function handler(req, res, pages) {
     const url = new URL(req.url, 'http://x');
-    const path = decodeURIComponent(url.pathname);
     if (req.headers.host !== `127.0.0.1:${pages ? pagesPort : port}`) { res.writeHead(403); res.end(); return; }
     if (req.headers.origin !== undefined && req.headers.origin !== (pages ? pagesOrigin() : origin())) { res.writeHead(403); res.end(); return; }
+    // A path that is no text (%E0%A4%A) is answered, not left waiting.
+    let path;
+    try { path = decodeURIComponent(url.pathname); } catch { res.writeHead(400); res.end(); return; }
 
     // The window's first request: its token becomes a cookie, and leaves the address.
     if (!pages && path === '/' && url.searchParams.has('k')) {

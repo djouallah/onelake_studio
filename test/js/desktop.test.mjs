@@ -83,6 +83,8 @@ test("the server: a token becomes a cookie, and without it, the wrong Host, or a
     assert.equal((await request(port, "/res/secret.txt", { cookie })).status, 403, "outside the page's folders");
     assert.equal((await request(port, "/res/webview/../secret.txt", { cookie })).status, 403);
     assert.equal((await request(port, "/res/webview/%2e%2e/secret.txt", { cookie })).status, 403);
+    assert.equal((await request(port, "/%E0%A4%A", { cookie })).status, 400, "a path that is no text is answered");
+    assert.equal((await request(port, "/", { cookie })).text, "the window", "and the server goes on");
     const rpc = await request(port, "/rpc", { cookie, method: "POST", body: JSON.stringify({ method: "m", args: [1] }), origin: server.origin() });
     assert.deepEqual(JSON.parse(rpc.text), { ok: true, result: { method: "m", args: [1] } });
     const elsewhere = await request(port, "/rpc", { cookie, method: "POST", body: "{}", origin: "http://evil.example" });
@@ -99,6 +101,7 @@ test("the server: a token becomes a cookie, and without it, the wrong Host, or a
     assert.equal((await request(pages, "/tab/1")).status, 403, "no cookie");
     assert.equal((await request(pages, "/res/webview/app.js", { cookie, origin: server.pagesOrigin() })).text, "the page");
     assert.equal((await request(pages, "/res/secret.txt", { cookie })).status, 403);
+    assert.equal((await request(pages, "/res/%E0%A4%A", { cookie })).status, 400);
     assert.equal((await request(port, "/tab/1", { cookie })).status, 404, "the window's port serves no page");
     const fromTab = await request(port, "/rpc", { cookie, method: "POST", body: JSON.stringify({ method: "app.exit" }), origin: server.pagesOrigin() });
     assert.equal(fromTab.status, 403, "a tab's page can't call the window's methods");
