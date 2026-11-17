@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed: a Fabric app showed `metadata.json: HTTP 401` on every tile.** The page keeps the function's answer for
+  about an hour, and when OneLake refused the signatures in it the page did not ask again. It now asks the function
+  once and tries again. In Fabricator's preview, which serves one app after another at the same address, an answer
+  kept for another app is no longer used.
+- **Fixed: the word `null` after a Fabric app's filters and after its page tabs.**
 - **Fixed: after an update, a window that was not reloaded stopped every other window reading tables.** Its engine,
   the old version's, kept the lake. The new version's first window now stops that engine and starts its own, and the
   window left behind says *OneLake Studio was updated. Reload this window to go on reading tables.* with

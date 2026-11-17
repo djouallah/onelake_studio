@@ -631,10 +631,15 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   // The engines and the store, starting (init): what a query that computes waits for.
   let enginesUp = null;
   function planFor(t) {
-    return (t.m ? Promise.resolve(t.m) : metadataOf(t.location)).then(m => planTable(t.name, m, f => https(f, sas || access.sas)));
+    return (t.m ? Promise.resolve(t.m) : metadataOf(t.location)).then(m => planTable(t.name, m, f => https(f, sas || access.sas), renewSas));
   }
   async function metadataOf(location) {
-    const r = await fetch(https(location, sas || access.sas));
+    let r = await fetch(https(location, sas || access.sas));
+    // The SAS refused (one kept from an earlier visit, or run out): a new one from the function, once.
+    if (r.status === 401 || r.status === 403) {
+      await renewSas().catch(() => {});
+      r = await fetch(https(location, sas || access.sas));
+    }
     if (!r.ok) throw new Error(`metadata.json: HTTP ${r.status}`);
     return r.json();
   }

@@ -51,15 +51,16 @@ async function limited(fn, table) {
 // A request the connection or the server failed is asked again, twice at most and a little later each time: one
 // dropped among a table's hundreds would otherwise fail the tile. A refusal (a 4xx but 429) is final, and so is
 // an answer of the wrong size.
-// A 403 is the SAS run out, where the page can get another (`renew`): asked for once, and the request made
-// again with it. A laptop that slept past the SAS's hour wakes to this.
+// A 403 or a 401 is the SAS refused, where the page can get another (`renew`): asked for once, and the request
+// made again with it. A laptop that slept past the SAS's hour wakes to a 403; a SAS kept from an earlier visit
+// that OneLake no longer takes is a 401.
 const RETRY_MS = [500, 2000];
 async function retried(fn, renew = null) {
   let renewed = false;
   for (let n = 0; ; n++) {
     try { return await fn(); }
     catch (e) {
-      if (e?.status === 403 && renew && !renewed) { renewed = true; try { await renew(); } catch { throw e; } n--; continue; }
+      if ((e?.status === 403 || e?.status === 401) && renew && !renewed) { renewed = true; try { await renew(); } catch { throw e; } n--; continue; }
       const again = n < RETRY_MS.length && (e?.status == null ? e instanceof TypeError : e.status === 429 || e.status >= 500);
       if (!again) throw e;
       await new Promise(r => setTimeout(r, RETRY_MS[n]));
@@ -68,11 +69,12 @@ async function retried(fn, renew = null) {
 }
 const failed = (r, what) => Object.assign(new Error(`${what}HTTP ${r.status}`), { status: r.status });
 
-const get = (url, table) => limited(() => retried(async () => {
-  const r = await fetch(url);
+// `url`: a function, so a request made again after `renew` is signed with the new SAS.
+const get = (url, table, renew = null) => limited(() => retried(async () => {
+  const r = await fetch(url());
   if (!r.ok) throw failed(r, '');
   return new Uint8Array(await r.arrayBuffer());
-}), table);
+}, renew), table);
 
 // The files of a table the store lacks, whole or the pieces of them a query reads, six at a
 // time, each handed to the worker's store (store(path, bytes, f), resolved once it is kept):
@@ -228,10 +230,10 @@ async function pruneManifests(paths) {
     }
   } catch (e) {}
 }
-async function manifestEntries(path, content, url, name) {
+async function manifestEntries(path, content, url, name, renew) {
   const hit = await cached(path);
   if (hit) return { entries: hit, fetched: false };
-  const entries = (await avroRecords(await get(url(path), name))).map(e => {
+  const entries = (await avroRecords(await get(() => url(path), name, renew))).map(e => {
     const f = e.data_file;
     return [e.status, f.content ?? content, f.file_path, String(f.file_format).toLowerCase(), f.file_size_in_bytes ?? null];
   });
@@ -242,15 +244,15 @@ async function manifestEntries(path, content, url, name) {
 // The current snapshot's live files: what DuckDB's iceberg_metadata() WHERE status <> 'DELETED'
 // gives. `scan`: what a view over the Parquet files cannot read (no data file, a file that is
 // not Parquet such as a deletion vector, an equality delete): the table fails to open.
-export async function planTable(name, metadata, url) {
+export async function planTable(name, metadata, url, renew = null) {
   if (!order.includes(name)) order.push(name);
   const current = String(metadata['current-snapshot-id']);
   const snapshot = (metadata.snapshots ?? []).find(s => String(s['snapshot-id']) === current);
   const record = { scan: true, files: [], deleteFiles: [] };
   if (!snapshot?.['manifest-list']) return { record, manifests: 0, fetched: 0 };
-  const list = await avroRecords(await get(url(snapshot['manifest-list']), name));
+  const list = await avroRecords(await get(() => url(snapshot['manifest-list']), name, renew));
   pruneManifests(list.map(m => m.manifest_path));
-  const read = await Promise.all(list.map(m => manifestEntries(m.manifest_path, m.content ?? 0, url, name)));
+  const read = await Promise.all(list.map(m => manifestEntries(m.manifest_path, m.content ?? 0, url, name, renew)));
   const live = read.flatMap(m => m.entries).filter(e => e[0] !== 2);
   const files = content => [...new Map(live.filter(e => e[1] === content).map(e => [e[2], { path: e[2], size: e[4] }])).values()];
   Object.assign(record, { files: files(0), deleteFiles: files(1) });

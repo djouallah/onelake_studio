@@ -507,7 +507,7 @@ export function mountExplore(root, ctx) {
         'aria-label': `Take the filter on ${fieldName(x.field)} out`, onclick: () => removeFilter(x.field) }, '✕') : null;
       return el('div', { class: 'rp-bar-item' }, label, barControl(x), remove);
     });
-    filterBar.replaceChildren(...items, saves ? addFilterButton() : null);
+    filterBar.replaceChildren(...items, ...(saves ? [addFilterButton()] : []));
   }
   function barControl(x) {
     const id = x.field, picked = barPicks.get(id);
@@ -748,7 +748,8 @@ export function mountExplore(root, ctx) {
       return tab;
     });
     pageStrip.replaceChildren(el('div', { class: 'rp-page-tabs', role: 'tablist', 'aria-label': 'Report pages' }, pageTabs),
-      saves ? el('button', { type: 'button', class: 'rp-page-add', title: 'Add a page', 'aria-label': 'Add a page', onclick: () => addPage() }, '+') : null);
+      // Spread: replaceChildren writes a null as the word "null" (el drops one, the DOM does not).
+      ...(saves ? [el('button', { type: 'button', class: 'rp-page-add', title: 'Add a page', 'aria-label': 'Add a page', onclick: () => addPage() }, '+')] : []));
     if (renameNext != null && pageNames[renameNext]) renamePageIn(renameNext, pageNames[renameNext]);
     renameNext = null;
   }

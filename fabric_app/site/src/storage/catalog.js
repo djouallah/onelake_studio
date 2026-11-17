@@ -9,6 +9,8 @@
 // The answer is kept (kv.js, this browser's IndexedDB) until shortly before its SAS expires,
 // so a viewer calls the function about once an hour, not on every load; a page open past that
 // is given a new one (`renew`). This browser's alone, like the page's memory: nothing is shared.
+// It is one app's: rayfin-local's dev server serves one app after another at the same address, and stamps the
+// page's storage with the app it serves now (STAMP_KEY); an answer kept under another stamp is asked again.
 //
 //   const catalog = createCatalog(() => auth.client(), kv);
 //   await catalog.open()   the model's tables
@@ -19,6 +21,9 @@
 
 const KEY = 'catalog';
 const RENEW_MARGIN_MS = 2 * 60 * 1000;   // ask again this long before the SAS expires
+// rayfin-local's stamp of the app and sign-in its dev server serves now; a published app has none.
+const STAMP_KEY = 'rayfin-local:session-stamp';
+const appNow = () => { try { return localStorage.getItem(STAMP_KEY) ?? ''; } catch { return ''; } };
 
 // `kv`: where the answer is kept (kv.js), loaded before the page asks fresh().
 export function createCatalog(client, kv) {
@@ -27,15 +32,16 @@ export function createCatalog(client, kv) {
   const renewAt = (a = load()) => a ? Date.parse(a.expiresOn) - RENEW_MARGIN_MS : 0;
   // A kept answer for the model's tables holds a SAS per table: an answer without them (a build
   // that kept another app's, or an older one) is asked again.
-  const good = a => !!a && Date.now() < renewAt(a) && !!a.sas && typeof a.sas === 'object';
+  const good = a => !!a && Date.now() < renewAt(a) && !!a.sas && typeof a.sas === 'object' && (a.app ?? '') === appNow();
 
   async function call() {
     const rayfin = await client();
     // The function returns its failure as { error }, naming the step that failed.
     const r = await rayfin.functions.openCatalog.invoke({ tables: '' }, { timeoutMs: 240000 });
     if (r?.error) throw new Error(`openCatalog failed at ${r.error}`);
-    save(r);
-    return r;
+    const kept = { ...r, app: appNow() };
+    save(kept);
+    return kept;
   }
 
   // The kept answer if it is still good, else a new one. `renew`: a new one.
