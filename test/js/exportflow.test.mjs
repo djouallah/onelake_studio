@@ -52,7 +52,6 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     fabric: {
       workspaceId: async name => `id-of-${name}`,
       itemOf: async () => ({ workspace: "power bi", item: "nem.Lakehouse" }),
-      sqlEndpoints: async () => [{ type: "Lakehouse", name: "nem", host: "x.datawarehouse.fabric.microsoft.com,1433" }],
     },
     onelake: {}, catalog: {},
     fabricModel: {
@@ -86,7 +85,7 @@ test("offline says why, before anything is asked", async () => {
 
 test("a local model with nowhere known to go is refused, not asked about", async () => {
   const { exportExplore, asked, done } = await setup();
-  await assert.rejects(exportExplore({ ...REQUEST, path: undefined, workspace: undefined, model: null }), /needs a model that is a OneLake file/);
+  await assert.rejects(exportExplore({ ...REQUEST, path: undefined, workspace: undefined }), /needs a model file: one in OneLake, or one from disk in a workspace/);
   assert.equal(asked.length, 0);
   await done();
 });
@@ -140,7 +139,7 @@ for (const ext of [".zip", ".fabricapp"]) test(`an app an earlier export saved a
   const dir = await mkdtemp(join(tmpdir(), "exportflow-old-"));
   const old = join(dir, `sales-model-explore${ext}`);
   await writeApp(old, new Map([["site/app.js", Buffer.from("// app")]]),
-    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
+    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", files: { "site/app.js": "edited since" } });
   const now = join(dir, "sales-model-explore.fabricator");
   const { exportExplore, asked, kept, done } = await setup({ answers: [now, undefined] });
   kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", old);
@@ -153,7 +152,7 @@ for (const ext of [".zip", ".fabricapp"]) test(`an app an earlier export saved a
   await done();
 });
 
-test("a model file's app is client side: no mode asked, and no semantic model looked up", async () => {
+test("a model file's app: the Save dialog alone, and no semantic model looked up", async () => {
   const { exportExplore, asked, looked, done } = await setup({ answers: [null] });
   await exportExplore(REQUEST).catch(() => {});
   assert.equal(looked.length, 0);
@@ -161,32 +160,11 @@ test("a model file's app is client side: no mode asked, and no semantic model lo
   await done();
 });
 
-// A semantic model opened from the tree: its local copy, with no file in OneLake.
-const { workspace: _w, path: _p, ...ON_MODEL } = REQUEST;
-
-test("a semantic model opened from the tree is exported as it is: found by its workspace and name, nothing asked of a lakehouse", async () => {
-  const { exportExplore, asked, looked, done } = await setup({ answers: [null],
-                                                              models: { "NEM Sales": { id: "m1", displayName: "NEM Sales" } } });
-  const e = await exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }).then(() => null, x => x);
-  assert.equal(e.declined, true);
-  assert.deepEqual(looked, [{ ws: "id-of-aemo", name: "NEM Sales" }]);
-  assert.equal(asked.length, 1, "the Save dialog alone: no mode");
-  assert.match(asked[0].saveFile.defaultPath, /[\\/]NEM Sales\.fabricator$/, "named for the semantic model");
-  await done();
-});
-
-test("a semantic model gone from its workspace is said, before anything is asked", async () => {
-  const b = await setup();
-  await assert.rejects(b.exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }), /aemo has no semantic model NEM Sales any more/);
-  assert.equal(b.asked.length, 0);
-  await b.done();
-});
-
 test("saving over an app's file rewrites it, with no question about what changed in it", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-over-"));
   const file = join(dir, "sales-model-explore.fabricator");
   await writeApp(file, new Map([["site/app.js", Buffer.from("// app")]]),
-    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
+    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", files: { "site/app.js": "edited since" } });
   const { exportExplore, asked, done } = await setup({ answers: [file] });
   const e = await exportExplore(REQUEST).then(() => null, x => x);
   assert.match(e.message, /stop: Fabric is not asked/, "on to Fabric");
@@ -195,11 +173,11 @@ test("saving over an app's file rewrites it, with no question about what changed
   await done();
 });
 
-test("opening an app's file: its report is this file from now on, and a client-side app's own model comes back", async () => {
+test("opening an app's file: its report is this file from now on, and its own model comes back", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-open-app-"));
   const file = join(dir, "sales-model-explore.fabricator");
   await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/report.json", Buffer.from('{"tiles":[]}')]]),
-    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb",
+    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml",
       workspaceId: "ws-id", lakehouseId: "lh-id", report: { workspace: "power bi", model: "sales" } });
   const { flow, kept, done } = await setup();
   const app = await flow.openApp(file);
@@ -208,14 +186,6 @@ test("opening an app's file: its report is this file from now on, and a client-s
   assert.equal(app.modelPath, "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml");
   assert.equal(kept.get("exportReport:power bi/sales"), file, "the Report tab draws this file");
   assert.equal(kept.get("exportZip:ws-id/lh-id/sales-model-explore"), file, "the next export saves here");
-  // A semantic model's app holds no model: it names the one it queries.
-  const model = join(dir, "nem-explore.fabricapp");
-  await writeApp(model, new Map([["site/engine.json", Buffer.from('{"engine":"semanticModel"}')]]),
-    { name: "nem-explore", model: "aemo/NEM Sales", engine: "semanticModel", semanticModel: { workspace: "aemo-id", id: "m1", name: "NEM Sales" } });
-  const b = await flow.openApp(model);
-  assert.deepEqual(b.report, { workspace: "aemo", model: "NEM Sales" }, "from where its model is, for a file from before report was kept");
-  assert.deepEqual(b.semanticModel, { workspace: "aemo-id", id: "m1", name: "NEM Sales" });
-  assert.equal(b.copy, null);
   await assert.rejects(flow.openApp(join(dir, "gone.fabricapp")), /is gone/);
   await rm(dir, { recursive: true, force: true });
   await done();
@@ -225,7 +195,7 @@ test("an app's file opened from disk is exported as it is: no Save dialog, and n
   const dir = await mkdtemp(join(tmpdir(), "exportflow-app-"));
   const file = join(dir, "sales-model-explore.fabricator");
   await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// app")]]),
-    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
+    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", files: { "site/app.js": "edited since" } });
   const { exportExplore, asked, done } = await setup();
   const e = await exportExplore({ ...REQUEST, file: "model.yaml", appFile: file }).then(() => null, x => x);
   assert.match(e.message, /stop: Fabric is not asked/, "it went on to Fabric");
@@ -239,7 +209,7 @@ test("an earlier .fabricapp opened from disk is published from its .fabricator: 
   const dir = await mkdtemp(join(tmpdir(), "exportflow-legacy-"));
   const old = join(dir, "sales.fabricapp");
   await writeFile(old, await zip([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// app")],
-    ["export.json", Buffer.from(JSON.stringify({ model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb" }))]]));
+    ["export.json", Buffer.from(JSON.stringify({ model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml" }))]]));
   const { exportExplore, asked, done } = await setup();
   const e = await exportExplore({ ...REQUEST, file: "model.yaml", appFile: old }).then(() => null, x => x);
   assert.match(e.message, /stop: Fabric is not asked/, "it went on to Fabric");
@@ -251,35 +221,21 @@ test("an earlier .fabricapp opened from disk is published from its .fabricator: 
   await done();
 });
 
-// Create Semantic Model: from the tree, no mode, and one dialog asks it; from the command line, a mode,
-// and only replacing one is asked.
+// Create Semantic Model: only replacing one is asked.
 const CREATE = { file: "sales.yaml", text: OSSIE, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml" };
 
-test("Create Semantic Model from the tree: one dialog, its buttons the modes, and whether it replaces one", async () => {
-  const a = await setup({ answers: [undefined] });
+test("Create Semantic Model: a new one is not asked about, one there is", async () => {
+  const a = await setup({ models: { sales: { id: "m1", displayName: "sales" } }, answers: [undefined] });
   const e = await a.flow.createSemanticModel(CREATE).then(() => null, x => x);
   assert.equal(e.declined, true);
   assert.equal(a.asked.length, 1, "one question");
-  assert.equal(a.asked[0].message, "Create the semantic model sales?");
-  assert.deepEqual(a.asked[0].rest.slice(1), ["Direct Lake", "DirectQuery"]);
-  assert.match(a.asked[0].rest[0].detail, /^Workspace: power bi\nFrom: nem\.Lakehouse\/Files\/semantic_model\/sales\.yaml\n\nDirect Lake reads/);
-  await a.done();
-  const b = await setup({ answers: [undefined], models: { sales: { id: "m1", displayName: "sales" } } });
-  await b.flow.createSemanticModel(CREATE).catch(() => {});
-  assert.equal(b.asked[0].message, "Update the semantic model sales?");
-  assert.match(b.asked[0].rest[0].detail, /\n\npower bi already has a semantic model of this name: its definition is replaced\.\n/);
-  await b.done();
-});
-
-test("Create Semantic Model from the command line: a new one is not asked about, one there is", async () => {
-  const a = await setup({ models: { sales: { id: "m1", displayName: "sales" } }, answers: [undefined] });
-  const e = await a.flow.createSemanticModel({ ...CREATE, mode: "directlake" }).then(() => null, x => x);
-  assert.equal(e.declined, true);
   assert.equal(a.asked[0].message, "Update the semantic model sales?");
   assert.deepEqual(a.asked[0].rest.slice(1), ["Update"]);
+  assert.match(a.asked[0].rest[0].detail, /^Workspace: power bi\nFrom: nem\.Lakehouse\/Files\/semantic_model\/sales\.yaml\n\npower bi already has a semantic model of this name: its definition is replaced\.$/);
   await a.done();
   const b = await setup();
-  await assert.rejects(b.flow.createSemanticModel({ ...CREATE, mode: "client" }), /no mode client: directlake or directquery/);
+  await assert.rejects(b.flow.createSemanticModel(CREATE), /nothing is written in these tests/, "on to writing it");
+  assert.equal(b.asked.length, 0);
   await b.done();
 });
 

@@ -1,6 +1,6 @@
-// Export to Fabric and Create Semantic Model, where a file or a model is someone else's: an app's file names
-// the app it is published over, so one from elsewhere is asked about before it replaces anything, and a
-// semantic model is taken over only on a yes. And a tile added while an export publishes stays in the file.
+// Export to Fabric, where a file is someone else's: an app's file names
+// the app it is published over, so one from elsewhere is asked about before it replaces anything.
+// And a tile added while an export publishes stays in the file.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -12,7 +12,6 @@ import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const { createExport } = require("../../fabric_app/export/exportflow.js");
 const { writeApp, readApp, unzip, SITE } = require("../../fabric_app/export/exportapp.js");
-const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
 const { PINS } = require("../../core/vendored.js");
 const semantic = await import("../../page/semantic.js");
 
@@ -28,7 +27,7 @@ const RAYFIN = "id: x\nname: x\nauth:\n  allowedRedirectUris:\n    - http://loca
 const EVIL = "https://evil.example/callback";
 
 // An export that goes all the way, against a Fabric that only records what it was asked to publish.
-async function setup({ answers = [], onPublish = async () => {}, fabricModel } = {}) {
+async function setup({ answers = [], onPublish = async () => {} } = {}) {
   const ext = await mkdtemp(join(tmpdir(), "provenance-"));
   await mkdir(join(ext, "fabric-function"));
   await writeFile(join(ext, "fabric-function", "source.zip"), "zip");
@@ -36,10 +35,8 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
   await writeFile(join(ext, "fabric-function", "agent-files.json"), JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n" }));
   await mkdir(join(ext, "vendor", "webapp"), { recursive: true });
   // The page as Vite built it (scripts/site-bundle.mjs makes it, with npm): what a publish uploads.
-  for (const engine of ["duckdb", "semanticModel"]) {
-    await mkdir(join(ext, "fabric-site", engine), { recursive: true });
-    await writeFile(join(ext, "fabric-site", engine, "index.html"), "<!doctype html>built\n");
-  }
+  await mkdir(join(ext, "fabric-site"), { recursive: true });
+  await writeFile(join(ext, "fabric-site", "index.html"), "<!doctype html>built\n");
   // What a file's page is written from, an as-is file's too: this build's.
   await buildable(ext);
   const asked = [], published = [], sites = [];
@@ -59,9 +56,7 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
     fabric: {
       workspaceId: async name => `id-of-${name}`,
       itemOf: async () => ({ workspace: "power bi", item: "nem.Lakehouse" }),
-      sqlEndpoints: async () => [{ type: "Lakehouse", name: "nem", host: "x.datawarehouse.fabric.microsoft.com,1433" }],
     },
-    ...(fabricModel ? { fabricModel } : {}),
     memento: { get: k => kept.get(k), update: async (k, v) => { kept.set(k, v); } },
     fabricAppOf: () => ({
       takenName: async () => null,
@@ -89,7 +84,7 @@ async function appFile(dir, marker = {}) {
   const file = join(dir, "sales.fabricator");
   await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], [`${SITE}app.js`, Buffer.from("// theirs")],
                                 ["rayfin/rayfin.yml", Buffer.from(RAYFIN)], [`${SITE}report.json`, Buffer.from('{"tiles":[]}')]]),
-    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", ...marker });
+    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", ...marker });
   return file;
 }
 
@@ -231,65 +226,6 @@ test("a tile added while the export publishes is still in the file when it is do
   await a.done();
 });
 
-// --- Create Semantic Model: someone else's model ---
-
-const res = (status, body) => new Response(body == null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-// A Power BI whose data source refuses its credentials until the model is taken over.
-function powerBi() {
-  const calls = [];
-  let taken = false;
-  const fetchImpl = async (url, init = {}) => {
-    const path = new URL(url).pathname.replace(/^\/v1(\.0\/myorg)?/, "");
-    const method = init.method || "GET";
-    calls.push(`${method} ${path}`);
-    if (method === "GET" && /\/datasources$/.test(path)) return res(200, { value: [{ gatewayId: "g1", datasourceId: "d1" }] });
-    if (method === "PATCH") return taken ? res(200, {}) : res(403, { error: { code: "NotOwner" } });
-    if (/Default\.TakeOver$/.test(path)) { taken = true; return res(200, {}); }
-    return res(404, { error: { code: "NotFound" } });
-  };
-  const model = createFabricModel({ getToken: async () => "t", powerBiToken: async () => "p", sqlToken: async () => "s",
-                                    fetchImpl, sleep: async () => {}, log() {} });
-  return { model, calls, taken: () => taken };
-}
-
-test("bindSso takes someone else's model over only after onTakeOver, and not at all when that throws", async () => {
-  const no = powerBi();
-  await assert.rejects(no.model.bindSso("ws", "m1", { onTakeOver: async () => { throw new Error("no"); } }), /^Error: no$/);
-  assert.equal(no.taken(), false);
-  assert.equal(no.calls.some(c => /TakeOver/.test(c)), false, "Power BI was never asked to");
-  const yes = powerBi();
-  let asked = 0;
-  await yes.model.bindSso("ws", "m1", { onTakeOver: async () => { asked++; } });
-  assert.equal(asked, 1);
-  assert.equal(yes.taken(), true);
-  // The owner's own model: no question at all.
-  const own = powerBi();
-  await own.model.bindSso("ws", "m1", { onTakeOver: async () => {} });
-  let again = 0;
-  await own.model.bindSso("ws", "m1", { onTakeOver: async () => { again++; } });
-  assert.equal(again, 0, "its owner sets its sign-in with nothing asked");
-});
-
-test("Create Semantic Model asks before it takes a model over, and a No leaves it with its owner", async () => {
-  const CREATE = { file: "sales.yaml", text: OSSIE, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml", mode: "directquery" };
-  const pbi = powerBi();
-  const fabricModel = { find: async () => null, write: async () => ({ id: "m1" }), frame: async () => {}, bindSso: pbi.model.bindSso };
-  const { flow, asked, done } = await setup({ answers: [undefined], fabricModel });
-  const e = await flow.createSemanticModel(CREATE).then(() => null, x => x);
-  assert.equal(e && e.declined, true);
-  assert.match(e.message, /its sign-in to the SQL endpoint is not set: it is someone else's, and was not taken over/);
-  assert.equal(asked.length, 1);
-  assert.equal(asked[0].message, "The semantic model sales is owned by someone else. Take it over?");
-  assert.deepEqual(asked[0].rest.slice(1), ["Take It Over"]);
-  assert.equal(pbi.taken(), false);
-  await done();
-  const yes = powerBi();
-  const b = await setup({ answers: ["Take It Over"], fabricModel: { ...fabricModel, bindSso: yes.model.bindSso } });
-  await b.flow.createSemanticModel(CREATE);
-  assert.equal(yes.taken(), true);
-  await b.done();
-});
-
 test("a file that names an app this computer did publish, but is another file, is asked about too", async () => {
   const dir = await mkdtemp(join(tmpdir(), "provenance-app-"));
   const mine = await appFile(dir, { itemId: "my-item" });
@@ -301,7 +237,7 @@ test("a file that names an app this computer did publish, but is another file, i
   const theirs = join(dir, "from-a-colleague", "sales.fabricator");
   await mkdir(join(dir, "from-a-colleague"));
   await writeApp(theirs, new Map([["model.yaml", Buffer.from(OSSIE)], [`${SITE}app.js`, Buffer.from("// theirs")], ["rayfin/rayfin.yml", Buffer.from(RAYFIN)]]),
-    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", itemId: "my-item" });
+    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", itemId: "my-item" });
   const e = await flow.exportExplore({ ...REQUEST, appFile: theirs }).then(() => null, x => x);
   assert.equal(e && e.declined, true);
   assert.equal(published.length, 1, "only the first reached Fabric");
@@ -367,7 +303,7 @@ test("a file whose page was changed is asked about: OneLake Studio publishes its
   // What was uploaded: the built page, and the file's site/public/ beside it; no script of the project.
   const site = a.sites[0];
   assert.equal(site.get("index.html").toString(), "<!doctype html>built\n");
-  for (const p of ["report.json", "model.json", "engine.json", "rayfin.config.json"]) assert.ok(site.has(p), p);
+  for (const p of ["report.json", "model.json", "settings.json", "rayfin.config.json"]) assert.ok(site.has(p), p);
   assert.ok(![...site.keys()].some(p => /^src\/|vite\.config|package\.json/.test(p)), [...site.keys()].join(", "));
   const first = await readApp(file);
   assert.ok(first.files.has("site/src/app.js") && first.files.has("site/index.html") && first.files.has("site/package.json"));

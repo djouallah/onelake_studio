@@ -29,10 +29,10 @@ export async function siteDev({ extra = {}, port }) {
   // Rayfin's agent files are no part of the page: one stands in for what scripts/function-bundle.mjs makes.
   await put("agent-files.json", JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n" }));
   const files = await appFiles({
-    plan: { name: "site-dev", title: "site-dev", modelPath: "", workspace: NOBODY, lakehouse: NOBODY, catalogUrl: "", tables: [], engine: "duckdb" },
+    plan: { name: "site-dev", title: "site-dev", modelPath: "", workspace: NOBODY, lakehouse: NOBODY, catalogUrl: "", tables: [] },
     state: null, model: {}, fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"),
     daxSqlDir: join(root, "vendor", "npm", PINS.daxSql), agentFiles: join(project, "agent-files.json") });
-  setStatic(files, await staticFiles(join(root, "vendor", "webapp"), "duckdb"));
+  setStatic(files, await staticFiles(join(root, "vendor", "webapp")));
   for (const [path, bytes] of files) await put(path, bytes);
   for (const [path, text] of Object.entries(extra)) await put(PAGE + path, text);
   console.log(`the project: ${project}`);

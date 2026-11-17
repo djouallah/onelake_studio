@@ -129,7 +129,7 @@ try {
   app = await serveApp("the app", {
     plan: { warnings: [], title: "fabricapp", name: "fabricapp", modelName: "fabricapp", fileName: "fabricapp.bim",
             workspace: ws, lakehouse: lh, catalogUrl, modelPath: `${WS}/${LAKEHOUSE}.Lakehouse/Files/fabricapp.bim`, tables: [["t", TABLE]] },
-    model: bim, engine: "duckdb",
+    model: bim,
     // The function's secrets are the export's; its storage token, ours.
     env: { CATALOG_URL: catalogUrl, TABLES: TABLE, RAYFIN_LOCAL_TOKEN_STORAGE: ONELAKE_TOKEN },
     extra: { "test.html": '<!doctype html><meta charset="utf-8"><body><script type="module" src="./test.js"></script>', "test.js": pageOf(queries) },

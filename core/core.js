@@ -96,7 +96,7 @@ function createCore({
   readmePath, pageDir, build, editorVersion, outputLog, windowLog, exportUi, view, closePanel, closeAllTabs, post,
   notify, warn, showError, setContext, onAccountChange, subscribe, log, mark,
 }) {
-  const { getSession, hostToken, fabricToken, appToken, sqlToken, forgetToken, signedOutByChoice, accountKey, queryAccountOf,
+  const { getSession, hostToken, fabricToken, appToken, forgetToken, signedOutByChoice, accountKey, queryAccountOf,
           knownAccount, rememberAccount } = signIn;
   const { logRead, logBoot, logCatalog } = readLog;
   const { catalogTtlMs, tableTtlMs, keepLimitBytes } = settings;
@@ -604,7 +604,7 @@ function createCore({
   // The one OneLake writer (onelakewrite.js): Upload's files.
   const writer = createOneLakeWriter({ getToken: hostToken });
   const exporter = createExport({
-    connectivity, modules: () => agent.modules(), appToken, powerBiToken: fabricToken, sqlToken, fabric,
+    connectivity, modules: () => agent.modules(), appToken, powerBiToken: fabricToken, fabric,
     memento, extensionDir, pageDir, reportDir: join(storageDir, 'reports'),
     maxRows: () => settings.maxResultRows(),
     ui: exportUi,

@@ -122,31 +122,6 @@ test("publish: item, backend, key, settings, secrets, site, function, redirect â
     itemId: ID, portalUrl: "https://app.fabric.microsoft.com/", tenantId: "tid-1" });
 });
 
-test("publish on a semantic model: its connector in every settings write, delegated, and no secret of its own", async () => {
-  const { app, calls } = appWith(happy());
-  await publish(app, { semanticModel: { workspace: WS, id: "m1" } });
-  const secrets = calls.filter(c => c.url.endsWith("/__private/secrets")).map(c => JSON.parse(c.body));
-  assert.deepEqual(secrets.map(s => s.name), ["CATALOG_URL", "TABLES"]);
-  const writes = calls.filter(c => c.url.endsWith("/projectRuntimeSettings")).map(c => JSON.parse(c.body));
-  assert.equal(writes.length, 2, "the first, and the redirect's");
-  for (const w of writes) {
-    assert.deepEqual(w.connectors, { model: { connector: "fabric-semanticmodel", version: "1",
-      config: { workspaceId: WS, itemId: "m1" }, operations: [{ name: "executeQuery" }], auth: { type: "delegated" } } });
-  }
-  // Client side: no connector at all.
-  const duck = appWith(happy());
-  await publish(duck.app);
-  assert.ok(duck.calls.filter(c => c.url.endsWith("/projectRuntimeSettings")).every(c => !("connectors" in JSON.parse(c.body))));
-});
-
-test("publish a semantic model's app as it is: no secret and no function of ours, the page calls none", async () => {
-  const { app, calls } = appWith(happy());
-  const done = await publish(app, { semanticModel: { workspace: WS, id: "m1" }, catalogUrl: null, tables: null, fn: null });
-  assert.equal(done.hostingUrl, HOST);
-  assert.equal(calls.filter(c => c.url.endsWith("/__private/secrets")).length, 0);
-  assert.equal(calls.filter(c => /\/functions\//.test(c.url)).length, 0);
-});
-
 test("publish again: the item an earlier export created, by its id, its redirect already known â€” no create, no second settings", async () => {
   const { app, calls } = appWith(happy([
     ["GET", `/workspaces/${WS}/items?type=AppBackend`, () => res(200, { value: [{ id: ID, displayName: "Sales-Model" }] })],

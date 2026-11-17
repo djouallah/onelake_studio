@@ -142,7 +142,7 @@ jobs:
       - name: Every lockfile resolves from the public registry
         run: |
           set -euo pipefail
-          for f in package-lock.json fabric_app/rayfin/functions/package-lock.json fabric_app/project/package-lock.json fabric_app/project/package-lock.model.json; do
+          for f in package-lock.json fabric_app/rayfin/functions/package-lock.json fabric_app/project/package-lock.json; do
             bad=$(grep -n '"resolved":' "$f" | grep -v '"resolved": "https://registry.npmjs.org/' | grep -v '"resolved": "rayfin/functions"' | grep -v '"resolved": "site"' || true)
             [ -z "$bad" ] || { echo "$f resolves outside registry.npmjs.org:"; echo "$bad" | head -20; exit 1; }
           done
@@ -444,8 +444,8 @@ jobs:
           # and deploys the prebuilt function; fabric_app/project/ is the project around it (a .fabricator).
           for f in fabric_app/site/index.html fabric_app/site/src/app.js fabric_app/site/src/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js \
                    fabric_app/project/vite.config.mjs fabric_app/project/gitignore fabric_app/project/gitattributes fabric_app/project/package-lock.json \
-                   fabric_app/project/package-lock.model.json fabric_app/project/validate-report.mjs \
-                   fabric-site/duckdb/index.html fabric-site/semanticModel/index.html; do
+                   fabric_app/project/validate-report.mjs \
+                   fabric-site/index.html; do
             grep -qx "extension/$f" <<<"$files" || { echo "no $f in the vsix"; exit 1; }
           done
           # The web app's files npm has not (core/vendored.js VENDOR.webapp): its page loads nothing from a CDN.
@@ -454,8 +454,7 @@ jobs:
               ...x.names.map(n => 'duckdb-ext/' + x.duckdb + '/' + x.platform + '/' + n + '.duckdb_extension.wasm')].join(' '))")
           [ -n "$webapp" ] || { echo "no web app files listed in core/vendored.js"; exit 1; }
           # The page's build holds the engine: DuckDB-WASM, from the project's own package.
-          grep -qE '^extension/fabric-site/duckdb/assets/duckdb-base-[^/]+\.wasm$' <<<"$files" || { echo "no DuckDB-WASM in fabric-site/duckdb"; exit 1; }
-          ! grep -qE '^extension/fabric-site/semanticModel/assets/.*\.wasm$' <<<"$files" || { echo "a semantic model's page carries a .wasm"; exit 1; }
+          grep -qE '^extension/fabric-site/assets/duckdb-base-[^/]+\.wasm$' <<<"$files" || { echo "no DuckDB-WASM in fabric-site"; exit 1; }
           for f in $webapp; do
             grep -qxF "extension/vendor/webapp/$f" <<<"$files" || { echo "no vendor/webapp/$f in the vsix"; exit 1; }
           done

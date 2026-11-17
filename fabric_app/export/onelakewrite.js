@@ -2,10 +2,8 @@
 // =============================================================================
 // onelakewrite.js — the files the extension writes to OneLake
 // =============================================================================
-// Two writers, each only on a person's say-so: Export to Fabric writes a semantic model opened from its
-// local copy, its .yaml, into the Files/ of the lakehouse it reads (exportflow.js), where the app reads it;
-// and Upload writes files from this computer into a folder of a lakehouse's Files/ (extension.js
-// uploadFiles). Everything else the extension reads stays in catalog.js, which writes nothing.
+// Only on a person's say-so: Upload writes files from this computer into a folder of a lakehouse's Files/
+// (extension.js uploadFiles). Everything else the extension reads stays in catalog.js, which writes nothing.
 //
 // DFS, as Azure Data Lake Storage Gen2: create a file beside the one wanted, append the bytes in pieces
 // (CHUNK), flush at their length, and rename it into place. Creating over the file itself would empty

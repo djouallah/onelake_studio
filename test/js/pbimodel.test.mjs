@@ -1,5 +1,4 @@
-// pbimodel.js: the semantic model Export to Fabric makes of a model file, in Direct Lake and
-// DirectQuery. Pure: the TMSL, and the definition as the Fabric API takes it.
+// pbimodel.js: the Direct Lake semantic model Create Semantic Model makes of a model file. Pure: the TMSL, and the definition as the Fabric API takes it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -22,7 +21,7 @@ const bim = () => ({ model: {
 const TABLES = [["fct_sales", "mart.fct_sales"]];
 
 test("Direct Lake: each table an entity partition through one OneLake expression; calculated tables kept", () => {
-  const t = semanticTmsl(bim(), "directLake", { name: "sales", tables: TABLES, lake: { workspace: WS, item: LH } });
+  const t = semanticTmsl(bim(), { name: "sales", tables: TABLES, lake: { workspace: WS, item: LH } });
   assert.equal(t.name, "sales");
   assert.equal(t.compatibilityLevel, 1604);
   assert.equal(t.model.defaultMode, undefined);
@@ -36,35 +35,20 @@ test("Direct Lake: each table an entity partition through one OneLake expression
   assert.equal(t.model.tables[0].measures[0].expression, "SUM(fct_sales[amount])", "measures as they are");
 });
 
-test("DirectQuery: each table an M partition over the lakehouse's SQL endpoint, and no expression", () => {
-  const t = semanticTmsl(bim(), "directQuery", { name: "sales", tables: TABLES,
-    sqlEndpoint: { host: "x.datawarehouse.fabric.microsoft.com", database: "nem" } });
-  const [p] = t.model.tables[0].partitions;
-  assert.equal(p.mode, "directQuery");
-  assert.equal(p.source.type, "m");
-  assert.match(p.source.expression.join("\n"), /Sql\.Database\("x\.datawarehouse\.fabric\.microsoft\.com", "nem"\)/);
-  assert.match(p.source.expression.join("\n"), /Source\{\[Schema="mart",Item="fct_sales"\]\}\[Data\]/);
-  assert.equal(t.model.expressions, undefined);
-});
-
-test("Direct Lake refuses a calculated column, which DirectQuery keeps", () => {
+test("Direct Lake refuses a calculated column", () => {
   const b = bim();
   b.model.tables[0].columns.push({ name: "double", type: "calculated", expression: "fct_sales[amount] * 2" });
-  assert.throws(() => semanticTmsl(b, "directLake", { name: "s", tables: TABLES, lake: { workspace: WS, item: LH } }),
-    /no calculated columns, and the model has fct_sales\[double\]: export it as DirectQuery/);
-  const t = semanticTmsl(b, "directQuery", { name: "s", tables: TABLES, sqlEndpoint: { host: "h", database: "d" } });
-  assert.equal(t.model.tables[0].columns[1].expression, "fct_sales[amount] * 2");
+  assert.throws(() => semanticTmsl(b, { name: "s", tables: TABLES, lake: { workspace: WS, item: LH } }),
+    /no calculated columns, and the model has fct_sales\[double\]$/);
 });
 
-test("what each mode needs, said", () => {
-  assert.throws(() => semanticTmsl(bim(), "import", { name: "s", tables: TABLES }), /no storage mode import/);
-  assert.throws(() => semanticTmsl(bim(), "directLake", { name: "s", tables: TABLES }), /lakehouse by its GUIDs/);
-  assert.throws(() => semanticTmsl(bim(), "directQuery", { name: "s", tables: TABLES }), /SQL endpoint/);
-  assert.throws(() => semanticTmsl(bim(), "directQuery", { name: "s", tables: [], sqlEndpoint: { host: "h", database: "d" } }), /no table/);
+test("what it needs, said", () => {
+  assert.throws(() => semanticTmsl(bim(), { name: "s", tables: TABLES }), /lakehouse by its GUIDs/);
+  assert.throws(() => semanticTmsl(bim(), { name: "s", tables: [], lake: { workspace: WS, item: LH } }), /no table/);
 });
 
 test("the definition: model.bim and definition.pbism, base64", () => {
-  const t = semanticTmsl(bim(), "directLake", { name: "sales", tables: TABLES, lake: { workspace: WS, item: LH } });
+  const t = semanticTmsl(bim(), { name: "sales", tables: TABLES, lake: { workspace: WS, item: LH } });
   const { parts } = definitionOf(t);
   assert.deepEqual(parts.map(p => [p.path, p.payloadType]), [["model.bim", "InlineBase64"], ["definition.pbism", "InlineBase64"]]);
   assert.deepEqual(JSON.parse(Buffer.from(parts[0].payload, "base64").toString("utf8")), t);

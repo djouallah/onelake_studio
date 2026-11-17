@@ -46,20 +46,16 @@ const USAGE = {
                                         table: SELECT d.col, AGG("measure") FROM ws.model_semanticmodel GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
     --show-sql                       print the SQL a model query compiles to`,
-  export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the app
-                                        queries the semantic model as it is, and nothing is written
-                                        to it (open it in the tree once first).
+  export: `  export <ws> <item> <Files/path>     Export to Fabric, as Explore's button does it, for a model file
+                                        (.bim, Ossie .yaml) in Files/: the app reads its tables with
+                                        DuckDB in the browser.
                                         VS Code asks where the local copy goes and for the OK.
                                         The app is one file, <model>.fabricator: the model's Report,
-                                        site/report.json in the zip, yours to grow
-  export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/: the
-                                        app reads its tables client side, DuckDB in the browser.
-                                        For an app on a semantic model of it, semanticmodel first,
-                                        then export that model`,
+                                        site/report.json in the zip, yours to grow`,
   semanticmodel: `  semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file (.bim,
                                         Ossie .yaml) in Files/, named for the file, in its workspace,
-                                        and no app. Asks in VS Code before it updates one of that name
-    --mode directlake|directquery     on Direct Lake (the default) or the SQL endpoint`,
+                                        on Direct Lake, and no app. Asks in VS Code before it updates
+                                        one of that name`,
   report: `  report <ws> <model>                 a model's Report, the pages of tiles its Report tab draws, as JSON:
                                         where it is kept, and every field a tile can name
   report <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
@@ -99,7 +95,7 @@ ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
 const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded", "--open": "open" };
-const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name", "--mode": "mode", "--set": "set" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name", "--set": "set" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {

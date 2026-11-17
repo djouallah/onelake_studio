@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A Fabric app runs on DuckDB in the browser, and nothing else.** Export to Fabric is for a model file (an Ossie
+  `.yaml` or a `.bim`). A Power BI semantic model has no Export to Fabric button any more, and the command line's
+  `export <ws> <model>` is gone: `export <ws> <item> <Files/path>` is the one form. An app exported earlier on a
+  semantic model is not opened or published by this version.
+- **Create Semantic Model makes a Direct Lake model, and asks only before it replaces one.** DirectQuery is gone, and
+  with it the dialog's two buttons and the command line's `--mode`.
 - **An exported app is a Vite project.** Its page is `site/index.html` and `site/src/`, and it imports its packages
   from npm (the Rayfin SDK, DuckDB-WASM, Arrow, ECharts) where it carried copies of them: `npm run build` makes
   `site/dist/`, which is what Fabricator and `rayfin up` publish. The Rayfin SDK is imported as the page starts, as

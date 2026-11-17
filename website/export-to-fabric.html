@@ -49,19 +49,9 @@
     </section>
 
     <section>
-      <h2 id="kinds">Two kinds of app</h2>
-      <div class="table-box">
-        <table>
-          <thead>
-            <tr><th>Made from</th><th>How the app reads</th><th>What it needs</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>A Power BI semantic model</td><td>The page turns each query into DAX and runs it on the model, as the person viewing it. Nothing is written to the model.</td><td>Each viewer needs Read on the model. Whoever publishes the app needs Build on it.</td></tr>
-            <tr><td>A model file, an Ossie .yaml or a .bim</td><td>DuckDB runs in the browser and reads the lakehouse's tables. The app's function creates a read-only link for each table in the model, and for no other table.</td><td>The workspace must allow OneLake user-delegated SAS tokens. The tables are read with the rights of the app's owner.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>To put a model file's app on a Power BI semantic model instead, create the semantic model from the file first, then export that model.</p>
+      <h2 id="kinds">How the app reads</h2>
+      <p>The app is made from a model file, an Ossie .yaml or a .bim. DuckDB runs in the browser and reads the lakehouse's tables. The app's function creates a read-only link for each table in the model, and for no other table.</p>
+      <p>The workspace must allow OneLake user-delegated SAS tokens. The tables are read with the rights of the app's owner, so everyone who can open the app sees what its owner sees.</p>
       <p class="more"><a href="reference.html#export-to-fabric">Export to Fabric in detail</a></p>
     </section>
   </main>

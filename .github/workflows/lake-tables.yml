@@ -209,9 +209,8 @@ jobs:
           NO_SKIP: 1
 
   # Export to Fabric, for real, as the same identity (test/js/export-fabric.test.mjs): a model file of
-  # lakeci_plain published as a client-side app with its function, and made a Direct Lake semantic model.
+  # lakeci_plain published as an app with its function, and made a Direct Lake semantic model.
   # The app (lakeci-explore) and the model (lakeci_model) stay in the workspace, replaced by each run.
-  # A semantic model's own app is not published here: Fabric refuses a service principal its connector.
   export:
     needs: onelake
     runs-on: ubuntu-26.04
@@ -306,15 +305,10 @@ jobs:
           bin=$(find "$RUNNER_TEMP" -type f -name rayfin-local | head -1)
           "$bin" --version
           echo "RAYFIN_LOCAL=$bin" >> "$GITHUB_ENV"
-      # The app whole, from no session (test/js/run-fabric-local.mjs), both kinds: the page signs in with its own
-      # sign-in, in a tab and inside the frame that plays Fabric, asks its function for the tables or its connector
-      # for the model, and draws its Report.
+      # The app whole, from no session (test/js/run-fabric-local.mjs): the page signs in with its own
+      # sign-in, in a tab and inside the frame that plays Fabric, asks its function for the tables, and draws its Report.
       - if: always()
         run: node test/js/run-fabric-local.mjs
-        env:
-          # Power BI answers the CI identity's DAX on lakeci_model (it did on 2026-11-11, where it was thought to refuse it):
-          # the app on a semantic model draws its Report. `refused` is for an identity Power BI turns down.
-          FABRIC_LOCAL_MODEL: answers
       # The app's data source on a large table (test/js/run-fabric-app.mjs): the same sign-in and function, then
       # aemo.price read from OneLake with the function's SAS, each query whole and shared out between the engines.
       - if: always()

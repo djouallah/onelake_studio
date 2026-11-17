@@ -1,14 +1,12 @@
 // =============================================================================
-// app.js — Export to Fabric's app: a semantic model's Report, and its Explore
+// app.js — Export to Fabric's app: a model's Report
 // =============================================================================
 // OneLake Studio's own Report (explore/view.js, its Report page alone), over the data source of
 // this app (storage/data.js): it signs in, its function says where the tables are, and DuckDB-WASM
-// reads them in this browser. On a semantic model (engine.json), the data source is
-// storage/modeldata.js instead: each query runs as DAX on the semantic model, as the person signed
-// in, and this page loads no DuckDB. Either way the model is model.json, the model as exported. Nothing
+// reads them in this browser. The model is model.json, the model as exported. Nothing
 // here is specific to one model; the export writes only the site's own files, beside index.html
 // (site/public/ in the project): rayfin.config.json (the backend), explore.json (the shelves the first
-// view shows), model.json and engine.json. The Report page is report.json (explore/report.js draws
+// view shows), model.json and settings.json. The Report page is report.json (explore/report.js draws
 // it), which no export writes over: Studio's Report tab (Add to report, a tile's ✕) and the zip's owner
 // grow it, and here it only reads.
 // The page's packages are npm's (the project's site/package.json), bundled by Vite.
@@ -67,9 +65,9 @@ const siteJson = (name, missing) => fetch(siteUrl(name), { cache: "no-cache" })
   .then(r => (r.ok ? r.text() : null), () => null)
   .then(text => { try { return text == null ? missing : JSON.parse(text); } catch { return missing; } });
 
-// What the page runs on and its Report, asked for now, together: each was asked for when the one before had
+// The page's settings and its Report, asked for now, together: each was asked for when the one before had
 // answered, and report.json only once the engines were up.
-const engineRead = siteJson("engine.json", {});
+const settingsRead = siteJson("settings.json", {});
 const reportRead = siteJson("report.json", null);
 
 // The Report's tiles (explore/report.js), as the export wrote them: report.json.
@@ -97,12 +95,9 @@ export async function start() {
   try {
     // The shelves a first Visual would show (explore.json): the app shows the Report alone, so they aren't fetched.
     const first = null;
-    const { engine, name: modelName, maxRows } = (await engineRead) || {};
-    // This app's one data source (storage/source.js, which the export writes): DuckDB in the browser over the
-    // tables, or a semantic model asked through its connector. The page is built with that one only.
-    const source = await import("./storage/source.js");
-    if (engine === "semanticModel") return await startModel(source, first, modelName, maxRows);
-    const { createDataSource } = source;
+    const { maxRows } = (await settingsRead) || {};
+    // The data source, a part of the page of its own: DuckDB in the browser over the tables.
+    const { createDataSource } = await import("./storage/data.js");
     const data = createDataSource({
       onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
       onProgress: p => status(p ? (p.detail || p.label) : ""),
@@ -140,55 +135,4 @@ export async function start() {
     if (boot.el()) boot.fail(`Error: ${e?.message || e}`);
     else status(`Error: ${e?.message || e}`, "error");
   }
-}
-
-// The semantic model refused the person signed in (storage/modeldata.js): one box over the page,
-// once, as every query would be refused the same way.
-function showRefused(model) {
-  if (document.getElementById("refused")) return;
-  const card = document.createElement("div");
-  for (const t of [`You can't read the semantic model ${model}.`, "Ask its owner for access to it, then reload."]) {
-    card.append(Object.assign(document.createElement("p"), { textContent: t }));
-  }
-  const box = Object.assign(document.createElement("div"), { id: "refused" });
-  box.setAttribute("role", "alert");
-  box.append(card);
-  document.body.append(box);
-}
-
-// On a semantic model: Explore's queries over the model go to the data source as they are written;
-// it turns them into DAX and runs them there, so the page's compiler passes them through.
-async function startModel(source, first, modelName, maxRows) {
-  const { createModelSource, MAX_ROWS: MODEL_MAX_ROWS } = source;
-  const data = createModelSource({ onStatus: s => boot.step(s) });
-  await data.init();
-  boot.step("Building Explore…");
-  const doc = data.model();
-  const bim = Array.isArray(doc.datasets) ? ossieToTmsl(doc) : doc;
-  const name = /^[A-Za-z_]\w*$/.test(String(doc.name ?? "")) ? doc.name : "model";
-  document.title = `${doc.name || name} · Explore`;
-  titled(doc.name || name);
-  status("");
-  boot.done();
-  const run = async sql => {
-    try { return await data.run(sql); }
-    catch (e) { if (e.refused) showRefused(modelName || String(doc.name || name)); throw e; }
-  };
-  mountExplore(document.getElementById("explore"), {
-    name, tmsl: tmslOf(bim),
-    compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
-    run,
-    // A semantic model answers 100,000 rows at most (storage/modelrows.js).
-    maxRows: Math.min(maxRows || MODEL_MAX_ROWS, MODEL_MAX_ROWS),
-    // Each tile is a request to the model: four at a time, not one after another.
-    report, pages: ["report"], reportParallel: 4,
-    echarts: () => echartsReady,
-    worldMap,
-    saveText: download,
-    loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
-    saveState: (key, s) => { try { localStorage.setItem(key, JSON.stringify(s)); } catch {} },
-    setStatus: status,
-    profileSet: false,
-    htmlPlan: false,
-  });
 }

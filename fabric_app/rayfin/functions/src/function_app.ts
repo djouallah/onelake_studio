@@ -27,9 +27,6 @@ const udf = new UserDataFunctions();
  * TABLES (an app setting): the tables the model names, schema.table, comma-separated.
  * Both are set by OneLake Studio's Export to Fabric, which deploys this app.
  * The workspace must allow "Authenticate with OneLake user-delegated SAS tokens".
- *
- * An app on a semantic model has no function of ours: its page turns Explore's query into DAX
- * (dax-sql) and runs it through the app's fabric-semanticmodel connector, as the person viewing it.
  */
 
 type StorageCtx = RayfinContext<BlankAppSchema, AudienceType.Storage>;

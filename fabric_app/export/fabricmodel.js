@@ -1,18 +1,15 @@
 'use strict';
 // =============================================================================
-// fabricmodel.js — Export to Fabric's semantic model, written over plain REST
+// fabricmodel.js — Create Semantic Model's semantic model, written over plain REST
 // =============================================================================
-// DirectQuery and Direct Lake exports make the model a Fabric semantic model item, which the app
-// queries in DAX. One name per workspace: the model of that name is updated, else one is
-// created. Its definition is pbimodel.js's.
+// One name per workspace: the model of that name is updated, else one is created. Its definition
+// is pbimodel.js's.
 //   find      the workspace's model of that name, or null (read only: asked before anything is written)
 //   write     create it (POST semanticModels) or replace its definition (updateDefinition), each a
 //             long-running operation, waited for
-//   frame     Direct Lake: a refresh, which points the model at the tables' current versions
-//   bindSso   DirectQuery: the SQL endpoint's credentials, OAuth2 with the caller's own identity (SSO),
-//             so every query runs as whoever asked it
+//   frame     a refresh, which points the model at the tables' current versions
 // The Fabric API with the Fabric-audience token (appToken), the Power BI API with Power BI's
-// (fabricToken), the SQL endpoint's token for the credentials (sqlToken).
+// (fabricToken).
 // No `vscode` import: the extension passes in its tokens.
 // =============================================================================
 
@@ -26,9 +23,8 @@ const POLLS = 120;   // with Retry-After, a few minutes
  * @param {object} o
  * @param {Function} o.getToken  the Fabric API's audience
  * @param {Function} o.powerBiToken  the Power BI API's
- * @param {Function} o.sqlToken  the SQL endpoint's
  */
-function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_API, pbiBase = POWER_BI_API, log = () => {},
+function createFabricModel({ getToken, powerBiToken, apiBase = FABRIC_API, pbiBase = POWER_BI_API, log = () => {},
                              sleep = ms => new Promise(r => setTimeout(r, ms)), fetchImpl = fetch }) {
   async function call(url, { token = getToken, who = 'the Fabric API', method = 'GET', body, what = url, ok = [] } = {}) {
     const r = await authedFetch(url, { getToken: token, fetchImpl, method, body, timeoutMs: FETCH_TIMEOUT_MS, who,
@@ -72,7 +68,7 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
     return { id: made.id };
   }
 
-  // Direct Lake: a refresh frames the tables (their current Delta versions), and is waited for.
+  // A refresh frames the tables (their current Delta versions), and is waited for.
   async function frame(ws, id) {
     const what = 'Refreshing the semantic model';
     const r = await pbi(`/groups/${ws}/datasets/${id}/refreshes`, {
@@ -96,35 +92,7 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
     throw new Error(`${what} did not finish`);
   }
 
-  // DirectQuery: each of the model's data sources takes OAuth2 with the caller's identity (SSO).
-  // A model someone else set up has to be taken over first: only its owner may set its credentials. That
-  // makes the caller its owner, so `onTakeOver` is asked before, and stops it by throwing.
-  async function bindSso(ws, id, { onTakeOver = async () => {} } = {}) {
-    const sources = async () => ((await json(await pbi(`/groups/${ws}/datasets/${id}/datasources`, { what: 'Reading the model\'s data sources' }))) || {}).value || [];
-    const token = await sqlToken();
-    if (!token) throw new Error('not signed in to the SQL endpoint');
-    const credentialDetails = {
-      credentialType: 'OAuth2',
-      credentials: JSON.stringify({ credentialData: [{ name: 'accessToken', value: token }] }),
-      encryptedConnection: 'Encrypted', encryptionAlgorithm: 'None', privacyLevel: 'Organizational',
-      useEndUserOAuth2Credentials: true,
-    };
-    const set = s => pbi(`/gateways/${s.gatewayId}/datasources/${s.datasourceId}`, {
-      method: 'PATCH', body: JSON.stringify({ credentialDetails }), what: 'Setting the SQL endpoint\'s credentials' });
-    let list = await sources();
-    try {
-      for (const s of list) await set(s);
-    } catch (e) {
-      if (e.status !== 401 && e.status !== 403) throw e;
-      await onTakeOver();
-      await pbi(`/groups/${ws}/datasets/${id}/Default.TakeOver`, { method: 'POST', what: 'Taking over the semantic model' });
-      list = await sources();
-      for (const s of list) await set(s);
-    }
-    log(`semantic model ${id}: ${list.length} data source(s) on SSO`);
-  }
-
-  return { find, write, frame, bindSso };
+  return { find, write, frame };
 }
 
 const lc = s => String(s).toLowerCase();

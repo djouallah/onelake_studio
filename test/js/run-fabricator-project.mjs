@@ -16,7 +16,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { unzip, engineOf, siteBuild, SITE, DEPLOYMENTS, CONFIG, FABRICATOR_RECORD, MARKER } = require("../../fabric_app/export/exportapp.js");
+const { unzip, siteBuild, SITE, DEPLOYMENTS, CONFIG, FABRICATOR_RECORD, MARKER } = require("../../fabric_app/export/exportapp.js");
 const { WEBAPP } = require("../../core/vendored.js");
 
 const fail = m => { console.log(`FAIL ${m}`); process.exit(1); };
@@ -115,27 +115,24 @@ const listed = async dir => (await readdir(dir, { recursive: true, withFileTypes
 const built = await listed(dist);
 const copied = [...entries.keys()].filter(p => p.startsWith(SITE)).map(p => p.slice(SITE.length)).sort();
 for (const p of copied) if (!built.includes(p)) fail(`the build lacks ${p}, a file of site/public/`);
-const engine = engineOf(entries, null);
-if (engine === "duckdb") {
-  if (!built.some(p => /^assets\/duckdb-base-[^/]+\.wasm$/.test(p))) fail(`the build has no DuckDB-WASM: ${built.join(", ")}`);
-  if (!built.some(p => /^assets\/duckdb-browser-base\.worker-[^/]+\.js$/.test(p))) fail(`the build has no DuckDB worker: ${built.join(", ")}`);
-  if (!built.some(p => /^assets\/blockcache-[^/]+\.js$/.test(p))) fail(`the build has no store script (blockcache.js): ${built.join(", ")}`);
-  for (const x of WEBAPP.extensions) {
-    if (!built.includes(`duckdb-ext/${WEBAPP.duckdb}/wasm_eh/${x}.duckdb_extension.wasm`)) fail(`the build has no ${x} extension`);
-  }
+if (!built.some(p => /^assets\/duckdb-base-[^/]+\.wasm$/.test(p))) fail(`the build has no DuckDB-WASM: ${built.join(", ")}`);
+if (!built.some(p => /^assets\/duckdb-browser-base\.worker-[^/]+\.js$/.test(p))) fail(`the build has no DuckDB worker: ${built.join(", ")}`);
+if (!built.some(p => /^assets\/blockcache-[^/]+\.js$/.test(p))) fail(`the build has no store script (blockcache.js): ${built.join(", ")}`);
+for (const x of WEBAPP.extensions) {
+  if (!built.includes(`duckdb-ext/${WEBAPP.duckdb}/wasm_eh/${x}.duckdb_extension.wasm`)) fail(`the build has no ${x} extension`);
 }
 // The store's script is a worker's, loaded with importScripts: built as it is, never as a module.
 const blockcache = built.find(p => /^assets\/blockcache-[^/]+\.js$/.test(p));
 if (blockcache && /^\s*(import|export)\b/m.test(await readFile(join(dist, blockcache), "utf8"))) fail("the build made a module of blockcache.js: a worker loads it with importScripts");
 ok(`the page builds (npm run build in site/): ${built.length} files, ${copied.length} of them site/public/'s`);
-// What OneLake Studio uploads for this engine is that same build, made when the extension was packaged.
-const ours = [...(await siteBuild(fileURLToPath(new URL("../../fabric-site", import.meta.url)), engine)).keys()].sort();
+// What OneLake Studio uploads is that same build, made when the extension was packaged.
+const ours = [...(await siteBuild(fileURLToPath(new URL("../../fabric-site", import.meta.url)))).keys()].sort();
 const theirs = built.filter(p => !copied.includes(p));
 if (JSON.stringify(ours) !== JSON.stringify(theirs)) {
-  fail(`OneLake Studio's page is not the project's build.\n  only in fabric-site/${engine}: ${ours.filter(p => !theirs.includes(p)).join(", ") || "none"}` +
+  fail(`OneLake Studio's page is not the project's build.\n  only in fabric-site: ${ours.filter(p => !theirs.includes(p)).join(", ") || "none"}` +
        `\n  only in the project's build: ${theirs.filter(p => !ours.includes(p)).join(", ") || "none"}`);
 }
-ok(`OneLake Studio's page (fabric-site/${engine}) is the project's build, file for file: ${ours.length} files`);
+ok(`OneLake Studio's page (fabric-site/) is the project's build, file for file: ${ours.length} files`);
 
 // The page, as Fabricator previews it: the project's Vite, started in staticHosting's folder (site/).
 const PORT = 5179;
@@ -163,8 +160,7 @@ try {
   if (!/<span id="build">build __BUILD__ · <\/span>Explore, exported from/.test(html)) fail(`the page is not the app's: ${html.slice(0, 1500)}`);
   if (!/<script type="module" src="[^"]*\/src\/main\.js[^"]*"><\/script>/.test(html)) fail(`the page does not start src/main.js: ${html.slice(0, 1500)}`);
   // Each script as Vite serves it: a package it cannot resolve is an error here, not a 200.
-  for (const p of ["/src/main.js", "/src/app.js", "/src/storage/auth.js", "/src/storage/source.js",
-                   engine === "duckdb" ? "/src/storage/data.js" : "/src/storage/modeldata.js"]) {
+  for (const p of ["/src/main.js", "/src/app.js", "/src/storage/auth.js", "/src/storage/data.js"]) {
     const text = await (await get(p, `the page's ${p}`)).text();
     if (/\[plugin:vite:|Failed to resolve import/.test(text)) fail(`Vite could not serve ${p}: ${text.slice(0, 1500)}`);
   }

@@ -507,21 +507,20 @@ test("export: published, declined, failed, each its own code", async () => {
   } finally { await close(); }
 });
 
-test("semanticmodel: the model file read from Files/, made on the mode asked; declined and failed, their own codes", async () => {
+test("semanticmodel: the model file read from Files/; declined and failed, their own codes", async () => {
   const declined = message => Object.assign(new Error(message), { declined: true });
   const asked = [];
   let answer;
   const { agent, close } = await richAgent({ createModel: async x => { asked.push(x); return answer(); } });
   try {
     await withAgent(agent, async ({ cli }) => {
-      answer = async () => "Semantic model sales created in ws (DirectQuery).";
-      let r = await cli(["semanticmodel", "ws", "data", "Files/semantic_model/sales.yaml", "--mode", "directquery", "--json"]);
+      answer = async () => "Semantic model sales created in ws (Direct Lake).";
+      let r = await cli(["semanticmodel", "ws", "data", "Files/semantic_model/sales.yaml", "--json"]);
       assert.equal(r.code, EXIT.OK, r.stderr);
-      assert.equal(JSON.parse(r.stdout).data.message, "Semantic model sales created in ws (DirectQuery).");
+      assert.equal(JSON.parse(r.stdout).data.message, "Semantic model sales created in ws (Direct Lake).");
       assert.deepEqual(asked[0], { file: "sales.yaml", text: "model file ws/data.Lakehouse/Files/semantic_model/sales.yaml",
-                                   workspace: "ws", path: "data.Lakehouse/Files/semantic_model/sales.yaml", mode: "directquery" });
+                                   workspace: "ws", path: "data.Lakehouse/Files/semantic_model/sales.yaml" });
       await cli(["semanticmodel", "ws", "data", "semantic_model/sales.yaml"]);
-      assert.equal(asked[1].mode, "directlake", "Direct Lake unless asked");
       assert.equal(asked[1].path, "data.Lakehouse/Files/semantic_model/sales.yaml", "Files/ is optional");
 
       answer = async () => { throw declined("Not created: sales already exists in ws."); };

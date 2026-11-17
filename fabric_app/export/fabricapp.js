@@ -11,13 +11,11 @@
 //      (NAME_TAKEN): it may be someone's own app.
 //   2. its backend: extended-properties, polled until it names BaaSEndpoint
 //   3. its publishable key (the browser SDK's)
-//   4. its runtime settings: Fabric sign-in, the function's identity, static hosting PROTECTED;
-//      on a semantic model its connector too (MODEL_CONNECTOR), where the page runs its DAX as the
-//      person viewing it, never as the app; Fabric makes the connector a function of its own
+//   4. its runtime settings: Fabric sign-in, the function's identity, static hosting PROTECTED
 //   5. the function's secrets: CATALOG_URL (the catalog) and TABLES (the tables the model names)
 //   6. the site: a zip of dist/ (with rayfin.config.json, made here) -> hostingUrl
 //   7. the function: the package built at package time (scripts/function-bundle.mjs), then
-//      its deploy status polled. Client side only: on a semantic model the page calls no function
+//      its deploy status polled
 //   8. the hosting URL among the sign-in redirects (runtime settings again), when it is new
 // The order is the CLI's: settings before content, content before functions.
 // No `vscode` import: the extension passes in its token.
@@ -35,17 +33,6 @@ const FETCH_TIMEOUT_MS = 120_000;
 const MAX_ZIP_BYTES = 100 * 1024 * 1024;
 const FUNCTION_POLL_MS = 10_000;
 const FUNCTION_POLLS = 30;   // ~5 minutes, as the CLI waits
-
-// The semantic model's connector, as rayfin.yml declares one (`rayfin connector add`, rayfin-tools-common
-// 1.36's CONNECTOR_CATALOG): delegated is the only auth it takes. The page calls it by this name
-// (fabric_app/site/src/storage/modeldata.js).
-const MODEL_CONNECTOR = 'model';
-const modelConnector = ({ workspace, id }) => ({
-  name: MODEL_CONNECTOR, type: 'fabric-semanticmodel', version: '1',
-  config: { workspaceId: workspace, itemId: id },
-  operations: [{ name: 'executeQuery' }],
-  auth: { type: 'delegated' },
-});
 
 /**
  * @param {object} o
@@ -153,9 +140,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {}, exter
     return body;
   }
 
-  // A connector goes on the wire keyed by its name, its type as `connector` (rayfin-tools-common's
-  // buildRuntimeSettingsPayload).
-  const settings = (redirects, semanticModel) => ({
+  const settings = redirects => ({
     // externalEntraExchange (Rayfin's services.auth.fabric.externalEntraExchange): whoever holds a delegated Entra
     // token may trade it for a session of the app, with no browser, still under the item's permissions. Off, as
     // Rayfin has it: only the test that signs in to a published app asks for it (test/js/export-fabric.test.mjs).
@@ -165,12 +150,11 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {}, exter
     functions: { enabled: true, auth: { type: 'application' } },
     // anonymousAccess false: assetAccess "protected", the site is only for who may open the app.
     staticHosting: { enabled: true, folder: 'dist', indexDocument: 'index.html', anonymousAccess: false },
-    ...(semanticModel ? (({ name, type, ...rest }) => ({ connectors: { [name]: { connector: type, ...rest } } }))(modelConnector(semanticModel)) : {}),
     packageVersions: { '@microsoft/rayfin-cli': CLIENT_VERSION },
   });
-  const postSettings = (ws, id, redirects, semanticModel) => call(`${endpoint(ws, id)}/__private/projectRuntimeSettings`, {
+  const postSettings = (ws, id, redirects) => call(`${endpoint(ws, id)}/__private/projectRuntimeSettings`, {
     method: 'POST', headers: { 'content-type': 'application/json', [MONIKER]: id },
-    body: JSON.stringify(settings(redirects, semanticModel)), retry: [408, 500, 502, 503, 504], what: 'Applying the app\'s settings' });
+    body: JSON.stringify(settings(redirects)), retry: [408, 500, 502, 503, 504], what: 'Applying the app\'s settings' });
 
   const postSecret = (ws, id, name, value) => call(`${endpoint(ws, id)}/__private/secrets`, {
     method: 'POST', headers: { 'content-type': 'application/json', [MONIKER]: id },
@@ -220,7 +204,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {}, exter
    * `onItem(id)` hears the item's id as soon as there is one: if a later step fails, a second
    * export must know this item is its own.
    */
-  async function publish({ workspaceId: ws, name, tenantId, catalogUrl, tables = null, semanticModel = null, site, fn, redirects: known = [],
+  async function publish({ workspaceId: ws, name, tenantId, catalogUrl, tables, site, fn, redirects: known = [],
                           itemId = null, takeOver = false, onItem = () => {} }) {
     const { item, created } = await ensureItem(ws, name, { itemId, takeOver });
     const id = item.id;
@@ -233,23 +217,19 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {}, exter
     const live = created ? null : await deployStatus(ws, id).catch(() => null);
     const liveOrigin = live && live.hostingUrl ? new URL(live.hostingUrl).origin : null;
     const redirects = [...new Set([...known, liveOrigin].filter(Boolean))];
-    await postSettings(ws, id, redirects, semanticModel);
-    // A semantic model's app as it is has neither: its page asks the function nothing.
-    if (catalogUrl) await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
-    if (tables) await postSecret(ws, id, 'TABLES', tables);
+    await postSettings(ws, id, redirects);
+    await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
+    await postSecret(ws, id, 'TABLES', tables);
     log(`app ${name}: uploading the site`);
     const config = { apiUrl, publishableKey: key, workspaceId: ws, itemId: id, portalUrl: PORTAL_URL, ...(tenantId ? { tenantId } : {}) };
     const hostingUrl = await deploySite(ws, id, await site(config));
-    // `fn` null: a semantic model's app, whose page calls no function of ours.
-    if (fn) {
-      log(`app ${name}: deploying the function (a few minutes)`);
-      await deployFunction(ws, id, fn);
-    }
+    log(`app ${name}: deploying the function (a few minutes)`);
+    await deployFunction(ws, id, fn);
     // Sign-in comes back to the site: its origin must be one of the app's redirects.
     const origin = hostingUrl && new URL(hostingUrl).origin;
     if (origin && !redirects.includes(origin)) {
       redirects.push(origin);
-      await postSettings(ws, id, redirects, semanticModel);
+      await postSettings(ws, id, redirects);
     }
     // `config`: the site's rayfin.config.json, which the local copy keeps for `rayfin up` and its local run.
     return { itemId: id, hostingUrl, created, redirects, config };
@@ -279,4 +259,4 @@ function tenantOf(token) {
   } catch (_) { return null; }
 }
 
-module.exports = { createFabricApp, tenantOf, modelConnector, MONIKER, CLIENT_VERSION, MODEL_CONNECTOR };
+module.exports = { createFabricApp, tenantOf, MONIKER, CLIENT_VERSION };

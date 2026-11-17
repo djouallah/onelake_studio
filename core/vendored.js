@@ -38,9 +38,6 @@ const WEBAPP = {
   // Kept on the same version: they share rayfin-auth and rayfin-lib, one module each.
   rayfinClient: '@microsoft/rayfin-client@1.36.2',
   rayfinFabric: '@microsoft/rayfin-auth-provider-fabric@1.36.2',
-  // On a semantic model (storage/modeldata.js): the fabric-semanticmodel connector's runtime, which
-  // decodes its Arrow answer with an Arrow of its own (not `arrow` above, DuckDB's).
-  rayfinSemanticModel: '@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2',
   echarts: PINS.echarts,
   worldMap: PINS.worldMap,
 };

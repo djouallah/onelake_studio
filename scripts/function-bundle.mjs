@@ -1,8 +1,7 @@
 // =============================================================================
 // function-bundle.mjs — Export to Fabric's function, as the deploy package Fabric takes
 // =============================================================================
-// The app's functions (openCatalog, and semanticModel for DirectQuery and Direct Lake: fabric_app/rayfin/
-// functions, tracked here) are TypeScript with npm dependencies. Fabric takes them as a zip of one esbuild bundle plus its
+// The app's function (openCatalog: fabric_app/rayfin/functions, tracked here) is TypeScript with npm dependencies. Fabric takes them as a zip of one esbuild bundle plus its
 // metadata (deploymetadata.json, generated from the source by the TypeScript compiler), the
 // two sent as a multipart form (fabric_app/export/fabricapp.js). Nothing in either names an item, a
 // workspace or a secret's value, so the package is built ONCE, here, at package time, and

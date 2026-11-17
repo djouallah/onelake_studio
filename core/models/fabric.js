@@ -126,16 +126,6 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     return list.map(i => ({ id: i.id, name: i.displayName, type: i.type }));
   }
 
-  // The workspace's items a SQL endpoint answers for, with the endpoint's TDS host:
-  // [{ name, type, host }] for the workspace's lakehouses, which say it in sqlEndpointProperties; every
-  // item of a workspace has the same host, and is a database there by its name.
-  async function sqlEndpoints(workspace) {
-    const id = await workspaceId(workspace);
-    const lakes = await listAll(`/workspaces/${id}/lakehouses`, `Listing lakehouses in ${workspace}`);
-    return lakes.map(l => ({ name: l.displayName, type: 'Lakehouse', host: l.properties?.sqlEndpointProperties?.connectionString }))
-      .filter(i => i.host).sort((a, b) => byName(a.name, b.name));
-  }
-
   // [{ id, name, description }] by name.
   async function listSemanticModels(workspace) {
     const id = await workspaceId(workspace);
@@ -213,7 +203,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, sqlEndpoints, listSemanticModels, listApps, getBim, reset };
+  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, getBim, reset };
 }
 
 module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath };

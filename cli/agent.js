@@ -24,8 +24,7 @@
 //                                    'ws.lakehouse/Files/x.parquet'; a semantic model is
 //                                    ws.model_semanticmodel, AGG("m") its measure m; and SHOW
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
-//   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model, queried
-//   export <ws> <item> <Files/path>  as it is, or a model file in Files/, read client side
+//   export <ws> <item> <Files/path>  Export to Fabric, as Explore's button: a model file in Files/
 //   semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file, and no app
 //   report <ws> <model> | <ws> <item> <Files/path>  a model's Report as JSON; --set writes one, checked first
 //   status                           this window: build, session, startup, catalog, sync, its files
@@ -728,26 +727,12 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
 
     // Export to Fabric from a shell: Explore's own export (extension.js), which asks in
     // VS Code where the local copy goes and waits for the OK there before it publishes. The
-    // model is what Explore's button would export, and what the app runs on is what it is: a
-    // semantic model, which the app queries as it is, or a model file in a lakehouse's Files/, read
-    // client side. With no Explore on screen, Explore's Pivot opens on its default view.
+    // model is a model file in a lakehouse's Files/. With no Explore on screen, Explore's Pivot
+    // opens on its default view.
     async export([ws, a, b], opts, io) {
       if (!exportApp) throw new Error('Export to Fabric is not available here');
       const say = message => { io.data({ message }); io.out(message); };
       const { semantic } = await modules();
-      if (!b) {
-        // A semantic model: its local copy, which the page writes its DAX from.
-        const m = await modelOf(ws, a, opts);
-        const path = modelPath(ws, m.name);
-        if (!await exists(path)) {
-          throw Object.assign(new Error(`${ws}/${m.name} is not downloaded yet — open it in the OneLake Studio tree, ` +
-            `or \`model "${ws}" "${m.name}" --fresh\``), { notCached: true, retry: `model "${ws}" "${m.name}" --fresh` });
-        }
-        const text = await fsp.readFile(path, 'utf8');
-        say(await exportApp({ file: path.split(/[\\/]/).pop(), name: semantic.modelName(m.name), text, state: null,
-                              model: { workspace: ws, name: m.name } }));
-        return;
-      }
       const lh = await itemOf(ws, a, await look('items', [ws], opts));
       if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
       const where = { workspace: lh.workspace, path: `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}` };
@@ -759,8 +744,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
 
     // Create Semantic Model from a shell: the tree's own (exportflow.js), which asks in VS Code
     // before it updates a model of that name. A model file in a lakehouse's Files/, made into the
-    // Power BI semantic model of its name in that workspace, and no app. --mode directlake (the
-    // default) or directquery.
+    // Power BI semantic model of its name in that workspace, on Direct Lake, and no app.
     async semanticmodel([ws, a, b], opts, io) {
       if (!createModel) throw new Error('Create Semantic Model is not available here');
       const lh = await itemOf(ws, a, await look('items', [ws], opts));
@@ -768,7 +752,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const path = `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}`;
       const file = path.split('/').pop();
       const text = Buffer.from(await onelake.readBytes(lh.workspace, path)).toString('utf8');
-      const message = await createModel({ file, text, workspace: lh.workspace, path, mode: opts.mode != null ? String(opts.mode) : 'directlake' });
+      const message = await createModel({ file, text, workspace: lh.workspace, path });
       io.data({ message });
       io.out(message);
     },
@@ -930,7 +914,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json,
-        explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, mode: opts.mode, set: opts.set, seen, signal,
+        explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, set: opts.set, seen, signal,
       }, answer);
       // An answer off disk says how old it is: the oldest listing it was made of.
       if (seen.length) {

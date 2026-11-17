@@ -763,19 +763,12 @@ async function activateInner(context) {
     });
   }
 
-  // A .fabricator (or an earlier .fabricapp): a semantic model's app opens that model, as the tree's click does; a client-side app
-  // opens on its own model.yaml, the app as it is, and Export to Fabric there publishes this file. Either
-  // way on the Report page, which draws this file (exportflow.js openApp).
+  // A .fabricator (or an earlier .fabricapp) opens on its own model.yaml, the app as it is, and Export to
+  // Fabric there publishes this file. On the Report page, which draws this file (exportflow.js openApp).
   async function openAppFile(fsPath) {
     if (!core.openApp) throw new Error('OneLake Studio is still starting');
     const app = await core.openApp(fsPath);
     const { workspace, model } = app.report;
-    if (app.semanticModel || app.engine === 'semanticModel') {
-      const name = app.semanticModel ? app.semanticModel.name : model;
-      const m = (await onelake.models(workspace)).find(x => (app.semanticModel ? x.id === app.semanticModel.id : x.name === name));
-      if (!m) throw new Error(`${workspace} has no semantic model ${name}: it was deleted or renamed`);
-      return openModel({ kind: 'semanticModel', workspace, model: m.name, modelId: m.id }, { openOn: 'report', key: pathKey(fsPath) });
-    }
     if (app.copy) {
       // Named for its model's format (model.ossie.yaml, model.bim): the tab reads the text by its name.
       return openText({ name: `${model}${app.copy.name.replace(/^model/, '')}`, path: fsPath, text: app.copy.text, workspace, modelName: model,
@@ -1124,18 +1117,18 @@ async function activateInner(context) {
     // there is asked about, each file is written beside and renamed into place, and the folder is
     // listed again. Needs a connection, as Export does.
     // A .bim or .yaml in a lakehouse's Files/ made into the Power BI semantic model of its name, in
-    // its workspace, and no app (exportflow.js createSemanticModel): Direct Lake or DirectQuery,
-    // picked first. Needs a connection, as Export does.
+    // its workspace, and no app (exportflow.js createSemanticModel), on Direct Lake. Needs a connection,
+    // as Export does.
     vscode.commands.registerCommand('onelakeStudio.createSemanticModel', async n => {
       if (!n || n.kind !== 'file' || !/\.(bim|ya?ml)$/i.test(String(n.path))) return;
       if (connectivity.offline()) { vscode.window.showInformationMessage('Create Semantic Model needs a connection.'); return; }
       const file = basename(String(n.path));
       const name = file.replace(/\.[^.]+$/, '');
-      // What it runs on is asked in createSemanticModel's one dialog, with whether it replaces one.
+      // Whether it replaces one of that name is asked in createSemanticModel.
       try {
         const text = Buffer.from(await onelake.readBytes(n.workspace, n.path)).toString('utf8');
         if (!createSemanticModel) throw new Error('OneLake Studio is still starting');
-        // Said in the status bar from the click to the end: Fabric is asked about the model before the dialog,
+        // Said in the status bar from the click to the end: Fabric is asked about the model first,
         // and a Direct Lake refresh can take minutes after it.
         const said = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Create Semantic Model: ${name}` },
           () => createSemanticModel({ file, name, text, workspace: n.workspace, path: n.path }));

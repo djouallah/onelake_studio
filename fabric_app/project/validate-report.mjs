@@ -27,13 +27,12 @@ const json = async name => {
 };
 
 const doc = await json("model.json");
-const engine = (await json("engine.json").catch(() => ({}))).engine || "duckdb";
 const bim = Array.isArray(doc.datasets) ? ossieToTmsl(doc) : doc;
 const fields = modelFields(tmslOf(bim));
 // What SQL calls the model, as app.js names it.
 const name = /^[A-Za-z_]\w*$/.test(String(doc.name ?? "")) ? doc.name : "model";
-// On a model the page reads with DuckDB, it compiles each tile's query to SQL over the tables (app.js).
-const compiler = engine === "duckdb" ? createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS }) : null;
+// The page compiles each tile's query to SQL over the tables (app.js).
+const compiler = createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS });
 // --fields: every field a tile can name, as a tile names it, by table, and nothing checked.
 if (process.argv.includes("--fields")) {
   for (const t of fieldList(fields)) {
@@ -49,11 +48,9 @@ const measures = [...fields.byId.values()].filter(f => f.kind === "measure").map
 const spec = await json("report.json");
 if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error("site/public/report.json is not { pages: [...] }");
 const { problems, pages, tiles, queries } = checkReport(spec, fields, { name });
-if (compiler) {
-  for (const { where, sql } of queries) {
-    try { compileModelSql(compiler, sql, name); }
-    catch (e) { problems.push(`${where}: its query does not compile: ${String(e.message).split("\n")[0]}`); }
-  }
+for (const { where, sql } of queries) {
+  try { compileModelSql(compiler, sql, name); }
+  catch (e) { problems.push(`${where}: its query does not compile: ${String(e.message).split("\n")[0]}`); }
 }
 
 if (problems.length) {
@@ -63,4 +60,4 @@ if (problems.length) {
   console.log(`Its measures: ${measures.join(", ")}`);
   process.exit(1);
 }
-console.log(`site/public/report.json: ${pages} page${pages > 1 ? "s" : ""}, ${tiles} tile${tiles === 1 ? "" : "s"}, every field in the model${compiler ? ", every query compiles" : ""}`);
+console.log(`site/public/report.json: ${pages} page${pages > 1 ? "s" : ""}, ${tiles} tile${tiles === 1 ? "" : "s"}, every field in the model, every query compiles`);

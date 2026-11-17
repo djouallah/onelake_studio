@@ -3,9 +3,7 @@
 # Fabric REST API from the local copy, one .fabricator file, without reading this file; Fabricator
 # and `rayfin up` deploy the same project with it. The site is site/, built by Vite into site/dist/
 # (site/vite.config.mjs, which serves it locally too). The id, the name and the sign-in
-# redirects are each app's own (written in by the export). Exported as DirectQuery or Direct Lake,
-# the export adds a top-level `connectors:` block: the semantic model, as a fabric-semanticmodel
-# connector with delegated auth, which the page queries as the person viewing it.
+# redirects are each app's own (written in by the export).
 id: explore
 name: explore
 version: 1.0.0

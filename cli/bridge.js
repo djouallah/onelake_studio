@@ -44,13 +44,13 @@ const COMMANDS = {
   health: { usage: 'health <ws> <item>', min: 2, max: 2, flags: ['csv', 'json', 'limit'] },
   model: { usage: 'model <ws> <model>', min: 2, max: 2, flags: ['fresh', 'json'] },
   sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['csv', 'json', 'limit', 'showSql', 'fresh'] },
-  export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json'] },
-  semanticmodel: { usage: 'semanticmodel <ws> <item> <Files/path>', min: 3, max: 3, flags: ['json', 'mode'] },
+  export: { usage: 'export <ws> <item> <Files/path>', min: 3, max: 3, flags: ['json'] },
+  semanticmodel: { usage: 'semanticmodel <ws> <item> <Files/path>', min: 3, max: 3, flags: ['json'] },
   report: { usage: 'report <ws> <model>, or report <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json', 'set'] },
   status: { usage: 'status', max: 0, flags: ['json'] },
   log: { usage: 'log [<text>]', max: 1, flags: ['json', 'limit'] },
 };
-const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', showSql: '--show-sql', downloaded: '--downloaded', workspace: '--workspace', name: '--name', open: '--open', mode: '--mode', set: '--set' };
+const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', showSql: '--show-sql', downloaded: '--downloaded', workspace: '--workspace', name: '--name', open: '--open', set: '--set' };
 
 /** What is wrong with a request, or null: asked before the extension is, and by it. */
 function checkRequest(request) {
@@ -71,9 +71,6 @@ function checkRequest(request) {
     if (opts[key] != null && opts[key] !== false && !c.flags.includes(key)) return `${flag} is not an option of ${name}`;
   }
   if (opts.csv && opts.json) return '--csv or --json, not both';
-  if (opts.mode != null && !/^(directquery|directlake)$/i.test(String(opts.mode))) {
-    return `--mode takes directlake or directquery, not "${opts.mode}"`;
-  }
   if (opts.set != null && typeof opts.set !== 'string') return '--set takes a Report: a JSON file, or - for stdin';
   if (opts.limit != null && !(Number.isInteger(Number(opts.limit)) && Number(opts.limit) > 0)) {
     return `--limit takes a positive whole number, not "${opts.limit}"`;

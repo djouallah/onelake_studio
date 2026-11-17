@@ -1,5 +1,5 @@
-// fabricmodel.js: Export to Fabric's semantic model, created or updated over the Fabric REST API,
-// framed (Direct Lake) or put on SSO (DirectQuery) over the Power BI API. No network: `fetch` is a
+// fabricmodel.js: Create Semantic Model's semantic model, created or updated over the Fabric REST API,
+// and framed over the Power BI API. No network: `fetch` is a
 // script of canned answers, and every request is kept to be checked.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -30,7 +30,7 @@ function modelWith(answers) {
     }
     return res(404, { message: `no answer for ${method} ${url}` });
   };
-  const model = createFabricModel({ getToken: async () => "fab", powerBiToken: async () => "pbi", sqlToken: async () => "sql",
+  const model = createFabricModel({ getToken: async () => "fab", powerBiToken: async () => "pbi",
                                     sleep: async ms => { slept.push(ms); }, fetchImpl });
   return { model, calls, slept };
 }
@@ -85,18 +85,4 @@ test("frame: a Direct Lake refresh with Power BI's token, waited for until it co
     ["GET", "/r2", () => res(200, { status: "Failed", messages: [{ message: "table missing" }] })],
   ]);
   await assert.rejects(failed.model.frame(WS, "m1"), /Refreshing the semantic model failed — table missing/);
-});
-
-test("bindSso: every data source on OAuth2 with the caller's identity; taken over when it is someone else's", async () => {
-  const { model, calls } = modelWith([
-    ["GET", `/groups/${WS}/datasets/m1/datasources`, () => res(200, { value: [{ gatewayId: "g1", datasourceId: "d1" }] })],
-    ["PATCH", "/gateways/g1/datasources/d1", (_, n) => res(n < 2 ? 403 : 200, n < 2 ? { error: { code: "NotOwner" } } : {})],
-    ["POST", `/groups/${WS}/datasets/m1/Default.TakeOver`, () => res(200, {})],
-  ]);
-  await model.bindSso(WS, "m1");
-  assert.deepEqual(calls.map(c => c.method), ["GET", "PATCH", "POST", "GET", "PATCH"]);
-  const { credentialDetails: c } = JSON.parse(calls[4].body);
-  assert.equal(c.credentialType, "OAuth2");
-  assert.equal(c.useEndUserOAuth2Credentials, true);
-  assert.deepEqual(JSON.parse(c.credentials), { credentialData: [{ name: "accessToken", value: "sql" }] });
 });

@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
 | **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
-| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
+| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
 | **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Create Semantic Model and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
@@ -813,8 +813,7 @@ A model file, an app's file or a `.sql` file on this machine opens in a tab, as 
   [`core/models/models.js`](../core/models/models.js)). One whose tables more than one workspace could hold says so, and is opened from
   its lakehouse's `Files/` instead. Another YAML is a document, and says it is not a model.
 - **An app's file**, `.fabricator`, or an earlier export's `.fabricapp` (`openApp` in [`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)): on the Report page, which
-  draws this file; its Add to report writes here, and its next export saves here. A semantic model's app opens that
-  model, as the tree's click does. A client-side app opens on its own `model.ossie.yaml`, the app as it is, and Export to
+  draws this file; its Add to report writes here, and its next export saves here. It opens on its own `model.ossie.yaml`, the app as it is, and Export to
   Fabric there publishes this file as it is: no Save dialog, and no question about its changes.
 - **A file named `<name>.ossie.yaml`** is a model by its name: the Apache Ossie spec names no extension, and Ossie's own
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
@@ -845,18 +844,14 @@ A model file, an app's file or a `.sql` file on this machine opens in a tab, as 
 A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`extension/tree.js`](../extension/tree.js)), and
 the same button on Explore's Model page when it is open there (`fabric.createSemanticModel`, [`core/host.js`](../core/host.js)):
 **Create Semantic Model** makes the Power BI semantic model of it, named for the file, in the file's workspace, on Direct
-Lake (refreshed once made) or DirectQuery (its SQL endpoint signed in to by SSO) (`createSemanticModel` in
-[`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), and nothing else: no app, no zip, no Report. One dialog asks which: its
-buttons are the two modes, and it says the workspace, the file, and whether a model of that name is there, whose
-definition is then replaced (*Update the semantic model …?*). A DirectQuery model's sign-in can be set only by its
-owner, so a model someone else owns has to be taken over: that is asked first (*Take it over?*), and a No leaves it
-with its owner, its definition updated and its sign-in as it was. The definition is TMSL made from the file
+Lake, refreshed once made (`createSemanticModel` in
+[`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), and nothing else: no app, no zip, no Report. A new
+model is made with nothing asked. When a model of that name is there, a dialog asks first (*Update the semantic model …?*),
+and says the workspace and the file: its definition is replaced. The definition is TMSL made from the file
 ([`fabric_app/export/pbimodel.js`](../fabric_app/export/pbimodel.js)), written over the Fabric API ([`fabric_app/export/fabricmodel.js`](../fabric_app/export/fabricmodel.js)).
-Direct Lake takes no calculated column: a model with one is refused before anything is written, and the message says to
-make it DirectQuery. The workspace's semantic models are listed again after. The command line's
-`semanticmodel <ws> <item> <Files/path> --mode directlake|directquery` (Direct Lake without it) asks nothing for a new
-model, and waits for an OK in VS Code before it replaces one. Needs a connection, as Export does. An app on it is that
-semantic model's Export to Fabric, as it is.
+Direct Lake takes no calculated column: a model with one is refused before anything is written. The workspace's
+semantic models are listed again after. The command line's `semanticmodel <ws> <item> <Files/path>` is the same, and its
+question is asked in VS Code. Needs a connection, as Export does.
 
 ## Export to Fabric
 
@@ -872,10 +867,9 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
   (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The page, `site`, and
   the function, `rayfin/functions`, are its workspaces. OneLake Studio needs none of them. Every `@microsoft/rayfin-*`
   package is on its `~X.Y.0` line, as the Rayfin CLI's templates have them and Fabricator's checks ask.
-- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json) for a
-  client-side app, `package-lock.model.json` for a semantic model's (each has its own packages), named for the app, so
+- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json), named for the app, so
   Fabricator's `npm ci` resolves nothing (without it, an import spent over a minute asking the registry about each
-  package). The "Refresh extension lockfile" workflow makes both (`scripts/fabric-lock.mjs`) against the public
+  package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the public
   registry; run it after changing any package the project names.
 - `scripts/validate-report.mjs` ([`fabric_app/project/validate-report.mjs`](../fabric_app/project/validate-report.mjs)),
   `npm run validate`: the Report checked with the page's own modules (`page/explore/reportcheck.js` on Explore's
@@ -886,22 +880,22 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
   them at the project's CLI version. `scripts/function-bundle.mjs` makes them at package time, into
   `fabric-function/agent-files.json`, and every export writes them. The CLI's own `AGENTS.md` is not written: the
   export writes its own.
-- `site/`: the page, a Vite project. `site/package.json` names the packages it imports (the Rayfin SDK and ECharts;
-  client side DuckDB-WASM and Arrow, or the semantic model's connector), Vite and Rayfin's local-dev plugin.
-  `site/index.html` and `site/src/` are the page: `app.js`, its engine's one data source (`storage/source.js` names
-  it: DuckDB in the browser, or the semantic model's connector), Studio's Explore (`explore/`) and dax-sql
+- `site/`: the page, a Vite project. `site/package.json` names the packages it imports (the Rayfin SDK, ECharts,
+  DuckDB-WASM and Arrow), Vite and Rayfin's local-dev plugin.
+  `site/index.html` and `site/src/` are the page: `app.js`, its data source (`storage/data.js`: DuckDB in the
+  browser), Studio's Explore (`explore/`) and dax-sql
   (`semantic/`). `npm run build` makes `site/dist/`, which `rayfin.yml` uploads (`staticHosting`: `path: site`,
   `folder: dist`, `buildCommand: npm run build`); `site/vite.config.mjs` is its build, and serves it locally.
-- `site/public/`: the site's own files, which Vite copies into the build as they are: the Report, the model, what the
-  page runs on, and what npm has not, the world's outline (`world.json`) and client side DuckDB's signed extensions
+- `site/public/`: the site's own files, which Vite copies into the build as they are: the Report, the model, the page's
+  settings (`settings.json`: the most rows a visual asks for), and what npm has not, the world's outline (`world.json`) and DuckDB's signed extensions
   (`duckdb-ext/`), the extension's own, written again by every export. DuckDB-WASM itself is a
   package, installed where the project is unpacked.
 - `rayfin/`: `rayfin.yml` and the function's source. Once published, `rayfin/.deployments.json` records the app as
   `rayfin up` records one (keyed by the workspace's name as the CLI keys it), and `site/public/rayfin.config.json` is
-  its backend, so a publish from Fabricator or `rayfin up` updates this app, not a new one. Client side,
+  its backend, so a publish from Fabricator or `rayfin up` updates this app, not a new one.
   `rayfin/.env.secrets` and `rayfin/functions/local.settings.json` hold the function's two settings, `CATALOG_URL` and
   `TABLES`: a URL and table names, no credential.
-- `AGENTS.md`, the client-side app's model, `.fabricator/export.json` (what Fabricator's Import window shows: the
+- `AGENTS.md`, the app's model, `.fabricator/export.json` (what Fabricator's Import window shows: the
   project's name, when it was exported, the workspace it publishes to) and `.onelake-studio/export.json`, our record of
   what was published, with its `format` number. A file with a later format is refused, never written over.
 
@@ -911,7 +905,7 @@ publish it. The command line's `report <ws> <model>` (or `report <ws> <item> <Fi
 kept, the zip's or Studio's file before an export, with the fields a tile can name; `--set` writes one there after the
 same checks, `reportcheck.js` and each pivot tile's query compiled as Explore compiles it, and refuses one with problems,
 each named. The Report tab draws what it writes. The Save dialog first offers the model file's own name, its model extension (`.ossie.yaml`, `.yaml`, `.bim`)
-made `.fabricator`: `sales.ossie.yaml` is `sales.fabricator`, and a semantic model's app is `<model name>.fabricator`.
+made `.fabricator`: `sales.ossie.yaml` is `sales.fabricator`.
 After that it offers where the app was saved last. The app's name in Fabric is still `<model>-explore`. One an earlier
 export saved as `<model>-explore.zip` or `<model>.fabricapp` is offered under its new name, and renamed when saved
 there; an earlier `.fabricapp` opened from disk and exported is renamed `.fabricator` first. Either is read laid out as
@@ -919,8 +913,8 @@ a `.fabricator` is (its `site/` is `site/public/`, its root `export.json` our re
 
 **OneLake Studio publishes its own build of the page.** It runs no npm, so the page is built when the extension is
 packaged ([`scripts/site-bundle.mjs`](../scripts/site-bundle.mjs)): the project an export writes, installed from its
-lock file and built by its own Vite, once for each engine, into `fabric-site/duckdb/` and `fabric-site/semanticModel/`.
-A publish uploads one of them, its `index.html` stamped with the build, with the file's `site/public/` and this
+lock file and built by its own Vite, into `fabric-site/`.
+A publish uploads it, its `index.html` stamped with the build, with the file's `site/public/` and this
 publish's `rayfin.config.json` (`buildDist`): what `npm run build` makes of the project. CI builds an exported project
 and compares the two, file for file (`test/js/run-fabricator-project.mjs`). So a change to the Report or the model is
 published by OneLake Studio, Fabricator or `rayfin up` alike. A change to the page's code (`site/src/`,
@@ -930,35 +924,25 @@ changed is asked about first, since OneLake Studio would upload its own page, an
 `site/public/`, served as it was with its packages in `vendor/`: its next export, as it is too, lays it out as above
 (`setPage`).
 
-**The app runs on the model as exported**, never on the lakehouse's file as it is now:
-- **Client side**, the file holds its model, `model.ossie.yaml` (`model.bim` for a .bim; `model.yaml` from an earlier export still reads), and each publish makes the site's
-  `model.json` from it, which the page reads. The function never reads a model: the export gives it the tables it may
-  sign for (its `TABLES` secret). An export from Explore rewrites `model.ossie.yaml` from Explore's model; an agent's edit to
-  it is published by opening the `.fabricator` and exporting there. A change to the lakehouse's file reaches the app
-  when it is exported again.
-- **On a semantic model**, the file holds no model of its own: our record names the semantic model
-  (`semanticModel: { workspace, id, name }`), and the site's `model.json` is its local copy, which the page writes its
-  DAX from.
+**The app runs on the model as exported**, never on the lakehouse's file as it is now. The file holds its model,
+`model.ossie.yaml` (`model.bim` for a .bim; `model.yaml` from an earlier export still reads), and each publish makes the site's
+`model.json` from it, which the page reads. The function never reads a model: the export gives it the tables it may
+sign for (its `TABLES` secret). An export from Explore rewrites `model.ossie.yaml` from Explore's model; an agent's edit to
+it is published by opening the `.fabricator` and exporting there. A change to the lakehouse's file reaches the app
+when it is exported again.
 
-**A Power BI semantic model** opened from the tree is exported as it is: the app queries that model, Direct Lake,
-DirectQuery or Import, whatever it reads, and nothing is written to the model or for it: no definition, no refresh, no file in a lakehouse. The app goes in the
-model's workspace, and the model needs to name no lakehouse.
-
-**A model file** (a `.bim` or Ossie `.yaml` in a lakehouse's `Files/`) is exported client side: DuckDB in the browser
-reads its lakehouse's tables, and no semantic model is made. A model file opened from disk (a download, say) is
+**The app is made from a model file** (a `.bim` or Ossie `.yaml` in a lakehouse's `Files/`): DuckDB in the browser
+reads its lakehouse's tables. A model file opened from disk (a download, say) is
 exported the same way, in the workspace its tables are in, when it names one lakehouse: the app carries its own copy,
-so no OneLake path is needed, and our record names it `<workspace>/<file name>`. An app on a semantic model of the file is two steps:
-Create Semantic Model (above), then Export to Fabric on that model.
-
-What the app runs on is what was opened, so nothing is asked about it: the button goes straight to the questions below,
-and the command line's `export` takes no `--mode`.
+so no OneLake path is needed, and our record names it `<workspace>/<file name>`. A Power BI semantic model opened from
+the tree has no Export to Fabric button.
 
 **What it writes**
 - **The app**, in Fabric.
 - **A local copy of the app**, one file, `<model>.fabricator`, where you save it. An earlier export's
   `<model>-explore/` folder is no longer written; the app it published stays the zip's.
 
-**What a model file needs** (a semantic model exported as it is needs none of it)
+**What the model file needs**
 - **It names exactly one lakehouse** in its Direct Lake expression. Without that, the button is not
   shown.
 - **Every table names its source as `schema.table`**, with a table name of letters, digits and `_`.
@@ -971,9 +955,9 @@ and the command line's `export` takes no `--mode`.
 - **Protected:** the site loads only for people who may open the app item.
 - **The app reads the model's tables, not the lakehouse:** its function signs a read-only SAS for each table the model
   names, and refuses any other.
-- **Client side, the tables are read as the app's owner.** Fabric Apps gives a function one identity, the app item's
+- **The tables are read as the app's owner.** Fabric Apps gives a function one identity, the app item's
   owner, and no way to the viewer's own OneLake token. So anyone who may open the app reads the model's tables with
-  the owner's rights. On a semantic model it is the other way round (below).
+  the owner's rights.
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
   local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
 - **A file from another computer asks first.** The local copy names the app it is published over, and the sign-in
@@ -984,48 +968,13 @@ and the command line's `export` takes no `--mode`.
 - **Saving over the file rewrites it**, from this Explore, its report kept: nothing is asked about what changed in it.
   An edit made in the file (by a person or an agent) is published by opening the `.fabricator` and exporting there,
   which publishes it as it is.
-- **`site/public/engine.json` is in every site**, `{ engine: 'duckdb' }` or `{ engine: 'semanticModel', name }`: the hosting
+- **`site/public/settings.json` is in every site**, with or without a `maxRows`: the hosting
   answers a file a site lacks with its `index.html`, so the page reads its JSON files as missing when they aren't JSON.
 - **A name in the recycle bin:** a deleted app keeps its name there, and Fabric refuses a new app of that name. The
   export says so: delete it there for good, or restore it, and export again.
 - **A newer deploy is never overwritten unasked.** Our record keeps the app's last deploy time, by
   Fabric's clock. If the app was deployed again since, the export asks.
 - **A folder the export did not write** is refused.
-
-**On a semantic model** the app runs no DuckDB, in the browser or anywhere.
-- **The queries run as the viewer**, as [Fabric Apps' connectors page](https://learn.microsoft.com/en-us/fabric/apps/connectors)
-  says a semantic model is read: "Semantic models support delegated authentication only", and "Don't configure
-  application authentication for a semantic model". Functions get no token for one ("A Power BI semantic model isn't
-  available through ctx.Tokens. Use the fabric-semanticmodel connector instead",
-  [Connect Functions to external resources](https://learn.microsoft.com/en-us/fabric/apps/functions-connect-external-resources)).
-  So the page queries the model through the app's `fabric-semanticmodel` connector. The export declares it in the app's settings
-  (`model`, with the semantic model's workspace and id, [`fabric_app/export/fabricapp.js`](../fabric_app/export/fabricapp.js)), and writes it into
-  the local copy's `rayfin.yml`. The function has no token for the model and runs no query.
-- **The page** ([`storage/modeldata.js`](../fabric_app/site/src/storage/modeldata.js), chosen by `site/public/engine.json`) turns
-  Explore's query over the model into DAX with dax-sql's `sqlToDax` (the copy in `site/src/semantic/`), runs it through the
-  connector (Rayfin's `ConnectorsRayfinClient` and the connector's own runtime, which decodes its Arrow answer), and
-  draws the rows. It takes only a SELECT over the model. Its Show plan has no plan tree: its SQL tab is the DAX, and its
-  profile the query's one run.
-- **The page's model is the semantic model's local copy:** `site/public/model.json`, written by the export, and again by a
-  publish of the file as it is: the definition Fabric gave when it was opened (or Refreshed), which the page writes its DAX from. A
-  change to the semantic model reaches the app when it is exported again.
-- **Rows are cut on the semantic model** ([`storage/modelrows.js`](../fabric_app/site/src/storage/modelrows.js)): a
-  preview's rows, and a LIMIT and OFFSET, are a `TOPN` in the DAX, and a count is `COUNTROWS`, so neither waits for
-  the whole answer. executeQueries sends at most 100,000 rows or 1,000,000 values in one answer, and the page keeps at
-  most 100,000 rows: an answer cut by either says so, as the client-side app's does.
-- **No function of ours** ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)) is deployed, and
-  no secret set: the page reads `site/public/model.json` and the semantic model, nothing else. The app's one function is the
-  connector's, `<app>_connector`, which Fabric makes for it. An app first published with ours keeps it.
-- **What it needs:** each viewer has Read on the semantic model, and the tenant has the Semantic Model
-  Execute Queries REST API setting on ([the data app template's prerequisites](https://learn.microsoft.com/en-us/fabric/apps/data-apps-template)).
-  A viewer the model refuses gets one box over the page: *You can't read the semantic model `<name>`. Ask its owner for
-  access to it, then reload.* The name is the one the export wrote into `site/public/engine.json`.
-  Build is needed to publish the app, not to view it. The connectors page says "Semantic model queries require the
-  caller's applicable model permissions, including Build", and Fabric checks it on whoever publishes (the CI identity was
-  refused with "Could not verify Build permission on semantic model"). But a viewer needs only Read: tried on 2026-11-11 with an account that
-  was a workspace Viewer, Read on the model and no Build, the app's connector answered its DAX query.
-- The project holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
-  setting for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))
 - **`site/`:** the page, black always: `index.html` and `src/`. Its data source (`src/storage/`) signs in with Rayfin's Fabric SSO,
@@ -1047,8 +996,8 @@ and the command line's `export` takes no `--mode`.
   subquery runs whole on one engine, as does any query whose sharing out fails. Measured on 2026-11-11 on a 3.6 GB
   table with four engines: 5.1 s to 1.2 s for a sum by a column. On a table of 4 million rows sharing out cost more than it saved, about
   0.1 s a query: hence the ten million. `?split=0` in the address runs every query whole.
-- **`project/`:** the project around the page: its Vite config, its lock files, its ignore lists and the Report's checker.
-- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
+- **`project/`:** the project around the page: its Vite config, its lock file, its ignore lists and the Report's checker.
+- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`).
 
 [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js) writes the local copy from `fabric_app/`, Studio's
 `page/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is put together in memory
@@ -1060,8 +1009,8 @@ in the same order, with the user's Fabric-audience token:
 
 1. Find the item, or create it.
 2. Wait for its backend, then fetch the publishable key.
-3. Apply the runtime settings, with the semantic model's connector on DirectQuery and Direct Lake.
-4. Client side, set the `CATALOG_URL` and `TABLES` secrets.
+3. Apply the runtime settings.
+4. Set the `CATALOG_URL` and `TABLES` secrets.
 5. Upload the site.
 6. Deploy the function and poll it until it is done.
 7. Add the hosting URL to the sign-in redirects.

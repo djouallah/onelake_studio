@@ -26,17 +26,17 @@ const npm = (what, cwd) => execSync(`npm ${what} --no-audit --no-fund --loglevel
 
 /**
  * The app served: { ready (rayfin-local's ready event: appUrl, embedUrl, features), said (its last lines), stop(ok) }.
- * `plan`, `model`, `report`: an export's (exportapp.js appFiles); `engine`: duckdb or semanticModel;
+ * `plan`, `model`, `report`: an export's (exportapp.js appFiles);
  * `env`: the function's secrets and rayfin-local's tokens; `extra`: path -> text, files put in site/ beside its index.html;
  * `user`: { name, password }, a user of the local backend's own.
  * `vite`: the site served by the project's own Vite, as Fabricator's preview serves it (rayfin-local's
  * frontend, with Rayfin's local-dev plugin); else its build (site/dist/), as Fabric's hosting serves the published site.
  */
-export async function serveApp(name, { plan, model, report = null, engine, env = {}, extra = {}, user = null, vite = false }) {
+export async function serveApp(name, { plan, model, report = null, env = {}, extra = {}, user = null, vite = false }) {
   const files = await appFiles({ plan, state: null, model, kept: report ? Buffer.from(JSON.stringify(report)) : null,
                                  fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"), daxSqlDir: join(root, "vendor", "npm", PINS.daxSql),
                                  agentFiles: join(root, "fabric-function", "agent-files.json") });
-  setStatic(files, await staticFiles(join(root, "vendor", "webapp"), engine));
+  setStatic(files, await staticFiles(join(root, "vendor", "webapp")));
   // The project as the export's file holds it, unpacked as Fabricator unpacks one. Not published, it has no
   // rayfin.config.json: the backend's to answer, where it is and its key.
   const project = await mkdtemp(join(tmpdir(), "fabric-local-"));

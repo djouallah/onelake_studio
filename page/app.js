@@ -399,21 +399,17 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       // the panel's CSP runs no inline script (DuckDB's HTML plan): its text plan instead.
       profileSet: false,
       htmlPlan: false,
-      // Explore as a Fabric app of its own (fabric_app/export/exportapp.js). A model file in OneLake: the app reads
-      // it where it is, and the tables of the one lakehouse it names, or a semantic model is made of it;
-      // one that names no lakehouse or several has no button. A Power BI semantic model: the app
-      // queries it as it is, whatever it reads, and nothing is asked or written for it. A model file
-      // from disk (a download, say): client side as a OneLake file is, in the workspace its tables are in,
-      // when it names one lakehouse. A client-side app's file opened from disk: that file, published as it
-      // is (its model.yaml, its report); one exported from a file on disk names no Files/ path.
+      // Explore as a Fabric app of its own (fabric_app/export/exportapp.js), for a model file that names one
+      // lakehouse: the app carries its own copy of the file and reads that lakehouse's tables. A model file in
+      // OneLake; one from disk (a download, say), in the workspace its tables are in; or an app's file opened
+      // from disk: that file, published as it is (its model.yaml, its report); one exported from a file on
+      // disk names no Files/ path. A Power BI semantic model has no button.
       exportToFabric: file.appFile ? state => engine.exportExplore({ appFile: file.appFile, file: file.appModelFile, name: m.view,
         text: bim, state, workspace: file.appModel.split('/')[0], path: file.appModel.split('/').slice(1).join('/'),
         onDisk: !/^[^/]+\/[^/]+\/Files\//i.test(file.appModel) })
-        : (fromOneLake || !file.modelWorkspace ? (fromOneLake || file.localWorkspace) && semantic.lakehousesOf(m.bim).length === 1 : true)
+        : (fromOneLake || (file.localWorkspace && !file.modelWorkspace)) && semantic.lakehousesOf(m.bim).length === 1
         ? state => engine.exportExplore(fromOneLake
           ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
-          : file.modelWorkspace
-          ? { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: file.modelName || m.view } }
           : { file: file.name, name: m.view, text: bim, state, workspace: file.localWorkspace, onDisk: true })
         : undefined,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.

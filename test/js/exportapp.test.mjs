@@ -1,7 +1,7 @@
 // exportapp.js: Export to Fabric — the plan (a OneLake file, one lakehouse, schema.table
 // sources), the local copy, one zip of fabric_app/, Studio's Explore and the Report (a Vite project), the upload
-// (the page as Vite built it, with the project's site/public/), and the zip format itself. The app runs on the model as exported: client side
-// the file holds it (model.yaml) and the site its JSON (model.json); on a semantic model the site holds its local copy. The compiler is faked (the suite runs without vendor/); semantic.js's
+// (the page as Vite built it, with the project's site/public/), and the zip format itself. The app runs on the model as exported:
+// the file holds it (model.yaml) and the site its JSON (model.json). The compiler is faked (the suite runs without vendor/); semantic.js's
 // lakehousesOf and isOssie are the real ones.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,12 +12,11 @@ import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
-const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, staticFiles, siteBuild, sizeOf, buildDist, zip, crc32, rayfinYml,
+const { planExport, modelDoc, appFiles, readApp, writeApp, unzip, staticFiles, siteBuild, sizeOf, buildDist, zip, crc32, rayfinYml,
         appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT,
         setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, sitePackage,
-        sitePackages, projectPackages, lockName, ENGINES, RAYFIN_RANGE } = require("../../fabric_app/export/exportapp.js");
+        sitePackages, projectPackages, RAYFIN_RANGE } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
-const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/src/storage/modelrows.js");
 
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 const LH = "11111111-2222-3333-4444-555555555555";
@@ -169,27 +168,17 @@ test("rayfin.yml: the app's id and name, its redirects first", async () => {
   assert.throws(() => rayfinYml("name: x\n", "y"), /has no id/);
   assert.equal(rayfinYml(y, "sales-model-explore", ["https://x-eastus.webapp.fabricapps.net", "http://localhost:5173"]), y,
     "a redirect already listed is not listed again");
-  assert.doesNotMatch(y, /^connectors:/m, "client side: no connector");
-  // On a semantic model: its connector, delegated, at the top level; written again, replaced.
-  const m = rayfinYml(tpl, "sales-model-explore", [], { workspace: WS, id: "m1" });
-  assert.match(m, /^connectors:\n  - name: model\n    type: fabric-semanticmodel\n    version: "1"\n    config:\n      workspaceId: 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\n      itemId: m1\n    operations:\n      - name: executeQuery\n    auth:\n      type: delegated\n/m);
-  const again = rayfinYml(m, "sales-model-explore", [], { workspace: WS, id: "m2" });
-  assert.equal(again.match(/^connectors:/gm).length, 1);
-  assert.match(again, /itemId: m2\n/);
-  assert.doesNotMatch(rayfinYml(m, "sales-model-explore", []), /^connectors:|^ +type: fabric-semanticmodel$/m, "exported client side again: gone");
-  assert.match(rayfinYml(m, "sales-model-explore", []), /^secrets:/m, "the rest stays");
+  assert.doesNotMatch(y, /^connectors:/m, "no connector");
 });
 
 async function fixture(root) {
   const files = {
     "fabric_app/site/index.html": '<link rel="stylesheet" href="./src/explore/explore.css">\n<script type="module" src="./src/main.js"></script>\n<footer>build __BUILD__</footer>\n',
     "fabric_app/site/src/main.js": 'import { start } from "./app.js";\nstart();\n',
-    "fabric_app/site/src/app.js": 'import { mountExplore } from "./explore/view.js";\nconst source = await import("./storage/source.js");\n',
+    "fabric_app/site/src/app.js": 'import { mountExplore } from "./explore/view.js";\nconst source = await import("./storage/data.js");\n',
     "fabric_app/site/src/storage/data.js": 'import { renderModel } from "../explore/model.js";\n',
     "fabric_app/site/src/storage/catalog.js": "// catalog\n",
     "fabric_app/site/src/storage/auth.js": "// auth\n",
-    "fabric_app/site/src/storage/modeldata.js": 'import { createAuth } from "./auth.js";\n',
-    "fabric_app/site/src/storage/modelrows.js": "// modelrows\n",
     "fabric_app/rayfin/rayfin.yml": "id: explore\nname: explore\nservices:\n  auth:\n    allowedRedirectUris:\n      - http://localhost:5173\n",
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
     "fabric_app/rayfin/functions/runtimemetadata.json": '{ "functions": [] }\n',
@@ -199,8 +188,6 @@ async function fixture(root) {
     "fabric_app/project/vite.config.mjs": "export default {};\n",
     "fabric_app/project/package-lock.json": JSON.stringify({ name: "fabric-app", lockfileVersion: 3,
       packages: { "": { name: "fabric-app" }, site: { name: "fabric-app-site" }, "node_modules/fabric-app-site": { resolved: "site", link: true }, "node_modules/@duckdb/duckdb-wasm": {} } }),
-    "fabric_app/project/package-lock.model.json": JSON.stringify({ name: "fabric-app", lockfileVersion: 3,
-      packages: { "": { name: "fabric-app" }, site: { name: "fabric-app-site" }, "node_modules/fabric-app-site": { resolved: "site", link: true } } }),
     "agent-files.json": JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n", ".mcp.json": "{}\n", "rayfin/.lockfile.json": "{}\n" }),
     "daxsql/src/index.js": "// dax-sql\n",
     "daxsql/src/dialects/duckdb.js": "// dialect\n",
@@ -209,14 +196,13 @@ async function fixture(root) {
     "page/explore/view.js": "import { renderModel } from './model.js';\nimport { escapeHtml } from '../paths.js';\n",
     "page/explore/explore.js": "// explore\n", "page/explore/model.js": "// model\n",
     "page/explore/explore.css": "/* css */\n", "page/paths.js": "// paths\n",
-    // What npm has not (vendor/webapp), and the page as Vite built it for each engine (fabric-site/).
+    // What npm has not (vendor/webapp), and the page as Vite built it (fabric-site/, with its pins.json).
     "webapp/world.json": "{}\n",
     "webapp/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
-    "fabric-site/duckdb/index.html": '<script type="module" src="./assets/index-abc.js"></script>\n<footer>build __BUILD__</footer>\n',
-    "fabric-site/duckdb/assets/index-abc.js": "// the page, built\n",
-    "fabric-site/duckdb/assets/duckdb-base-def.wasm": "w".repeat(4096),
-    "fabric-site/semanticModel/index.html": '<script type="module" src="./assets/index-xyz.js"></script>\n',
-    "fabric-site/semanticModel/assets/index-xyz.js": "// the page on a semantic model, built\n",
+    "fabric-site/index.html": '<script type="module" src="./assets/index-abc.js"></script>\n<footer>build __BUILD__</footer>\n',
+    "fabric-site/assets/index-abc.js": "// the page, built\n",
+    "fabric-site/assets/duckdb-base-def.wasm": "w".repeat(4096),
+    "fabric-site/pins.json": '{"source":"abc"}',
   };
   for (const [p, s] of Object.entries(files)) {
     await mkdir(dirname(join(root, p)), { recursive: true });
@@ -227,54 +213,6 @@ async function fixture(root) {
 }
 
 // The zip's entries, read back through its central directory: path -> bytes.
-// The DAX tree's nodes, as dax-sql's parser reads back what its sqlToDax writes.
-const dcol = (table, name) => ({ k: "col", table, name });
-const dstr = v => ({ k: "str", v });
-const dcall = (fn, ...args) => ({ k: "call", fn, args });
-const asc = { k: "name", name: "ASC" }, desc = { k: "name", name: "DESC" };
-
-test("a semantic model's rows are cut there: TOPN in the query's order and then every column, a count is COUNTROWS", () => {
-  const revenue = dcol(null, "Revenue");
-  const groups = dcall("SUMMARIZECOLUMNS", dcol("dim_region", "Region"), dstr("Revenue"), dcall("MEASURE", revenue));
-  const table = dcall("CALCULATETABLE", dcall("FILTER", groups, revenue), dcol("dim_region", "Region"));
-  const q = { defines: [], evaluates: [{ e: table, order: [{ e: revenue, desc: true }], start: [] }] };
-  assert.deepEqual(firstRows(q, 101), { defines: [], evaluates: [{
-    e: dcall("TOPN", { k: "num", v: "101" }, table, revenue, desc, dcol("dim_region", "Region"), asc, revenue, asc),
-    order: [{ e: revenue, desc: true }], start: [] }] }, "the ORDER BY stays, outside the cut");
-  // SELECTCOLUMNS names the result's columns.
-  const picked = dcall("SELECTCOLUMNS", groups, dstr("region"), dcol("dim_region", "Region"), dstr("rev"), revenue);
-  assert.deepEqual(firstRows({ defines: [], evaluates: [{ e: picked, order: [], start: [] }] }, 5).evaluates[0].e,
-    dcall("TOPN", { k: "num", v: "5" }, picked, dcol(null, "region"), asc, dcol(null, "rev"), asc));
-  // Not a table it knows the columns of, or not one query: left as it is.
-  assert.equal(firstRows({ defines: [], evaluates: [{ e: dcall("ROW", dstr("x"), revenue), order: [], start: [] }] }, 5), null);
-  assert.equal(firstRows({ defines: [{ kind: "var" }], evaluates: [{ e: groups, order: [], start: [] }] }, 5), null);
-  assert.equal(firstRows({ defines: [], evaluates: [{ e: dcall("SUMMARIZECOLUMNS", dcall("ROLLUPADDISSUBTOTAL")), order: [], start: [] }] }, 5), null);
-
-  assert.deepEqual(counting(q), { defines: [], evaluates: [{ e: dcall("ROW", dstr("cnt"), dcall("COUNTROWS", table)), order: [], start: [] }] });
-  assert.equal(counting({ defines: [], evaluates: [q.evaluates[0], q.evaluates[0]] }), null);
-});
-
-test("a semantic model's answer: what it keeps, and truncated only when the query has rows it left out", () => {
-  const rows = n => Array.from({ length: n }, (_, i) => [i]);
-  // A preview: 100 asked for, one more sent to tell whether rows were left.
-  assert.deepEqual(kept(rows(101), 3, { n: 100, asked: 100, askedFor: 101 }), { rows: rows(100), truncated: false, limit: 100 });
-  // Past the OFFSET.
-  assert.deepEqual(kept(rows(6), 1, { from: 2, n: 3, asked: 3, askedFor: 6 }).rows, [[2], [3], [4]]);
-  // All of them, and fewer than the cap: all there.
-  assert.equal(kept(rows(5), 3, { n: MAX_ROWS, asked: Infinity, askedFor: MAX_ROWS + 1 }).truncated, false);
-  // All of them, cut at executeQueries' 100,000 rows: said, with what was kept.
-  const all = kept(rows(100_000), 3, { n: MAX_ROWS, asked: Infinity, askedFor: MAX_ROWS + 1 });
-  assert.equal(all.truncated, true);
-  assert.equal(all.limit, 100_000);
-  // ... or at its 1,000,000 values: 20 columns is 50,000 rows.
-  const wide = kept(rows(50_000), 20, { n: MAX_ROWS, asked: Infinity, askedFor: MAX_ROWS + 1 });
-  assert.deepEqual([wide.truncated, wide.limit, wide.rows.length], [true, 50_000, 50_000]);
-  // A LIMIT of exactly the cap has all it asked for.
-  assert.equal(kept(rows(100_000), 3, { n: MAX_ROWS, asked: MAX_ROWS, askedFor: MAX_ROWS + 1 }).truncated, false);
-  // Not cut on the model, and at the cap: rows may be missing.
-  assert.equal(kept(rows(100_000), 3, { n: MAX_ROWS, asked: Infinity }).truncated, true);
-});
-
 test("the zip: every entry at the root, deflated, read back byte for byte", async () => {
   const files = new Map([["index.html", Buffer.from("<!doctype html>")], ["a/b.js", Buffer.from("x".repeat(5000))],
                          ["é.txt", Buffer.alloc(0)]]);
@@ -284,72 +222,38 @@ test("the zip: every entry at the root, deflated, read back byte for byte", asyn
   assert.equal(crc32(Buffer.from("123456789")), 0xcbf43926);
 });
 
-test("a semantic model as it is: the app says it runs on it, and holds no DuckDB, Arrow or browser data source", async () => {
-  const engine = "semanticModel";
+test("the app's files: its DuckDB data source and packages, its own model, and what the page was built from", async () => {
   const root = await mkdtemp(join(tmpdir(), "export-model-"));
   try {
     const dirs = await fixture(root);
-    const plan = planOnModel(doc(), "sales", { workspace: "aemo", workspaceId: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", id: "m1", name: "sales" });
-    assert.deepEqual([plan.engine, plan.workspace, plan.lakehouse, plan.catalogUrl, plan.modelPath],
-                     [engine, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", null, null, "aemo/sales"]);
-    // The model's local copy goes with the site: the page writes its DAX from it.
+    const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE);
     await assert.rejects(appFiles({ plan, state: null, ...dirs }), /needs the model it runs on/);
     const model = modelDoc(OSSIE, "sales.yaml", mods(bimOf(URL_))).doc;
-    const files = await appFiles({ plan, state: null, model, ...dirs });
-    const text = p => files.get(p).toString("utf8");
-    assert.equal(engineOf(files, { engine }), engine);
-    assert.equal(engineOf(files, {}), "semanticModel", "a marker that doesn't say: the site does");
-    assert.deepEqual(JSON.parse(text("site/public/engine.json")), { engine: "semanticModel", name: "sales" });
-    assert.deepEqual(JSON.parse(text("site/public/model.json")), doc());
-    assert.equal(text("site/src/storage/source.js"), 'export * from "./modeldata.js";\n', "the page's one data source: the semantic model's");
-    for (const p of ["site/src/storage/modeldata.js", "site/src/storage/modelrows.js", "site/src/storage/auth.js", "site/src/app.js", "site/src/explore/view.js", "site/index.html"]) {
-      assert.ok(files.has(p), p);
-    }
-    assert.ok(![...files.keys()].some(f => /^site\/src\/storage\/(data|catalog)\.js$|duckdb-ext\//.test(f)), "no DuckDB data source, and no site files yet (setStatic)");
-    // Its packages: the connector, and neither DuckDB nor its Arrow; and its own lock file.
     const { WEBAPP } = require("../../core/vendored.js");
-    const deps = JSON.parse(text("site/package.json")).dependencies;
-    assert.deepEqual(Object.keys(deps), ["@microsoft/rayfin-auth-provider-fabric", "@microsoft/rayfin-client", "@microsoft/rayfin-connector-fabric-semanticmodel", "echarts"]);
-    assert.deepEqual(deps, sitePackages(engine));
-    assert.ok(!JSON.parse(text("package-lock.json")).packages["node_modules/@duckdb/duckdb-wasm"], "the semantic model's lock file");
-    assert.equal(JSON.parse(text("package.json")).dependencies, undefined, "and no Arrow of the project's: the connector's own");
-    assert.equal(projectPackages(engine), null);
-    assert.equal(lockName(engine), "package-lock.model.json");
-    // The site's files npm has not, added at publish: the world's outline, and no DuckDB extension.
-    assert.deepEqual([...(await staticFiles(dirs.webappDir, engine)).keys()], ["world.json"]);
-    assert.deepEqual([...(await siteBuild(dirs.siteDir, engine)).keys()].sort(), ["assets/index-xyz.js", "index.html"]);
-    assert.match(text("rayfin/rayfin.yml"), /^connectors:\n  - name: model\n[\s\S]*itemId: m1\n[\s\S]*type: delegated\n/m);
-    const agents = text("AGENTS.md");
-    assert.match(agents, /Semantic model: `sales`, as it is in Fabric: the export changed nothing in it/);
-    assert.match(agents, /as the viewer/);
-    assert.match(agents, /as it was when exported[\s\S]*`site\/public\/model\.json`[\s\S]*when it is\s+exported again/);
-    assert.match(agents, /The page turns it into DAX and runs it on the semantic model\./);
-    assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
-
-    // Client side: the site has its DuckDB data source and not the semantic model's, and DuckDB's packages.
-    assert.ok(!files.has("model.ossie.yaml") && !files.has("model.bim"), "a semantic model's app names the model, and holds no copy");
-    const duck = await appFiles({ plan: { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), engine: "duckdb" },
-                                  state: null, model, modelText: OSSIE, modelFile: "sales.yaml", ...dirs });
-    assert.ok(duck.has("site/src/storage/data.js"));
-    // engine.json always: the hosting answers a file a site lacks with its index.html.
-    assert.deepEqual(JSON.parse(duck.get("site/public/engine.json")), { engine: "duckdb" });
-    assert.equal(engineOf(new Map(), {}), "duckdb", "an older client-side site, with no engine.json");
-    for (const p of ["site/src/storage/modeldata.js", "site/src/storage/modelrows.js"]) assert.ok(!duck.has(p), p);
+    const duck = await appFiles({ plan, state: null, model, modelText: OSSIE, modelFile: "sales.yaml", ...dirs });
+    for (const p of ["site/src/storage/data.js", "site/src/storage/catalog.js", "site/src/storage/auth.js", "site/src/app.js", "site/src/explore/view.js", "site/index.html"]) {
+      assert.ok(duck.has(p), p);
+    }
+    assert.ok(![...duck.keys()].some(f => /duckdb-ext\//.test(f)), "no site files yet (setStatic)");
+    // settings.json always: the hosting answers a file a site lacks with its index.html.
+    assert.deepEqual(JSON.parse(duck.get("site/public/settings.json")), {});
+    assert.deepEqual(JSON.parse((await appFiles({ plan, state: null, model, maxRows: 5000, ...dirs })).get("site/public/settings.json")), { maxRows: 5000 });
     assert.deepEqual(JSON.parse(duck.get("site/package.json")).dependencies, {
       "@duckdb/duckdb-wasm": WEBAPP.duckdbWasm.split("@").pop(), "@microsoft/rayfin-auth-provider-fabric": RAYFIN_RANGE,
       "@microsoft/rayfin-client": RAYFIN_RANGE, "apache-arrow": WEBAPP.arrow.split("@").pop(), echarts: WEBAPP.echarts.split("@").pop() });
-    assert.ok(JSON.parse(duck.get("package-lock.json")).packages["node_modules/@duckdb/duckdb-wasm"], "the client-side lock file");
-    // Client side the app runs on its own model: the file's model.yaml, and the site's model.json made from it.
+    assert.ok(JSON.parse(duck.get("package-lock.json")).packages["node_modules/@duckdb/duckdb-wasm"], "the project's lock file");
+    // The app runs on its own model: the file's model.yaml, and the site's model.json made from it.
     assert.equal(duck.get("model.ossie.yaml").toString(), OSSIE);
     assert.deepEqual(JSON.parse(duck.get("site/public/model.json")), model);
-    assert.equal(engineOf(duck, {}), "duckdb");
     assert.doesNotMatch(duck.get("rayfin/rayfin.yml").toString(), /^connectors:/m);
     assert.match(duck.get("AGENTS.md").toString(), /app item's owner/);
     assert.match(duck.get("AGENTS.md").toString(), /`model\.ossie\.yaml` in this file[\s\S]*the app\s+runs on it/);
     assert.match(duck.get("AGENTS.md").toString(), /OneLake Studio publishes its own build of the page/);
     assert.match(duck.get("AGENTS.md").toString(), /`TABLES` setting\), and never reads the model/);
-    assert.deepEqual([...(await staticFiles(dirs.webappDir, "duckdb")).keys()].sort(), ["duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm", "world.json"]);
-    await assert.rejects(siteBuild(join(root, "nowhere"), "duckdb"), /has no page for the app[\s\S]*site-bundle\.mjs/);
+    assert.doesNotMatch(duck.get("AGENTS.md").toString(), /onModel|undefined|semantic model/i);
+    assert.deepEqual([...(await staticFiles(dirs.webappDir)).keys()].sort(), ["duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm", "world.json"]);
+    assert.deepEqual([...(await siteBuild(dirs.siteDir)).keys()].sort(), ["assets/duckdb-base-def.wasm", "assets/index-abc.js", "index.html"], "the page, and not its pins");
+    await assert.rejects(siteBuild(join(root, "nowhere")), /has no page for the app[\s\S]*site-bundle\.mjs/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -374,7 +278,7 @@ test("the local copy is one zip: the whole project, written and read back; the u
       `no packages, no build, no model but model.ossie.yaml: ${[...files.keys()].join(", ")}`);
     // Only the app's own files are in site/public/, which Vite copies as it is: no script of the page.
     assert.deepEqual([...files.keys()].filter(p => p.startsWith(SITE)).sort(),
-      ["site/public/engine.json", "site/public/explore.json", "site/public/model.json", "site/public/report.json"]);
+      ["site/public/explore.json", "site/public/model.json", "site/public/report.json", "site/public/settings.json"]);
     assert.ok(!oldLayout(files));
     // The project around it, as the Rayfin CLI's template has one: Fabricator installs it and runs its Vite.
     const pkg = JSON.parse(files.get("package.json"));
@@ -386,12 +290,12 @@ test("the local copy is one zip: the whole project, written and read back; the u
     // The page's packages are the page's own (site/package.json), but Arrow, which the project names too: the one
     // copy DuckDB-WASM and the page share.
     assert.deepEqual(pkg.dependencies, { "apache-arrow": require("../../core/vendored.js").WEBAPP.arrow.split("@").pop() });
-    assert.deepEqual(pkg.dependencies, projectPackages("duckdb"));
+    assert.deepEqual(pkg.dependencies, projectPackages());
     // The page's packages, the ones it imports and Vite bundles: Fabricator's check wants the Fabric sign-in package named.
     const sitePkg = JSON.parse(files.get("site/package.json"));
     assert.equal(sitePkg.name, "fabric-app-site", "every app's the same: the lock file names it");
     assert.deepEqual(sitePkg.scripts, { dev: "vite", build: "vite build", "build:fabric": "vite build" });
-    assert.deepEqual(sitePkg.dependencies, sitePackages("duckdb"));
+    assert.deepEqual(sitePkg.dependencies, sitePackages());
     assert.deepEqual(sitePkg.devDependencies, SITE_DEV_PACKAGES);
     // Every Rayfin package on one ~X.Y.0 line, as the CLI's templates have them and Fabricator's checks ask.
     const { WEBAPP } = require("../../core/vendored.js");
@@ -462,16 +366,16 @@ test("the local copy is one zip: the whole project, written and read back; the u
     await assert.rejects(readApp(other), /is not a zip Export to Fabric can read/);
 
     // The upload: the page as Vite built it, its index.html stamped; site/public/ as it is; the backend's config.
-    setStatic(files, await staticFiles(dirs.webappDir, "duckdb"));
+    setStatic(files, await staticFiles(dirs.webappDir));
     assert.ok(files.has("site/public/world.json") && files.has("site/public/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm"));
-    const page = await siteBuild(dirs.siteDir, "duckdb");
+    const page = await siteBuild(dirs.siteDir);
     const size = sizeOf(page);
     assert.equal(size.total, [...page.values()].reduce((n, b) => n + b.length, 0));
     assert.deepEqual(size.parts.map(([n]) => n), ["assets/", "index.html"], "largest first");
     const config = { apiUrl: "https://backend", publishableKey: "pk-1", workspaceId: WS, itemId: "item" };
     const up = buildDist(files, config, page, "20261028-120000");
     assert.deepEqual([...up.keys()], ["assets/duckdb-base-def.wasm", "assets/index-abc.js", "duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm",
-      "engine.json", "explore.json", "index.html", "model.json", "rayfin.config.json", "report.json", "world.json"],
+      "explore.json", "index.html", "model.json", "rayfin.config.json", "report.json", "settings.json", "world.json"],
       "what `npm run build` makes of the project: the build, and site/public/ copied as it is");
     assert.deepEqual(JSON.parse(up.get("rayfin.config.json")), config);
     assert.match(up.get("index.html").toString(), /build 20261028-120000/);
@@ -480,8 +384,6 @@ test("the local copy is one zip: the whole project, written and read back; the u
     assert.ok(up.get("report.json").equals(files.get(REPORT)));
     assert.throws(() => buildDist(files, config, new Map()), /published with its page built/);
     assert.ok(unzip(await zip(up)).get("assets/index-abc.js").equals(up.get("assets/index-abc.js")));
-    // Its one data source, which the export writes: the one its engine reads.
-    assert.equal(files.get("site/src/storage/source.js").toString(), 'export * from "./data.js";\n');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -566,7 +468,7 @@ test("the shipped page and its data source parse; the page reads its model from 
   // project names (site/package.json), which Vite bundles. Anything else fails the build.
   const srcDir = new URL("../../fabric_app/site/src/", import.meta.url);
   const there = async u => readFile(u).then(() => true, () => false);
-  const named = new Set(ENGINES.flatMap(e => Object.keys(sitePackages(e))));
+  const named = new Set(Object.keys(sitePackages()));
   const imported = new Set();
   for (const rel of await readdir(srcDir, { recursive: true })) {
     const p = rel.replace(/\\/g, "/");
@@ -583,8 +485,7 @@ test("the shipped page and its data source parse; the page reads its model from 
         continue;
       }
       const to = new URL(spec, new URL(p, "http://site/")).pathname.slice(1);
-      // storage/source.js is the export's own (appFiles): the engine's data source, one of the site's.
-      const ok = to === "storage/source.js" || /^semantic\/(src\/[\w./-]+|formats\/(tmsl|ossie|ossie-sql))\.js$/.test(to)
+      const ok = /^semantic\/(src\/[\w./-]+|formats\/(tmsl|ossie|ossie-sql))\.js$/.test(to)
         || (to === "paths.js" || to.startsWith("explore/")
           ? await there(new URL(`../../page/${to}`, import.meta.url)) : await there(new URL(to, srcDir)));
       assert.ok(ok, `${p} imports ${spec}, which no export writes`);
@@ -619,13 +520,8 @@ test("the shipped page and its data source parse; the page reads its model from 
   assert.ok(VENDOR.webapp.extensions.names.includes("parquet"));
   assert.doesNotMatch(data, /ossie\.json/);
   assert.match(data, /catalog\.open\(\)/);
-  assert.match(data, /siteUrl\('model\.json'\)/, "client side, the model is the site's own");
+  assert.match(data, /siteUrl\('model\.json'\)/, "the model is the site's own");
   assert.doesNotMatch(data, /timeZone|SET TimeZone/, "no session time zone the page never passes");
-  // On a semantic model the page reads the model the semantic model was made from, not the function's.
-  const modeldata = await site("src/storage/modeldata.js");
-  assert.match(modeldata, /siteUrl\("model\.json"\)/);
-  assert.match(modeldata, /from "@microsoft\/rayfin-connector-fabric-semanticmodel";/);
-  assert.doesNotMatch(modeldata, /functions\.semanticModel/);
   const fn = await readFile(new URL("../../fabric_app/rayfin/functions/src/function_app.ts", import.meta.url), "utf8");
   assert.match(fn, /ctx\.Secrets\.TABLES/);
   assert.doesNotMatch(fn, /MODEL_URL|parseYaml/, "the function reads no model");
@@ -686,10 +582,7 @@ test("the site's files npm has not are in the file, the extension's own over the
   assert.deepEqual(Object.keys(fingerprint(files)), ["site/index.html"]);
 });
 
-test("the function's settings: client side only, a URL and table names, where rayfin up and a local run read them", () => {
-  const none = new Map();
-  setSecrets(none, { catalogUrl: null, tables: null });
-  assert.equal(none.size, 0, "on a semantic model there is no function");
+test("the function's settings: a URL and table names, where rayfin up and a local run read them", () => {
   const files = new Map();
   setSecrets(files, { catalogUrl: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/${LH}`, tables: "mart.fct_sales,mart.dim_region" });
   assert.equal(files.get("rayfin/.env.secrets").toString(),
@@ -761,42 +654,38 @@ test("the project's Vite config and ignore lists ship, and rayfin.yml uploads th
 
 // The lock file every project ships (scripts/fabric-lock.mjs makes it): what package.json and the function's
 // ask for, from the public registry. CI's npm ci of a real export (run-fabricator-project.mjs) proves it installs.
-test("each engine's lock file is its project's packages, from the public registry", async () => {
+test("the lock file is the project's packages, from the public registry", async () => {
   const fn = JSON.parse(await readFile(new URL("../../fabric_app/rayfin/functions/package.json", import.meta.url), "utf8"));
-  for (const engine of ENGINES) {
-    const name = lockName(engine);
-    const lock = JSON.parse(await readFile(new URL(`../../fabric_app/project/${name}`, import.meta.url), "utf8"));
-    const top = lock.packages[""];
-    assert.deepEqual(top.dependencies ?? null, projectPackages(engine), `${name}: the project's own packages: run scripts/fabric-lock.mjs`);
-    assert.deepEqual(top.devDependencies, PROJECT_PACKAGES, `${name}: the project's packages: run scripts/fabric-lock.mjs`);
-    assert.deepEqual(top.workspaces, ["site", "rayfin/functions"]);
-    const page = lock.packages.site;
-    // The page's package as an export names it, and its link: npm ci refuses a project whose workspace the lock does not name.
-    assert.equal(page.name, JSON.parse(sitePackage(engine)).name, `${name}: the page's package by its name`);
-    assert.deepEqual(lock.packages[`node_modules/${page.name}`], { resolved: "site", link: true }, `${name}: the page's link`);
-    assert.equal(lock.packages["rayfin/functions"].name, fn.name, `${name}: the function's package by its name`);
-    assert.deepEqual(page.dependencies, sitePackages(engine), `${name}: the page's packages: run scripts/fabric-lock.mjs`);
-    assert.deepEqual(page.devDependencies, SITE_DEV_PACKAGES, `${name}: the page's build: run scripts/fabric-lock.mjs`);
-    const ws = lock.packages["rayfin/functions"];
-    assert.deepEqual(ws.dependencies, fn.dependencies, `${name}: the function's packages: run scripts/fabric-lock.mjs`);
-    assert.deepEqual(ws.devDependencies, fn.devDependencies, `${name}: the function's packages: run scripts/fabric-lock.mjs`);
-    const off = Object.entries(lock.packages).filter(([, p]) => p.resolved && !p.link && !p.resolved.startsWith("https://registry.npmjs.org/"));
-    assert.deepEqual(off.map(([k]) => k), [], `${name}: every package from the public registry`);
-    // The links: the workspaces, the page and the function.
-    assert.deepEqual(Object.entries(lock.packages).filter(([, p]) => p.link).map(([, p]) => p.resolved).sort(), ["rayfin/functions", "site"]);
-    assert.equal(!!lock.packages["node_modules/@duckdb/duckdb-wasm"], engine === "duckdb", `${name}: DuckDB-WASM client side only`);
-    // One copy of each package the page's scripts share with another package: DuckDB-WASM's Arrow is the page's
-    // (a table it answers must be a Table to the page's Arrow), and the Rayfin packages share one rayfin-auth.
-    const copies = name_ => Object.keys(lock.packages).filter(k => k.endsWith(`node_modules/${name_}`));
-    if (engine === "duckdb") {
-      const { WEBAPP } = require("../../core/vendored.js");
-      const arrows = copies("apache-arrow").filter(k => lock.packages[k].version.split(".")[0] === WEBAPP.arrow.split("@").pop().split(".")[0]);
-      assert.deepEqual(arrows, ["node_modules/apache-arrow"], `${name}: one copy of DuckDB-WASM's Arrow, the page's`);
-      assert.equal(lock.packages["node_modules/apache-arrow"].version, WEBAPP.arrow.split("@").pop());
-    }
-    for (const k of Object.keys(lock.packages).filter(k => /node_modules\/@microsoft\/rayfin-[\w-]+$/.test(k))) {
-      const pkg = k.split("node_modules/").pop();
-      assert.deepEqual(copies(pkg), [`node_modules/${pkg}`], `${name}: one copy of ${pkg}`);
-    }
+  const name = "package-lock.json";
+  const lock = JSON.parse(await readFile(new URL(`../../fabric_app/project/${name}`, import.meta.url), "utf8"));
+  const top = lock.packages[""];
+  assert.deepEqual(top.dependencies ?? null, projectPackages(), `${name}: the project's own packages: run scripts/fabric-lock.mjs`);
+  assert.deepEqual(top.devDependencies, PROJECT_PACKAGES, `${name}: the project's packages: run scripts/fabric-lock.mjs`);
+  assert.deepEqual(top.workspaces, ["site", "rayfin/functions"]);
+  const page = lock.packages.site;
+  // The page's package as an export names it, and its link: npm ci refuses a project whose workspace the lock does not name.
+  assert.equal(page.name, JSON.parse(sitePackage()).name, `${name}: the page's package by its name`);
+  assert.deepEqual(lock.packages[`node_modules/${page.name}`], { resolved: "site", link: true }, `${name}: the page's link`);
+  assert.equal(lock.packages["rayfin/functions"].name, fn.name, `${name}: the function's package by its name`);
+  assert.deepEqual(page.dependencies, sitePackages(), `${name}: the page's packages: run scripts/fabric-lock.mjs`);
+  assert.deepEqual(page.devDependencies, SITE_DEV_PACKAGES, `${name}: the page's build: run scripts/fabric-lock.mjs`);
+  const ws = lock.packages["rayfin/functions"];
+  assert.deepEqual(ws.dependencies, fn.dependencies, `${name}: the function's packages: run scripts/fabric-lock.mjs`);
+  assert.deepEqual(ws.devDependencies, fn.devDependencies, `${name}: the function's packages: run scripts/fabric-lock.mjs`);
+  const off = Object.entries(lock.packages).filter(([, p]) => p.resolved && !p.link && !p.resolved.startsWith("https://registry.npmjs.org/"));
+  assert.deepEqual(off.map(([k]) => k), [], `${name}: every package from the public registry`);
+  // The links: the workspaces, the page and the function.
+  assert.deepEqual(Object.entries(lock.packages).filter(([, p]) => p.link).map(([, p]) => p.resolved).sort(), ["rayfin/functions", "site"]);
+  assert.ok(lock.packages["node_modules/@duckdb/duckdb-wasm"], `${name}: DuckDB-WASM`);
+  // One copy of each package the page's scripts share with another package: DuckDB-WASM's Arrow is the page's
+  // (a table it answers must be a Table to the page's Arrow), and the Rayfin packages share one rayfin-auth.
+  const copies = name_ => Object.keys(lock.packages).filter(k => k.endsWith(`node_modules/${name_}`));
+  const { WEBAPP } = require("../../core/vendored.js");
+  const arrows = copies("apache-arrow").filter(k => lock.packages[k].version.split(".")[0] === WEBAPP.arrow.split("@").pop().split(".")[0]);
+  assert.deepEqual(arrows, ["node_modules/apache-arrow"], `${name}: one copy of DuckDB-WASM's Arrow, the page's`);
+  assert.equal(lock.packages["node_modules/apache-arrow"].version, WEBAPP.arrow.split("@").pop());
+  for (const k of Object.keys(lock.packages).filter(k => /node_modules\/@microsoft\/rayfin-[\w-]+$/.test(k))) {
+    const pkg = k.split("node_modules/").pop();
+    assert.deepEqual(copies(pkg), [`node_modules/${pkg}`], `${name}: one copy of ${pkg}`);
   }
 });

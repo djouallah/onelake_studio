@@ -1,11 +1,10 @@
 // Export to Fabric for real (fabric_app/export/exportflow.js), as the CI identity, on fabriccat: a model
-// file of the lakehouse's lakeci_plain table published as a client-side app with its function, then made a
+// file of the lakehouse's lakeci_plain table published as an app with its function, then made a
 // Direct Lake semantic model. Nothing is faked but the dialogs, which answer yes. The app and the model
 // stay in the workspace, and each run replaces them.
 //
-// Not here: the semantic model's own app, and a DAX query of the model. Fabric refuses a service principal
-// both, on a model it made itself: the app's connector with "Could not verify Build permission on semantic
-// model" (HTTP 403), the query with PowerBINotAuthorizedException. Both need a person signed in.
+// Not here: a DAX query of the model. Fabric refuses a service principal one, on a model it made itself
+// (PowerBINotAuthorizedException): it needs a person signed in.
 //
 // FABRIC_TOKEN, POWERBI_TOKEN and ONELAKE_TOKEN are the identity's tokens for the Fabric API, the Power BI
 // API and storage; ONELAKE_CI_WORKSPACE and ONELAKE_CI_LAKEHOUSE name where. Needs vendor/, fabric-function/
@@ -109,10 +108,9 @@ async function setup() {
 
 // What was published: the zip's record names the item and its site, Fabric says it deployed it just now,
 // the site answers nobody who isn't signed in, and what was uploaded is the page as Vite built it, with the app's own files.
-async function published(s, said, zipName, engine, since) {
+async function published(s, said, zipName, since) {
   const { readApp, unzip } = require("../../fabric_app/export/exportapp.js");
   const { marker } = await readApp(join(s.dir, zipName));
-  assert.equal(marker.engine, engine);
   assert.match(marker.itemId, /^[0-9a-f-]{36}$/);
   assert.match(marker.hostingUrl, /^https:\/\/[\w.-]+\.fabricapps\.net/);
   assert.ok(said.includes(marker.hostingUrl), said);
@@ -127,18 +125,13 @@ async function published(s, said, zipName, engine, since) {
   console.log(`${new URL("report.json", marker.hostingUrl)} with the identity's Fabric token: HTTP ${signed.status}`);
 
   const site = unzip(s.sites.at(-1));
-  for (const p of ["index.html", "model.json", "engine.json", "report.json", "rayfin.config.json", "world.json"]) assert.ok(site.has(p), `the site has ${p}`);
+  for (const p of ["index.html", "model.json", "settings.json", "report.json", "rayfin.config.json", "world.json"]) assert.ok(site.has(p), `the site has ${p}`);
   // The page as Vite built it, never the project's own scripts.
   assert.ok(![...site.keys()].some(p => /^src\/|^storage\/|^explore\/|^vendor\/|vite\.config|package\.json$/.test(p)), `no script of the project: ${[...site.keys()].join(", ")}`);
-  // The engine's alone: DuckDB-WASM and its extensions client side, neither on a semantic model.
+  // DuckDB-WASM and its extensions.
   const wasm = [...site.keys()].filter(p => /\.wasm$/.test(p));
-  if (engine === "duckdb") {
-    assert.ok(wasm.some(p => /^assets\/duckdb-base-[^/]+\.wasm$/.test(p)), `DuckDB-WASM is in the site: ${wasm.join(", ")}`);
-    assert.ok(wasm.some(p => /^duckdb-ext\/v[^/]+\/wasm_eh\/parquet\.duckdb_extension\.wasm$/.test(p)), `DuckDB's extensions are in the site: ${wasm.join(", ")}`);
-  } else {
-    assert.deepEqual(wasm, [], "no engine on a semantic model");
-  }
-  assert.equal(JSON.parse(site.get("engine.json").toString("utf8")).engine, engine);
+  assert.ok(wasm.some(p => /^assets\/duckdb-base-[^/]+\.wasm$/.test(p)), `DuckDB-WASM is in the site: ${wasm.join(", ")}`);
+  assert.ok(wasm.some(p => /^duckdb-ext\/v[^/]+\/wasm_eh\/parquet\.duckdb_extension\.wasm$/.test(p)), `DuckDB's extensions are in the site: ${wasm.join(", ")}`);
   assert.equal(JSON.parse(site.get("rayfin.config.json").toString("utf8")).itemId, marker.itemId);
   // Every file its index.html names was uploaded, and it is stamped with this publish's build.
   const html = site.get("index.html").toString("utf8");
@@ -152,7 +145,7 @@ async function published(s, said, zipName, engine, since) {
   return marker;
 }
 
-test("on fabriccat: a model file's app is published, client side, with its function", { skip, timeout: 20 * 60_000 }, async () => {
+test("on fabriccat: a model file's app is published, with its function", { skip, timeout: 20 * 60_000 }, async () => {
   const s = await setup();
   const text = JSON.stringify(bimOf(s.workspaceId, s.lakehouseId, "lakeci"), null, 2);
   await s.writer.writeFile(WS, PATH, Buffer.from(text, "utf8"));
@@ -165,7 +158,7 @@ test("on fabriccat: a model file's app is published, client side, with its funct
   const since = Date.now();
   const said = await s.flow.exportExplore({ file: FILE, name: "lakeci", text, state: null, workspace: WS, path: PATH });
   assert.match(said, /^Published to Fabric: https:/);
-  const marker = await published(s, said, "lakeci.fabricator", "duckdb", since);
+  const marker = await published(s, said, "lakeci.fabricator", since);
   assert.equal(marker.model, `${WS}/${PATH}`);
   assert.equal(marker.lakehouseId, s.lakehouseId);
   await project(s, "lakeci.fabricator", marker);
@@ -184,7 +177,7 @@ async function project(s, zipName, marker) {
   assert.ok(page.dependencies["@microsoft/rayfin-auth-provider-fabric"], "the Fabric sign-in package, which Fabricator's check asks for");
   assert.ok(page.dependencies["@duckdb/duckdb-wasm"], "DuckDB-WASM is the page's own package");
   assert.equal(page.scripts.build, "vite build");
-  for (const p of ["site/index.html", "site/vite.config.mjs", "site/src/app.js", "site/src/storage/data.js", "site/src/storage/source.js"]) assert.ok(files.has(p), p);
+  for (const p of ["site/index.html", "site/vite.config.mjs", "site/src/app.js", "site/src/storage/data.js"]) assert.ok(files.has(p), p);
   assert.ok(files.has("package-lock.json"), "its lock file");
   assert.ok(files.has(".agents/skills/rayfin/SKILL.md"), "Rayfin's agent files");
   assert.equal(JSON.parse(files.get("site/public/report.json").toString("utf8")).pages[0].tiles.length, 2, "the Report tab's tiles");
@@ -212,7 +205,7 @@ async function signedIn(s) {
   const config = JSON.parse(unzip(s.sites.at(-1)).get("rayfin.config.json").toString("utf8"));
   // The Rayfin SDK the page imports, installed as the project installs it: a module beside it names the two packages.
   const sdk = await mkdtemp(join(tmpdir(), "rayfin-sdk-"));
-  const deps = Object.fromEntries(Object.entries(sitePackages("duckdb")).filter(([name]) => name.startsWith("@microsoft/rayfin-")));
+  const deps = Object.fromEntries(Object.entries(sitePackages()).filter(([name]) => name.startsWith("@microsoft/rayfin-")));
   await writeFile(join(sdk, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: deps }));
   await writeFile(join(sdk, "sdk.mjs"), 'export * as rayfin from "@microsoft/rayfin-client";\nexport * as provider from "@microsoft/rayfin-auth-provider-fabric";\n');
   execSync("npm install --no-audit --no-fund --loglevel=error", { cwd: sdk, stdio: ["ignore", "ignore", "inherit"] });

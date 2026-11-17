@@ -12,21 +12,19 @@
 // Options:
 //   ready()        true when the app already holds what it needs and can start without a session
 //                  (while the function's kept answer is good, catalog.js's fresh()).
-//   connectors()   the app's connectors, { configs, runtimes } (modeldata.js): the client is then
-//                  Rayfin's ConnectorsRayfinClient, client.connectors.<name>.
 // =============================================================================
 
 // The Rayfin SDK, the project's own packages (site/package.json, core/vendored.js WEBAPP), imported as the
 // page starts: the Fabric provider reads how the page was opened (inside the Fabric portal or not) when it
 // loads. Kept on the same version: their shared deps (rayfin-auth, rayfin-lib) are one module each, so the
 // provider operates on the client's own Auth instance.
-import { RayfinClient, ConnectorsRayfinClient, resolveRayfinConfig } from "@microsoft/rayfin-client";
+import { RayfinClient, resolveRayfinConfig } from "@microsoft/rayfin-client";
 import { initEmbeddedAuth, ensureSignedInWithFabric } from "@microsoft/rayfin-auth-provider-fabric";
 
 // --- Rayfin provider: Fabric SSO session (no second login; inside the Fabric portal iframe the
 // session is handed over by postMessage). Backend URL, key and Fabric coordinates come from the
 // rayfin.config.json that `rayfin up` writes next to the site.
-function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
+function createRayfinAuth({ ready = () => false } = {}) {
   let _client = null;
   let _fabricOpts = null;
 
@@ -40,12 +38,9 @@ function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
   // One init, whoever asks first.
   let _init = null;
   const init = () => _init ??= (async () => {
-    const wired = connectors ? await connectors() : null;
     const resolved = await resolveRayfinConfig({});
     if (!resolved.baseUrl) throw new Error('rayfin.config.json not found — deploy with `rayfin up`');
-    _client = wired
-      ? new ConnectorsRayfinClient({ ...resolved, authStorage: true, connectors: wired.configs }, wired.runtimes)
-      : new RayfinClient({ ...resolved, authStorage: true });
+    _client = new RayfinClient({ ...resolved, authStorage: true });
     const rc = _client.runtimeConfig || {};
     _fabricOpts = {
       workspaceId: rc.workspaceId,
@@ -88,7 +83,7 @@ function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
     }
   }
 
-  // The client with a session: a call made after the start (a function, a connector query)
+  // The client with a session: a call made after the start (the function)
   // needs one as much as the first did, and the gate is down by then.
   async function signedClient() {
     await init();
