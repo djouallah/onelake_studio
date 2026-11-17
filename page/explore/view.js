@@ -258,7 +258,7 @@ export function mountExplore(root, ctx) {
     ? el('p', { class: 'text-file-note spec-note', hidden: true }, `This ${specWhat} is Ossie ${specWas}. The spec is now ${ctx.specNow}.`,
       hostBtn('Upgrade', 'Upgrading…', ctx.upgradeCopy, specWhat === 'copy'
         ? `Write this copy as Ossie ${ctx.specNow}. Nothing is read from Fabric.`
-        : `Write this file as Ossie ${ctx.specNow}. Comments in it are not kept.`))
+        : `Write this file as Ossie ${ctx.specNow}: its extensions and its version line. The rest stays as written.`))
     : null;
   // At the right of the bar, before Create Semantic Model and Open in Excel. On the Model page only.
   const modelSwitch = ctx.text == null ? null
