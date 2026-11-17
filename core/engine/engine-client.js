@@ -475,7 +475,8 @@ function serverHolder({ stateDir, lakeKey }) {
   } catch (_) { return null; }
 }
 async function claimLake({ stateDir, lakeKey, key, version }) {
-  const file = holderFileOf(stateDir, lakeKey), partial = `${file}.${process.pid}.tmp`;
+  // A name of its own: two windows of one process (a window and its background reader) claim at once.
+  const file = holderFileOf(stateDir, lakeKey), partial = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   await fsp.writeFile(partial, JSON.stringify({ key, version }));
   await fsp.rename(partial, file).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
 }

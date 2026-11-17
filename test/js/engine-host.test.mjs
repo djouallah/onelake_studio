@@ -1182,7 +1182,8 @@ test("a proxy's password is in secrets, where no statement reads it back", { ski
                      "SELECT current_setting('azure_proxy_password') AS v",
                      "SELECT name, value FROM duckdb_settings()",
                      "SELECT * FROM duckdb_secrets()"]) {
-    assert.ok(!(await said(sql)).includes("hunter2secret"), sql);
+    // A setting that isn't there to be read (azure's, where a statement's connection doesn't see it) says nothing.
+    assert.ok(!(await said(sql).catch(e => String(e.message))).includes("hunter2secret"), sql);
   }
   await assert.rejects(said("SELECT * FROM duckdb_secrets(redact = false)"), /./, "and not by asking for it unhidden");
   // Where it goes is no secret, and is what a download of an extension uses.
