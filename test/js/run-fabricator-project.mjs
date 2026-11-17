@@ -9,6 +9,7 @@
 // FABRICATOR_OUT: the file. Run: FABRICATOR_OUT=lakeci.fabricator node test/js/run-fabricator-project.mjs
 import { spawn, execSync, execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -41,6 +42,15 @@ console.log(`the project: ${project}`);
 // npm ci: from its lock file, which must agree with package.json, or npm refuses.
 execSync("npm ci --no-audit --no-fund --loglevel=error", { cwd: project, stdio: ["ignore", "inherit", "inherit"] });
 ok("npm ci, from the project's own package.json and lock file");
+// One Arrow for DuckDB-WASM and the page: installed apart, a table DuckDB answers is not a Table to the page's.
+for (const p of ["node_modules/@duckdb/duckdb-wasm/node_modules/apache-arrow", "site/node_modules/apache-arrow"]) {
+  if (existsSync(join(project, ...p.split("/")))) fail(`a second copy of Arrow is installed: ${p}`);
+}
+if (existsSync(join(project, "node_modules", "@duckdb", "duckdb-wasm"))) {
+  const arrow = JSON.parse(await readFile(join(project, "node_modules", "apache-arrow", "package.json"), "utf8")).version;
+  if (arrow !== WEBAPP.arrow.split("@").pop()) fail(`the project's Arrow is ${arrow}, not ${WEBAPP.arrow}`);
+  ok(`one Arrow, ${arrow}, for DuckDB-WASM and the page`);
+}
 
 // The site's own files (site/public/), and the page's code (site/src/). No script is in the first: Vite
 // copies it as it is, and an earlier export's page lived there.

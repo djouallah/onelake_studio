@@ -26,7 +26,7 @@ const before = new Date(Date.now() - 10 * 86_400_000).toISOString();
 for (const engine of ENGINES) {
   const dir = await mkdtemp(join(tmpdir(), "fabric-lock-"));
   try {
-    await writeFile(join(dir, "package.json"), projectPackage("fabric-app"));
+    await writeFile(join(dir, "package.json"), projectPackage("fabric-app", engine));
     await mkdir(join(dir, "site"), { recursive: true });
     await writeFile(join(dir, "site", "package.json"), sitePackage("fabric-app", engine));
     await mkdir(join(dir, "rayfin", "functions"), { recursive: true });

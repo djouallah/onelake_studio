@@ -601,13 +601,20 @@ const sitePackages = engine => Object.fromEntries([
 // and build of the page (fabric-site/<engine>/).
 const ENGINES = ['duckdb', 'semanticModel'];
 const engineKey = engine => (engine === 'duckdb' ? 'duckdb' : 'semanticModel');
+// Client side, the project names Arrow too, at the page's version: a package the project itself names is the
+// one npm puts at the top of node_modules, so DuckDB-WASM (which asks for ^17) and the page share that one copy.
+// Left to npm, the top one is another package's Arrow 21 (the Rayfin CLI brings the semantic-model connector),
+// DuckDB-WASM and the page each get a 17 of their own, and a table DuckDB answers is not a Table to the page's
+// Arrow: no result was kept in the browser (storage/results.js, tableToIPC).
+const projectPackages = engine => (engineKey(engine) === 'duckdb' ? Object.fromEntries([pinOf(WEBAPP.arrow)]) : null);
 /** The project's package.json: `npm run dev` as the template's; the page and the function are its workspaces. */
-const projectPackage = name => JSON.stringify({
+const projectPackage = (name, engine = 'duckdb') => JSON.stringify({
   name, private: true, version: '0.0.0', type: 'module',
   workspaces: ['site', 'rayfin/functions'],
   scripts: { dev: 'rayfin dev', 'dev:frontend': 'npm run dev -w site', build: 'npm run build -w site', 'rayfin:up': 'rayfin up',
              // The Report checked with the page's own code (fabric_app/project/validate-report.mjs).
              validate: 'node scripts/validate-report.mjs' },
+  ...(projectPackages(engine) ? { dependencies: projectPackages(engine) } : {}),
   devDependencies: PROJECT_PACKAGES,
 }, null, 2) + '\n';
 /** The page's package.json (site/): what it imports and is built with. `build:fabric` as the template names its build. */
@@ -748,7 +755,7 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
     [`${PAGE}vite.config.mjs`, await fsp.readFile(join(fabricAppDir, 'project', 'vite.config.mjs'))],
     ...await filesOf(join(fabricAppDir, 'rayfin'), 'rayfin/', rel => rel.split('/').includes('node_modules')),
     // The project around it, as the Rayfin CLI's template has one: what Fabricator and rayfin-local run.
-    ['package.json', text(projectPackage(plan.name))],
+    ['package.json', text(projectPackage(plan.name, engine))],
     ['package-lock.json', text(projectLock(await fsp.readFile(join(fabricAppDir, 'project', lockName(engine)), 'utf8'), plan.name))],
     ['.gitignore', await fsp.readFile(join(fabricAppDir, 'project', 'gitignore'))],
     ['.gitattributes', await fsp.readFile(join(fabricAppDir, 'project', 'gitattributes'))],
@@ -917,5 +924,5 @@ module.exports = { planExport, planOnModel, modelDoc, appFiles, setModel, engine
                    siteBuild, sizeOf, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT,
                    APP_EXT, LEGACY_EXT, PAGE, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT, MODEL_COPIES, setModelCopy, modelCopyOf,
                    tablesOf, setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, projectPackage, sitePackage,
-                   sitePackages, projectLock, lockName, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, ENGINES, RAYFIN_RANGE,
+                   sitePackages, projectPackages, projectLock, lockName, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, ENGINES, RAYFIN_RANGE,
                    MAX_TOTAL_BYTES, MAX_ENTRIES };
