@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- **A Fabric app runs on DuckDB in the browser, and nothing else.** Export to Fabric is for a model file (an Ossie
-  `.yaml` or a `.bim`). A Power BI semantic model has no Export to Fabric button any more, and the command line's
-  `export <ws> <model>` is gone: `export <ws> <item> <Files/path>` is the one form. An app exported earlier on a
-  semantic model is not opened or published by this version.
+- **A Fabric app runs on DuckDB in the browser, and nothing else.** A Power BI semantic model's Export to Fabric
+  makes that app too, from the model's local copy: it reads the lakehouse's tables, and no longer queries the semantic
+  model in DAX. The model must name one lakehouse. An app exported earlier on a semantic model is not opened or
+  published by this version: export the model again.
 - **Create Semantic Model makes a Direct Lake model, and asks only before it replaces one.** DirectQuery is gone, and
   with it the dialog's two buttons and the command line's `--mode`.
 - **An exported app is a Vite project.** Its page is `site/index.html` and `site/src/`, and it imports its packages

@@ -274,7 +274,7 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
 
     <section>
       <h2 id="export">Export to Fabric</h2>
-      <p>Export to Fabric asks before writing anything. It publishes the app with the Fabric REST API. The app is made from a model file.</p>
+      <p>Export to Fabric asks before writing anything. It publishes the app with the Fabric REST API. Nothing is written to a semantic model.</p>
       <ul>
         <li>The app holds its own copy of the model, as it was exported.</li>
         <li>The app's function creates a read-only link for each table in the model, and for no other table. The browser reads the tables with DuckDB-WASM, with the rights of the app's owner.</li>

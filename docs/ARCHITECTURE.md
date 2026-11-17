@@ -935,7 +935,8 @@ when it is exported again.
 reads its lakehouse's tables. A model file opened from disk (a download, say) is
 exported the same way, in the workspace its tables are in, when it names one lakehouse: the app carries its own copy,
 so no OneLake path is needed, and our record names it `<workspace>/<file name>`. A Power BI semantic model opened from
-the tree has no Export to Fabric button.
+the tree is exported the same way, by its local copy, in its own workspace: the app reads the lakehouse's tables, never
+the semantic model, and nothing is written to it.
 
 **What it writes**
 - **The app**, in Fabric.

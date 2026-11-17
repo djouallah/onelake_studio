@@ -401,16 +401,17 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       htmlPlan: false,
       // Explore as a Fabric app of its own (fabric_app/export/exportapp.js), for a model file that names one
       // lakehouse: the app carries its own copy of the file and reads that lakehouse's tables. A model file in
-      // OneLake; one from disk (a download, say), in the workspace its tables are in; or an app's file opened
+      // OneLake; one from disk (a download, say), in the workspace its tables are in; a Power BI semantic model,
+      // by its local copy, exported as a file from disk is, in its own workspace; or an app's file opened
       // from disk: that file, published as it is (its model.yaml, its report); one exported from a file on
-      // disk names no Files/ path. A Power BI semantic model has no button.
+      // disk names no Files/ path.
       exportToFabric: file.appFile ? state => engine.exportExplore({ appFile: file.appFile, file: file.appModelFile, name: m.view,
         text: bim, state, workspace: file.appModel.split('/')[0], path: file.appModel.split('/').slice(1).join('/'),
         onDisk: !/^[^/]+\/[^/]+\/Files\//i.test(file.appModel) })
-        : (fromOneLake || (file.localWorkspace && !file.modelWorkspace)) && semantic.lakehousesOf(m.bim).length === 1
+        : (fromOneLake || file.modelWorkspace || file.localWorkspace) && semantic.lakehousesOf(m.bim).length === 1
         ? state => engine.exportExplore(fromOneLake
           ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
-          : { file: file.name, name: m.view, text: bim, state, workspace: file.localWorkspace, onDisk: true })
+          : { file: file.name, name: m.view, text: bim, state, workspace: file.modelWorkspace || file.localWorkspace, onDisk: true })
         : undefined,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
       // A model file in OneLake, made a Power BI semantic model as the tree's ⛁ does it. A semantic model is one already.

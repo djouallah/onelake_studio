@@ -24,7 +24,8 @@
 //                                    'ws.lakehouse/Files/x.parquet'; a semantic model is
 //                                    ws.model_semanticmodel, AGG("m") its measure m; and SHOW
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
-//   export <ws> <item> <Files/path>  Export to Fabric, as Explore's button: a model file in Files/
+//   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model's local
+//   export <ws> <item> <Files/path>  copy, or a model file in Files/
 //   semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file, and no app
 //   report <ws> <model> | <ws> <item> <Files/path>  a model's Report as JSON; --set writes one, checked first
 //   status                           this window: build, session, startup, catalog, sync, its files
@@ -727,12 +728,25 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
 
     // Export to Fabric from a shell: Explore's own export (extension.js), which asks in
     // VS Code where the local copy goes and waits for the OK there before it publishes. The
-    // model is a model file in a lakehouse's Files/. With no Explore on screen, Explore's Pivot
+    // model is a model file in a lakehouse's Files/, or a semantic model's local copy, exported as a
+    // model file from disk is, in its own workspace. With no Explore on screen, Explore's Pivot
     // opens on its default view.
     async export([ws, a, b], opts, io) {
       if (!exportApp) throw new Error('Export to Fabric is not available here');
       const say = message => { io.data({ message }); io.out(message); };
       const { semantic } = await modules();
+      if (!b) {
+        const m = await modelOf(ws, a, opts);
+        const path = modelPath(ws, m.name);
+        if (!await exists(path)) {
+          throw Object.assign(new Error(`${ws}/${m.name} is not downloaded yet — open it in the OneLake Studio tree, ` +
+            `or \`model "${ws}" "${m.name}" --fresh\``), { notCached: true, retry: `model "${ws}" "${m.name}" --fresh` });
+        }
+        const text = await fsp.readFile(path, 'utf8');
+        say(await exportApp({ file: path.split(/[\\/]/).pop(), name: semantic.modelName(m.name), text, state: null,
+                              workspace: ws, onDisk: true }));
+        return;
+      }
       const lh = await itemOf(ws, a, await look('items', [ws], opts));
       if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
       const where = { workspace: lh.workspace, path: `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}` };

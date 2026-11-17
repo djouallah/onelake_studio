@@ -46,9 +46,10 @@ const USAGE = {
                                         table: SELECT d.col, AGG("measure") FROM ws.model_semanticmodel GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
     --show-sql                       print the SQL a model query compiles to`,
-  export: `  export <ws> <item> <Files/path>     Export to Fabric, as Explore's button does it, for a model file
-                                        (.bim, Ossie .yaml) in Files/: the app reads its tables with
-                                        DuckDB in the browser.
+  export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the app reads
+                                        the model's tables with DuckDB in the browser (open the
+                                        model in the tree once first).
+  export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/.
                                         VS Code asks where the local copy goes and for the OK.
                                         The app is one file, <model>.fabricator: the model's Report,
                                         site/report.json in the zip, yours to grow`,

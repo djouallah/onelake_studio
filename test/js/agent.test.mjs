@@ -126,8 +126,8 @@ test("free from the cache: table sizes, more table fields, files, find, model co
 
 // export hands Explore's own export the model file, as Explore's button does; the dax-sql and
 // YAML modules it loads stand in as stubs (CI's test job has no vendor/).
-test("export: a model file in Files/", async () => {
-  const { mkdtemp, rm } = await import("node:fs/promises");
+test("export: a model file in Files/, or a semantic model's local copy", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const vendorDir = await mkdtemp(join(tmpdir(), "agent-vendor-"));
@@ -137,6 +137,8 @@ test("export: a model file in Files/", async () => {
     const onelake = fakeOneLake();
     onelake.readBytes = async (ws, path) => new TextEncoder().encode(`model at ${ws}/${path}`);
     onelake.cached.models = async ws => ws === "a ws" ? { value: [{ id: "m1", name: "Sales" }, { id: "m2", name: "Ops" }], at: Date.now() } : null;
+    // Sales is downloaded (its local copy); Ops is not.
+    await writeFile(join(vendorDir, "Sales.yaml"), "the Sales model");
     const exported = [];
     const agent = createAgent({
       onelake, modelPath: (ws, model) => join(vendorDir, `${model}.yaml`),
@@ -151,10 +153,11 @@ test("export: a model file in Files/", async () => {
     assert.deepEqual(exported.pop(), { file: "sales-2.yaml", name: "sales_2", text: "model at a ws/a.Lakehouse/Files/models/sales-2.yaml",
                                        state: null, workspace: "a ws", path: "a.Lakehouse/Files/models/sales-2.yaml" });
 
-    // A semantic model has no app: export takes a model file.
+    // A semantic model: its local copy, exported as a model file from disk is, in its workspace.
     r = await agent.run({ args: ["export", "a ws", "sales"] });
-    assert.equal(r.code, EXIT.USAGE);
-    assert.match(r.err, /usage: export <ws> <item> <Files\/path>/);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(exported.pop(), { file: "Sales.yaml", name: "Sales", text: "the Sales model", state: null,
+                                       workspace: "a ws", onDisk: true });
 
     r = await agent.run({ args: ["export", "a ws", "dw", "Files/x.bim"] });
     assert.match(r.err, /dw\.Warehouse has no Files area/);
