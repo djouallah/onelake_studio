@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 const require = createRequire(import.meta.url);
 const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, staticFiles, siteBuild, sizeOf, buildDist, zip, crc32, rayfinYml,
         appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT,
-        setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES,
+        setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, sitePackage,
         sitePackages, projectPackages, lockName, ENGINES, RAYFIN_RANGE } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/src/storage/modelrows.js");
@@ -198,9 +198,9 @@ async function fixture(root) {
     "fabric_app/project/gitattributes": "* text=auto eol=lf\n",
     "fabric_app/project/vite.config.mjs": "export default {};\n",
     "fabric_app/project/package-lock.json": JSON.stringify({ name: "fabric-app", lockfileVersion: 3,
-      packages: { "": { name: "fabric-app" }, site: { name: "fabric-app-site" }, "node_modules/@duckdb/duckdb-wasm": {} } }),
+      packages: { "": { name: "fabric-app" }, site: { name: "fabric-app-site" }, "node_modules/fabric-app-site": { resolved: "site", link: true }, "node_modules/@duckdb/duckdb-wasm": {} } }),
     "fabric_app/project/package-lock.model.json": JSON.stringify({ name: "fabric-app", lockfileVersion: 3,
-      packages: { "": { name: "fabric-app" }, site: { name: "fabric-app-site" } } }),
+      packages: { "": { name: "fabric-app" }, site: { name: "fabric-app-site" }, "node_modules/fabric-app-site": { resolved: "site", link: true } } }),
     "agent-files.json": JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n", ".mcp.json": "{}\n", "rayfin/.lockfile.json": "{}\n" }),
     "daxsql/src/index.js": "// dax-sql\n",
     "daxsql/src/dialects/duckdb.js": "// dialect\n",
@@ -389,7 +389,7 @@ test("the local copy is one zip: the whole project, written and read back; the u
     assert.deepEqual(pkg.dependencies, projectPackages("duckdb"));
     // The page's packages, the ones it imports and Vite bundles: Fabricator's check wants the Fabric sign-in package named.
     const sitePkg = JSON.parse(files.get("site/package.json"));
-    assert.equal(sitePkg.name, "sales-model-explore-site");
+    assert.equal(sitePkg.name, "fabric-app-site", "every app's the same: the lock file names it");
     assert.deepEqual(sitePkg.scripts, { dev: "vite", build: "vite build", "build:fabric": "vite build" });
     assert.deepEqual(sitePkg.dependencies, sitePackages("duckdb"));
     assert.deepEqual(sitePkg.devDependencies, SITE_DEV_PACKAGES);
@@ -415,7 +415,9 @@ test("the local copy is one zip: the whole project, written and read back; the u
     const lock = JSON.parse(files.get("package-lock.json"));
     assert.equal(lock.name, "sales-model-explore");
     assert.equal(lock.packages[""].name, "sales-model-explore");
-    assert.equal(lock.packages.site.name, "sales-model-explore-site");
+    // A workspace's package is in the lock by its name: the page's own package.json must say the same one.
+    assert.equal(lock.packages.site.name, sitePkg.name);
+    assert.deepEqual(lock.packages[`node_modules/${sitePkg.name}`], { resolved: "site", link: true });
     assert.equal(files.get(".gitignore").toString(), "node_modules\n");
     assert.equal(files.get(".gitattributes").toString(), "* text=auto eol=lf\n");
     assert.equal(files.get("site/vite.config.mjs").toString(), "export default {};\n");
@@ -769,6 +771,10 @@ test("each engine's lock file is its project's packages, from the public registr
     assert.deepEqual(top.devDependencies, PROJECT_PACKAGES, `${name}: the project's packages: run scripts/fabric-lock.mjs`);
     assert.deepEqual(top.workspaces, ["site", "rayfin/functions"]);
     const page = lock.packages.site;
+    // The page's package as an export names it, and its link: npm ci refuses a project whose workspace the lock does not name.
+    assert.equal(page.name, JSON.parse(sitePackage(engine)).name, `${name}: the page's package by its name`);
+    assert.deepEqual(lock.packages[`node_modules/${page.name}`], { resolved: "site", link: true }, `${name}: the page's link`);
+    assert.equal(lock.packages["rayfin/functions"].name, fn.name, `${name}: the function's package by its name`);
     assert.deepEqual(page.dependencies, sitePackages(engine), `${name}: the page's packages: run scripts/fabric-lock.mjs`);
     assert.deepEqual(page.devDependencies, SITE_DEV_PACKAGES, `${name}: the page's build: run scripts/fabric-lock.mjs`);
     const ws = lock.packages["rayfin/functions"];

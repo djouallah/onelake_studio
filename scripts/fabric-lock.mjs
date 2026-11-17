@@ -28,7 +28,7 @@ for (const engine of ENGINES) {
   try {
     await writeFile(join(dir, "package.json"), projectPackage("fabric-app", engine));
     await mkdir(join(dir, "site"), { recursive: true });
-    await writeFile(join(dir, "site", "package.json"), sitePackage("fabric-app", engine));
+    await writeFile(join(dir, "site", "package.json"), sitePackage(engine));
     await mkdir(join(dir, "rayfin", "functions"), { recursive: true });
     await copyFile(join(root, "fabric_app", "rayfin", "functions", "package.json"), join(dir, "rayfin", "functions", "package.json"));
     execSync(`npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ --before=${before}`,

@@ -617,9 +617,13 @@ const projectPackage = (name, engine = 'duckdb') => JSON.stringify({
   ...(projectPackages(engine) ? { dependencies: projectPackages(engine) } : {}),
   devDependencies: PROJECT_PACKAGES,
 }, null, 2) + '\n';
-/** The page's package.json (site/): what it imports and is built with. `build:fabric` as the template names its build. */
-const sitePackage = (name, engine = 'duckdb') => JSON.stringify({
-  name: `${name}-site`, private: true, version: '0.0.0', type: 'module',
+/**
+ * The page's package.json (site/): what it imports and is built with. `build:fabric` as the template names its build.
+ * Its name is every app's the same: a lock file names a workspace's package (its link, node_modules/<name>), and one
+ * lock file serves every app.
+ */
+const sitePackage = (engine = 'duckdb') => JSON.stringify({
+  name: 'fabric-app-site', private: true, version: '0.0.0', type: 'module',
   scripts: { dev: 'vite', build: 'vite build', 'build:fabric': 'vite build' },
   dependencies: sitePackages(engineKey(engine)),
   devDependencies: SITE_DEV_PACKAGES,
@@ -637,7 +641,6 @@ function projectLock(text, name) {
   const lock = JSON.parse(text);
   lock.name = name;
   if (lock.packages && lock.packages['']) lock.packages[''].name = name;
-  if (lock.packages && lock.packages.site) lock.packages.site.name = `${name}-site`;
   return JSON.stringify(lock, null, 2) + '\n';
 }
 
@@ -751,7 +754,7 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
     // As the package lays them out: formats/ imports ../src/.
     ...await filesOf(join(daxSqlDir, 'src'), `${SRC}semantic/src/`),
     ...await filesOf(join(daxSqlDir, 'formats'), `${SRC}semantic/formats/`),
-    [`${PAGE}package.json`, text(sitePackage(plan.name, engine))],
+    [`${PAGE}package.json`, text(sitePackage(engine))],
     [`${PAGE}vite.config.mjs`, await fsp.readFile(join(fabricAppDir, 'project', 'vite.config.mjs'))],
     ...await filesOf(join(fabricAppDir, 'rayfin'), 'rayfin/', rel => rel.split('/').includes('node_modules')),
     // The project around it, as the Rayfin CLI's template has one: what Fabricator and rayfin-local run.

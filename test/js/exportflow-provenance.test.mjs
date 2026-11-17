@@ -42,7 +42,7 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
   }
   // What a file's page is written from, an as-is file's too: this build's.
   await buildable(ext);
-  const asked = [], published = [];
+  const asked = [], published = [], sites = [];
   const kept = new Map();
   const ui = {
     openFolder: () => null,
@@ -67,7 +67,9 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
       takenName: async () => null,
       deployStatus: async () => null,
       publish: async o => {
-        published.push({ itemId: o.itemId, redirects: o.redirects, site: unzip(await o.site({ apiUrl: "https://backend" })) });
+        published.push({ itemId: o.itemId, redirects: o.redirects });
+        // What it would upload, as fabricapp.js asks for it once it knows the backend.
+        sites.push(unzip(await o.site({ apiUrl: "https://backend" })));
         const id = o.itemId || "new-item";
         await o.onItem(id);
         await onPublish();
@@ -79,7 +81,7 @@ async function setup({ answers = [], onPublish = async () => {}, fabricModel } =
     extensionDir: ext, reportDir: join(ext, "reports"), pageDir: async () => ext,
     ui, onRefresh() {}, log() {},
   });
-  return { flow, asked, published, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
+  return { flow, asked, published, sites, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
 }
 
 // An app's file as someone else's export wrote it: it names an item, and a redirect of its own.
@@ -363,7 +365,7 @@ test("a file whose page was changed is asked about: OneLake Studio publishes its
   await a.flow.exportExplore({ ...REQUEST, file: "sales.yaml" });
   assert.equal(a.published.length, 1);
   // What was uploaded: the built page, and the file's site/public/ beside it; no script of the project.
-  const site = a.published[0].site;
+  const site = a.sites[0];
   assert.equal(site.get("index.html").toString(), "<!doctype html>built\n");
   for (const p of ["report.json", "model.json", "engine.json", "rayfin.config.json"]) assert.ok(site.has(p), p);
   assert.ok(![...site.keys()].some(p => /^src\/|vite\.config|package\.json/.test(p)), [...site.keys()].join(", "));
@@ -395,27 +397,28 @@ test("a file whose page was changed is asked about: OneLake Studio publishes its
   answers.push("Publish It");
   await a.flow.exportExplore({ ...REQUEST, appFile: file });
   assert.equal(a.published.length, 3);
-  assert.equal(a.published[2].site.get("index.html").toString(), "<!doctype html>built\n");
+  assert.equal(a.sites[2].get("index.html").toString(), "<!doctype html>built\n");
   const kept = await readApp(file);
   assert.equal(kept.files.get("site/src/app.js").toString(), "// a person's own page\n");
   assert.equal(kept.marker.page, "own");
   // And is asked again at the next publish: its page is still not the one uploaded.
-  const before = a.asked.length;
+  const questions = () => a.asked.filter(x => (x.rest ?? []).includes("Publish It")).length;
+  const before = questions();
   answers.push("Publish It");
   await a.flow.exportExplore({ ...REQUEST, appFile: file });
-  assert.equal(a.asked.length, before + 1);
+  assert.equal(questions(), before + 1);
   assert.equal((await readApp(file)).files.get("site/src/app.js").toString(), "// a person's own page\n");
 
   // An earlier export's file, its page in site/public/: published as it is, it takes this build's page, unasked.
   await mkdir(join(dir, "earlier"));
   const old = await appFile(join(dir, "earlier"), { itemId: "new-item" });
   a.kept.set("exportedItems", { ...a.kept.get("exportedItems"), "new-item": old });
-  const asked = a.asked.length;
+  const asked = questions();
   await a.flow.exportExplore({ ...REQUEST, appFile: old });
-  assert.equal(a.asked.length, asked, "nothing asked");
+  assert.equal(questions(), asked, "nothing asked");
   const now = await readApp(old);
   assert.ok(!now.files.has(`${SITE}app.js`) && now.files.has("site/src/app.js") && now.files.has("site/index.html"), "laid out as a Vite project");
-  assert.ok(!a.published.at(-1).site.has("app.js"), "its old script is not uploaded");
+  assert.ok(!a.sites.at(-1).has("app.js"), "its old script is not uploaded");
   await rm(dir, { recursive: true, force: true });
   await a.done();
 });
