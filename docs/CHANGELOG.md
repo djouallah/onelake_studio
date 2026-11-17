@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.26
 
 - **Fixed: deleting or moving an exported `.fabricator` lost the model's Report.** The Report was kept only in that
   file. OneLake Studio now keeps its own copy of every Report, and draws and saves it there when the file is gone.
