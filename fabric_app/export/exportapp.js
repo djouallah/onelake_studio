@@ -586,6 +586,17 @@ const sitePackage = () => JSON.stringify({
  * Fabricator's `npm ci` takes the packages it names; without it, npm asked the registry about each of some
  * 300 packages first, most of the minute and a half an import took.
  */
+/**
+ * The project's npm package name: the app's, unless the lock file holds a package of that name (a model named
+ * vite, or echarts): npm refuses a project that installs a package of its own name, so that one takes `-app`.
+ * The app keeps its name everywhere else.
+ */
+function packageName(name, lockText) {
+  const held = JSON.parse(lockText).packages || {};
+  let out = name;
+  while (held[`node_modules/${out}`]) out += '-app';
+  return out;
+}
 function projectLock(text, name) {
   const lock = JSON.parse(text);
   lock.name = name;
@@ -692,6 +703,7 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
   if (!agents['.agents/skills/rayfin/SKILL.md']) throw new Error(`${agentFiles} has no .agents/skills/rayfin/SKILL.md`);
   const text = s => Buffer.from(s, 'utf8');
   const SRC = `${PAGE}src/`;
+  const lockText = await fsp.readFile(join(fabricAppDir, 'project', 'package-lock.json'), 'utf8');
   const files = new Map([
     // The page, a Vite project: index.html and src/.
     ...await filesOf(join(fabricAppDir, 'site'), PAGE),
@@ -704,8 +716,8 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
     [`${PAGE}vite.config.mjs`, await fsp.readFile(join(fabricAppDir, 'project', 'vite.config.mjs'))],
     ...await filesOf(join(fabricAppDir, 'rayfin'), 'rayfin/', rel => rel.split('/').includes('node_modules')),
     // The project around it, as the Rayfin CLI's template has one: what Fabricator and rayfin-local run.
-    ['package.json', text(projectPackage(plan.name))],
-    ['package-lock.json', text(projectLock(await fsp.readFile(join(fabricAppDir, 'project', 'package-lock.json'), 'utf8'), plan.name))],
+    ['package.json', text(projectPackage(packageName(plan.name, lockText)))],
+    ['package-lock.json', text(projectLock(lockText, packageName(plan.name, lockText)))],
     ['.gitignore', await fsp.readFile(join(fabricAppDir, 'project', 'gitignore'))],
     ['.gitattributes', await fsp.readFile(join(fabricAppDir, 'project', 'gitattributes'))],
     ['scripts/validate-report.mjs', await fsp.readFile(join(fabricAppDir, 'project', 'validate-report.mjs'))],
@@ -844,5 +856,5 @@ module.exports = { planExport, modelDoc, appFiles, setModel, readApp, writeApp, 
                    siteBuild, sizeOf, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, appNameBefore, dfsUrl, MARKER, REPORT,
                    APP_EXT, LEGACY_EXT, PAGE, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT, MODEL_COPIES, setModelCopy, modelCopyOf,
                    tablesOf, setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, projectPackage, sitePackage,
-                   sitePackages, projectPackages, projectLock, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, RAYFIN_RANGE,
+                   sitePackages, projectPackages, projectLock, packageName,workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, RAYFIN_RANGE,
                    MAX_TOTAL_BYTES, MAX_ENTRIES };

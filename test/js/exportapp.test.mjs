@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 const { planExport, modelDoc, appFiles, readApp, writeApp, unzip, staticFiles, siteBuild, sizeOf, buildDist, zip, crc32, rayfinYml,
         appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT,
         setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, sitePackage,
-        sitePackages, projectPackages, RAYFIN_RANGE } = require("../../fabric_app/export/exportapp.js");
+        sitePackages, projectPackages, packageName, RAYFIN_RANGE } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../page/semantic.js");
 
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
@@ -50,6 +50,11 @@ test("the plan: the model's name, the lakehouse's catalog, where its model is", 
   assert.deepEqual(plan.warnings, []);
   assert.equal(plan.doc, undefined, "the plan carries no model to write");
   assert.equal(appName("2024 Sales"), "m-2024-sales");
+  // A model named as a package the project installs: npm refuses a project of that name.
+  const lock = JSON.stringify({ packages: { "": {}, "node_modules/vite": {}, "node_modules/fabric-app-site": { link: true } } });
+  assert.equal(packageName("sales", lock), "sales");
+  assert.equal(packageName("vite", lock), "vite-app");
+  assert.equal(packageName("fabric-app-site", lock), "fabric-app-site-app");
   assert.equal(dfsUrl("ws", "/a b.Lakehouse/Files/m#1.yaml"), "https://onelake.dfs.fabric.microsoft.com/ws/a%20b.Lakehouse/Files/m%231.yaml");
 });
 

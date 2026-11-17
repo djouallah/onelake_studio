@@ -874,7 +874,8 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
   (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The page, `site`, and
   the function, `rayfin/functions`, are its workspaces. OneLake Studio needs none of them. Every `@microsoft/rayfin-*`
   package is on its `~X.Y.0` line, as the Rayfin CLI's templates have them and Fabricator's checks ask.
-- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json), named for the app, so
+- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json), named for the app (with
+  `-app` when the app has the name of a package the project installs, which npm refuses: `packageName`), so
   Fabricator's `npm ci` resolves nothing (without it, an import spent over a minute asking the registry about each
   package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the public
   registry; run it after changing any package the project names.
