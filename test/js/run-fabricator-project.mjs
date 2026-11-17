@@ -174,7 +174,7 @@ try {
   if (!where) fail(`Vite did not say where DuckDB's worker is, asked ${asked}`);
   const worker = await (await get(where, "DuckDB's worker")).text();
   if (worker.length < 100_000) fail(`DuckDB's worker is ${worker.length} characters: ${worker.slice(0, 300)}`);
-  if (/sourceMappingURL=/.test(worker.slice(-500))) fail("DuckDB's worker is served with its source map's name, which Vite warns it cannot read");
+  if (/sourceMappingURL=/.test(worker.slice(-500))) fail(`DuckDB's worker (${where}) is served with its source map's name, which Vite warns it cannot read: …${JSON.stringify(worker.slice(-300))}`);
   await get("/report.json", "the Report");
   await get("/world.json", "the world's outline");
   const config = await (await get("/rayfin.config.json", "the backend's config")).json();

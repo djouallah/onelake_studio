@@ -22,8 +22,9 @@ const workerWithoutMap = () => ({
   enforce: 'pre',
   async load(id) {
     // The script itself, as a worker asks for it: not its `?url` import, which answers where it is.
-    if (id.includes('?') || !WORKER.test(id)) return null;
-    return (await readFile(id, 'utf8')).replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, '\n');
+    const [file, query = ''] = id.split('?');
+    if (/(^|&)(url|raw|import)(=|&|$)/.test(query) || !WORKER.test(file)) return null;
+    return (await readFile(file, 'utf8')).replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, '\n');
   },
 });
 
