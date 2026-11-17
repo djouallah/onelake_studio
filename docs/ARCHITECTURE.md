@@ -544,7 +544,8 @@ workspace has one model of a name.
   strings, hidden, ...). A file of the spec before (`custom_extensions`, a JSON string) reads the same. A copy is
   never changed by being read: over the YAML of one written as an earlier spec had it, a line says which spec it is
   and which is the spec now, with **Upgrade** (`models.js` `upgradeCopy`, the page's `model.upgradeCopy`), which
-  writes the copy as the spec is now from the copy itself, offline too. Refresh, which reads Fabric, writes it so as well.
+  writes the copy as the spec is now from the copy itself, offline too. Refresh, which reads Fabric, writes it so as well. A model file
+  of an earlier spec has the same line: its Upgrade converts the text in the page and saves it back as Save does, without its comments.
 - **From a query:** a statement that names a model not open yet opens it first, in the same way.
 - **Nothing is written to OneLake**, so someone who may only read the workspace can open and query it.
 - **Only Direct Lake.** Any other model is refused, and nothing is kept.

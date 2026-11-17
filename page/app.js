@@ -440,14 +440,26 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       },
       openOn: openOnText ? 'model' : file.openOn || 'model',
       openOnText,
-      // Upgrade, over the YAML of a semantic model's local copy written as an earlier Ossie spec had it: the copy
-      // written as the spec is now (the host's, from the copy itself), and the model again from that.
+      // Upgrade, over the YAML of an Ossie model written as an earlier spec had it: written as the spec is now, and
+      // the model again from that. A semantic model's local copy: the host's, from the copy itself. A model file in
+      // OneLake or on disk: its text converted here and saved back, as Save writes it. Not an app's file.
       specNow,
+      specOf: file.modelWorkspace ? 'copy' : 'file',
       upgradeCopy: file.modelWorkspace && file.modelName
         ? async () => {
           const next = await engine.upgradeCopy({ workspace: file.modelWorkspace, model: file.modelName });
           await openModelView(file, next, { fromOneLake: false, openOnText: true });
           setStatus(`${file.modelName}'s local copy is Ossie ${specNow} now.`, 'ok');
+        }
+        : !file.appFile && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+        ? async () => {
+          const next = await semantic.upgradeOssie(bim);
+          // A text that doesn't open as a model is not written: the file stays one that opens.
+          await semantic.checkModel(file.name, next);
+          await engine.saveFileText(fromOneLake ? { workspace: lakehouse.workspace, path: file.path, text: next }
+            : { disk: file.path, text: next });
+          await openModelView(file, next, { fromOneLake, openOnText: true });
+          setStatus(`${file.name} is Ossie ${specNow} now.`, 'ok');
         }
         : undefined,
       // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's

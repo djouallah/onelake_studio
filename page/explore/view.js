@@ -250,12 +250,15 @@ export function mountExplore(root, ctx) {
     !dialects.length ? `Amber: ${extName}, what Ossie has no field for`
       : !vendors.length ? `Amber: expressions in ${dialects.join(', ')}, not Ossie SQL`
       : `Amber: not plain Ossie SQL — the ${extName}, and expressions in ${dialects.join(', ')}`);
-  // Over that: a semantic model's local copy written as an earlier Ossie spec had it says so, with Upgrade,
-  // which writes it as the spec is now (ctx.upgradeCopy). The copy is never changed unasked.
+  // Over that: an Ossie model written as an earlier spec had it says so, with Upgrade, which writes it as the spec
+  // is now (ctx.upgradeCopy): a semantic model's local copy (ctx.specOf 'copy'), or a model file. Never unasked.
   const specWas = ossie && ctx.upgradeCopy && ctx.specNow ? (/^version:\s*["']?([^\s"'#]+)/m.exec(ctx.text) || [])[1] : null;
+  const specWhat = ctx.specOf === 'copy' ? 'copy' : 'file';
   const specNote = specWas && specWas !== ctx.specNow
-    ? el('p', { class: 'text-file-note spec-note', hidden: true }, `This copy is Ossie ${specWas}. The spec is now ${ctx.specNow}.`,
-      hostBtn('Upgrade', 'Upgrading…', ctx.upgradeCopy, `Write this copy as Ossie ${ctx.specNow}. Nothing is read from Fabric.`))
+    ? el('p', { class: 'text-file-note spec-note', hidden: true }, `This ${specWhat} is Ossie ${specWas}. The spec is now ${ctx.specNow}.`,
+      hostBtn('Upgrade', 'Upgrading…', ctx.upgradeCopy, specWhat === 'copy'
+        ? `Write this copy as Ossie ${ctx.specNow}. Nothing is read from Fabric.`
+        : `Write this file as Ossie ${ctx.specNow}. Comments in it are not kept.`))
     : null;
   // At the right of the bar, before Create Semantic Model and Open in Excel. On the Model page only.
   const modelSwitch = ctx.text == null ? null
