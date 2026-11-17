@@ -63,7 +63,7 @@ test("what does not add up is left as it is", () => {
 });
 
 test("a slicer's keys in the scan (x IN (SELECT key FROM a dimension)) split; one over a large table, or not a row's own test, does not", () => {
-  const body = `SELECT p6."c0" AS "g0", SUM(p6."a0") AS "a0" FROM (SELECT t2."CustomerKey" AS "c0", SUM(t2."Amount") AS "a0" FROM v_Sales AS t2 WHERE t2."CustomerKey" IN (SELECT j4."CustomerKey" FROM v_Customer AS j4 WHERE j4."City" = 'Paris (IN (SELECT')) GROUP BY t2."CustomerKey") AS p6 LEFT JOIN v_Customer AS j4 ON j4."CustomerKey" = p6."c0" WHERE j4."City" = 'Paris (IN (SELECT' GROUP BY p6."c0"`;
+  const body = `SELECT p6."c0" AS "g0", SUM(p6."a0") AS "a0" FROM (SELECT t2."CustomerKey" AS "c0", SUM(t2."Amount") AS "a0" FROM v_Sales AS t2 WHERE t2."CustomerKey" IN (SELECT j4."CustomerKey" FROM v_Customer AS j4 WHERE j4."City" = 'Paris (IN (SELECT') GROUP BY t2."CustomerKey") AS p6 LEFT JOIN v_Customer AS j4 ON j4."CustomerKey" = p6."c0" WHERE j4."City" = 'Paris (IN (SELECT' GROUP BY p6."c0"`;
   const plan = splitPlan(`WITH f3 AS (${body}) SELECT * FROM f3`, large);
   assert.deepEqual(plan.parts, [{ cte: "f3", table: "Sales", partialSql: body.replace("v_Sales", "p_Sales") }]);
   const no = b => assert.equal(splitPlan(`WITH f3 AS (${b}) SELECT * FROM f3`, large), null, b);
