@@ -192,7 +192,7 @@ test("report: a model's Report read with the fields a tile can name, and --set w
     await stubVendor(vendorDir);
     // A compiler that compiles any query but one naming the measure "Broken".
     await writeFile(join(vendorDir, "npm/pin/src/index.js"), "export const createViews = 0; export const createCompiler = () => ({ " +
-      "compileStatement: t => { if (t.includes('\"Broken\"')) throw new Error('no measure Broken\nLINE 1'); return { sql: t }; } });");
+      "compileStatement: t => { if (t.includes('\"Broken\"')) throw new Error('no measure Broken\\nLINE 1'); return { sql: t }; } });");
     await writeFile(join(vendorDir, "npm/pin/formats/tmsl.js"), "export const tmslToModel = b => b;");
     const model = JSON.stringify({ datasets: [], tmsl: { model: {
       tables: [
