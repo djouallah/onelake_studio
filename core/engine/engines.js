@@ -4,7 +4,7 @@
 // =============================================================================
 
 const { join, dirname, isAbsolute } = require('node:path');
-const { existsSync, statSync } = require('node:fs');
+const { existsSync, statSync, readFileSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { createCatalogFile, catalogFileOf, stateFileOf, shortHash } = require('../onelake/catalogfile');
 const { createLogFile, logFileOf } = require('../logfile');
@@ -22,11 +22,16 @@ const { createLogFile, logFileOf } = require('../logfile');
  * @param {Function} o.logBoot, o.logCatalog  readlog.js
  * @param {() => void} o.closePanel, o.closeAllTabs  what is on screen over an engine
  * @param {(message: string) => void} o.warn, o.showError  said to the person
+ * @param {() => void} [o.reloadWindow]  where a window can be reloaded: offered when an update left it behind
  * @param {() => void} o.onStoreCleared  what is kept was replaced under this window: another window's Clear, or an import
  * @param {(line: string) => void} o.log
  */
 function createEngines({ extensionDir, storageDir, production, serverTag = '', secrets, settings, httpProxy, engineCallbacks, logBoot, logCatalog,
-                         closePanel, closeAllTabs, warn, showError, onStoreCleared, log }) {
+                         closePanel, closeAllTabs, warn, showError, reloadWindow = null, onStoreCleared, log }) {
+  // This install's version: a server of an older install that holds the lake is replaced by this one's.
+  const version = (() => {
+    try { return String(JSON.parse(readFileSync(join(extensionDir, 'package.json'), 'utf8')).version || ''); } catch (_) { return ''; }
+  })();
   // The disk cache's folder for all accounts: `file-cache-v1` under the folder the setting names,
   // or under the extension's storage. Always our own subfolder, so deleting an old cache can
   // never reach the user's files.
@@ -82,6 +87,37 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
       stateDir: join(storageDir, 'engine-server'),
       getToken: () => secrets.get(secret),
       setToken: token => secrets.store(secret, token),
+      // The lake is the account's, one per kind of server (lakeFolder): an update's new install finds the old
+      // install's server by it, and stops it. Secret storage is the extension's, whichever install asks.
+      lakeKey: [stateKey, serverTag].join('|'),
+      version,
+      tokenOf: otherKey => secrets.get(`onelakeStudio.engineSession.${shortHash(otherKey)}`),
+    };
+  }
+  // After an update, a window that was not reloaded still runs the old install. The new install's first
+  // window takes the lake (engine-client.js joinServer), and this one, having lost its server to it, starts
+  // no other: two servers on one lake is what stopped tables being read. It asks to be reloaded.
+  let superseded = false;
+  function leftBehind(server) {
+    const { serverHolder, newerVersion } = require('./engine-client');
+    const held = serverHolder(server);
+    if (held && held.key !== server.key && !newerVersion(server.version, held.version)) superseded = true;
+    return superseded;
+  }
+  let saidUpdated = false;
+  function sayUpdated() {
+    if (saidUpdated) return;
+    saidUpdated = true;
+    const { UPDATED } = require('./engine-client');
+    Promise.resolve(reloadWindow ? warn(UPDATED, 'Reload Window') : warn(UPDATED))
+      .then(picked => { if (picked === 'Reload Window') reloadWindow(); }, () => {});
+  }
+  function remoteOf(cfg) {
+    const { createRemote, UPDATED } = require('./engine-client');
+    const join = createRemote(cfg);
+    return async () => {
+      if (superseded) throw Object.assign(new Error(UPDATED), { superseded: true });
+      return join();
     };
   }
   // What the store keeps, in SQLite (catalogfile.js), per account: the same file for each store made
@@ -151,14 +187,15 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
     }
   };
   function sharedEngineRemote(options) {
-    const { createRemote } = require('./engine-client');
-    return createRemote({
-      ...sharedEngineServer(fileCacheAccount), options,
+    const server = sharedEngineServer(fileCacheAccount);
+    return remoteOf({
+      ...server, options,
       onGone: () => {
         // Its views and the models the tabs defined went with it, so the tabs do too.
         closePanel();
         resetEngine({ stop: false }).catch(() => {});
-        warn('OneLake Studio: the engine stopped, so its tabs closed. Opening a table starts it again.');
+        if (leftBehind(server)) sayUpdated();
+        else warn('OneLake Studio: the engine stopped, so its tabs closed. Opening a table starts it again.');
       },
     });
   }
@@ -209,16 +246,20 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
     // is kept offline goes where that engine reads.
     if (!engine) fileCacheRoot = fileCacheRootFor();
     const { createEngineHost } = require('./engine-host');
-    const { createRemote } = require('./engine-client');
     // The window's own options: if this client is the one that starts the server, it starts as a window would.
     const options = engineBootOptions(fileCacheAccount, lastReadme);
+    const server = sharedEngineServer(fileCacheAccount);
     const made = createEngineHost({
       ...options,
       ...engineCallbacks(),
-      remote: createRemote({
-        ...sharedEngineServer(fileCacheAccount), options,
-        // Nothing is on screen over it. The next tick starts another, and carries on.
-        onGone: () => { if (background === made) { background = null; made.close().catch(() => {}); } },
+      remote: remoteOf({
+        ...server, options,
+        // Nothing is on screen over it. The next tick starts another, and carries on; not after an update
+        // took the lake, which this window says once.
+        onGone: () => {
+          if (!superseded && leftBehind(server)) sayUpdated();
+          if (background === made) { background = null; made.close().catch(() => {}); }
+        },
       }),
     });
     background = made;

@@ -254,6 +254,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // `secretToken` is the token of the secret this engine's own DuckDB holds, to issue it again when a place is new.
   const storageScopes = new Set(ONELAKE_SCOPES);
   let secretToken = null;
+  // A proxy that asks for a password, once azure is loaded: the password goes in the storage secret, each time
+  // it is issued. A setting is read back by any statement (current_setting); what a secret holds is not.
+  let secretProxy = null;
 
   // The host's own statements run one at a time: two CREATE SECRETs racing is not a race
   // worth having.
@@ -437,12 +440,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (closed) throw new Error('the engine was closed');
 
       // The editor's proxy, before anything is downloaded. GLOBAL: a plain SET of an extension's setting holds for
-      // this connection only, and every statement runs on one of its own.
+      // this connection only, and every statement runs on one of its own. Its password is never a setting: any
+      // statement reads a setting back. It goes in a secret, below, once httpfs is there to hold one.
       const proxy = proxySettings(httpProxy);
       if (proxy) {
         await conn.run(`SET GLOBAL http_proxy = ${sqlStr(proxy.host)};`);
         if (proxy.user) await conn.run(`SET GLOBAL http_proxy_username = ${sqlStr(proxy.user)};`);
-        if (proxy.password) await conn.run(`SET GLOBAL http_proxy_password = ${sqlStr(proxy.password)};`);
       }
       //
       // REQUIRED, and treated differently from the rest: `azure` is how anything is read from OneLake
@@ -455,6 +458,17 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // Loaded after it, the bundled iceberg failed with no connection, on a first start, and behind a proxy
       // DuckDB can't use: "requires the avro extension", then a download over plain http.
       for (const ext of ['httpfs', 'avro', 'azure', 'iceberg']) await load(ext, '', true);
+      // The proxy's password, for every https read: a secret of httpfs, as parameters, so it is in no
+      // statement's text either.
+      if (proxy && proxy.password) {
+        try {
+          const p = await conn.prepare('CREATE OR REPLACE SECRET onelake_proxy (TYPE http, HTTP_PROXY ?, HTTP_PROXY_USERNAME ?, HTTP_PROXY_PASSWORD ?)');
+          p.bindVarchar(1, proxy.host);
+          p.bindVarchar(2, proxy.user);
+          p.bindVarchar(3, proxy.password);
+          await p.run();
+        } catch (e) { onWarn(`could not hand the proxy's password to DuckDB — ${e.message}`); }
+      }
       for (const ext of ['excel', 'sqlite_scanner', 'delta']) await load(ext, '');
       // nanoarrow's read_arrow is how a table with OneLake security is read: what the table read API answered.
       for (const ext of COMMUNITY) await load(ext, 'community');
@@ -462,13 +476,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // folder is there whenever an account is; without one, no OneLake table is read (sourceOf).
       if (fileCacheDir) { await load('ducklake', '', true); await openLake(); }
       mark('extensions');
-      // azure has an HTTP client of its own, with its own proxy settings.
+      // azure has an HTTP client of its own, with its own proxy settings. Its password goes in the storage
+      // secret (issueSecret), not in a setting.
       if (proxy) {
         try {
           await conn.run(`SET GLOBAL azure_http_proxy = ${sqlStr(proxy.host)};`);
           if (proxy.user) await conn.run(`SET GLOBAL azure_proxy_user_name = ${sqlStr(proxy.user)};`);
-          if (proxy.password) await conn.run(`SET GLOBAL azure_proxy_password = ${sqlStr(proxy.password)};`);
         } catch (e) { onWarn(`could not hand the proxy to DuckDB's azure extension — ${e.message}`); }
+        if (proxy.password) secretProxy = proxy;
       }
 
       // An :memory: database has no spill path unless one is named, so a query bigger
@@ -828,10 +843,24 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // A parameter, so the token is in no statement's text, whatever logs them. Scoped to the OneLake places this
   // engine knows (storageScopes): a URL anywhere else, whoever wrote it, is read with no token.
   async function issueSecret(token) {
-    const p = await conn.prepare(`CREATE OR REPLACE SECRET onelake_storage (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ?,
-      SCOPE [${[...storageScopes].map(sqlStr).join(', ')}])`);
-    p.bindVarchar(1, token);
-    await p.run();
+    const create = async proxy => {
+      const p = await conn.prepare(`CREATE OR REPLACE SECRET onelake_storage (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ?,
+        ${proxy ? 'HTTP_PROXY ?, PROXY_USER_NAME ?, PROXY_PASSWORD ?,' : ''}
+        SCOPE [${[...storageScopes].map(sqlStr).join(', ')}])`);
+      p.bindVarchar(1, token);
+      if (proxy) { p.bindVarchar(2, proxy.host); p.bindVarchar(3, proxy.user); p.bindVarchar(4, proxy.password); }
+      await p.run();
+    };
+    try { await create(secretProxy); }
+    catch (e) {
+      // An azure extension whose secret takes no proxy: the password as its setting, which a statement can
+      // read back, and said. Anything else that went wrong is the secret's own failure.
+      if (!secretProxy || !/prox/i.test(String(e && e.message))) throw e;
+      onWarn(`DuckDB's azure extension takes no proxy in its secret, so the proxy's password is kept as a setting, where a statement can read it — ${e.message}`);
+      await conn.run(`SET GLOBAL azure_proxy_password = ${sqlStr(secretProxy.password)};`);
+      secretProxy = null;
+      await create(null);
+    }
     secretToken = token;
     // And the table service's downloads: the one place the token is kept outside DuckDB's secret.
     lakeToken = token;
@@ -1652,7 +1681,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         return stoppable(async (begin, signal) => {
           await init();
           const read = await checkedRead(source, serialize, { strict: true });
-          const done = await streamed(`CREATE OR REPLACE VIEW ${quoteIdent(view)} AS ${read}`, emit, begin, signal);
+          // Replaced only when this tab made it: the names are one schema's, shared by every tab and window,
+          // and a view of that name made by another tab (or by the engine, as onelake_logs is) stays as it is.
+          const done = await streamed(`${views.has(view) ? 'CREATE OR REPLACE VIEW' : 'CREATE VIEW'} ${quoteIdent(view)} AS ${read}`, emit, begin, signal);
           views.add(view);
           forgetDuckNames(owner);
           return done;

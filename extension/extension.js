@@ -448,6 +448,8 @@ async function activateInner(context) {
     notify: (...a) => vscode.window.showInformationMessage(...a),
     warn: (...a) => vscode.window.showWarningMessage(...a),
     showError,
+    // The desktop app is one install at a time: nothing of it is left behind by an update.
+    reloadWindow: context.serverTag ? null : () => vscode.commands.executeCommand('workbench.action.reloadWindow'),
     setContext: (name, value) => vscode.commands.executeCommand('setContext', name, value),
     onAccountChange: () => onAccountChange(),
     subscribe: disposable => context.subscriptions.push(disposable),
@@ -998,11 +1000,17 @@ async function activateInner(context) {
         const all = kept && Array.isArray(kept.value) ? kept.value : await onelake.tables(lh);
         const tables = all.filter(t => (n.kind !== 'schema' && !one) || ((t.schema || '') === (n.schema || '') && (!one || t.table === n.table)));
         if (!tables.length) { vscode.window.showInformationMessage(`${where} has no tables.`); return; }
-        const sizes = [], metas = [];
+        const sizes = [], metas = [], unread = [];
         for (const t of tables) {
-          const m = await onelake.table(lh, t).catch(() => null);
+          const m = await onelake.table(lh, t).catch(e => { unread.push(`${t.table}: ${(e && e.message) || e}`); return null; });
           metas.push(m);
           sizes.push(Number((m && m.stats && m.stats.totalFilesSize) || 0));
+        }
+        // A table whose size is not known is not counted as nothing: the total would say it fits when it may not.
+        if (unread.length) {
+          if (out) for (const u of unread) out.appendLine(`download for offline: ${where}: ${u}`);
+          vscode.window.showWarningMessage(`Nothing was downloaded: the size of ${unread.length > 1 ? `${unread.length} tables` : 'a table'} of ${where} could not be read. ${unread[0]}${unread.length > 1 ? ' (the rest are in the log)' : ''}`);
+          return;
         }
         const total = sizes.reduce((a, b) => a + b, 0), room = settings.diskCacheBytes();
         if (!(room > 0)) { vscode.window.showWarningMessage('The disk cache is off (onelakeStudio.diskCacheMaxGB), so nothing can be kept on this machine.'); return; }

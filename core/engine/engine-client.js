@@ -30,7 +30,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
-const { join } = require('node:path');
+const { join, isAbsolute } = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const { sqlStr } = require('../sql');
 const { shortHash } = require('../onelake/catalogfile');
@@ -81,7 +81,12 @@ const slash = p => String(p).replace(/\\/g, '/');
 // its own server. Only this user can write to it, and the token is asked for regardless.
 function pipePath(key) {
   const id = crypto.createHash('sha256').update(`${os.userInfo().username}|${key}`).digest('hex').slice(0, 24);
-  return process.platform === 'win32' ? `\\\\.\\pipe\\onelake-engine-${id}` : join(os.tmpdir(), `onelake-engine-${id}.sock`);
+  if (process.platform === 'win32') return `\\\\.\\pipe\\onelake-engine-${id}`;
+  // In this user's runtime folder where there is one (Linux), which nobody else can open: /tmp is everyone's.
+  // The server is this process's child, so both read the same XDG_RUNTIME_DIR.
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  const mine = runtime && isAbsolute(runtime) && (() => { try { return fs.statSync(runtime).isDirectory(); } catch (_) { return false; } })();
+  return join(mine ? runtime : os.tmpdir(), `onelake-engine-${id}.sock`);
 }
 
 // The control socket, signed in, and what the server says of itself; null if nobody answers or
@@ -459,13 +464,48 @@ function recovery(ask, client) {
   };
 }
 
+// Which install's server holds a lake: written by the window that joins it, before it starts one. A lake is
+// one account's, and open in one process only, but a server is one install's (`key`): after an update the new
+// install can't find the old one's server by its own key, and that server still holds the lake.
+const holderFileOf = (stateDir, lakeKey) => join(stateDir, `server-${shortHash(lakeKey)}.json`);
+function serverHolder({ stateDir, lakeKey }) {
+  try {
+    const v = JSON.parse(fs.readFileSync(holderFileOf(stateDir, lakeKey), 'utf8'));
+    return v && typeof v.key === 'string' ? { key: v.key, version: String(v.version || '') } : null;
+  } catch (_) { return null; }
+}
+async function claimLake({ stateDir, lakeKey, key, version }) {
+  const file = holderFileOf(stateDir, lakeKey), partial = `${file}.${process.pid}.tmp`;
+  await fsp.writeFile(partial, JSON.stringify({ key, version }));
+  await fsp.rename(partial, file).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
+}
+// 0.2.10 is newer than 0.2.9. A version that can't be read is newer than nothing.
+function newerVersion(a, b) {
+  const parts = v => String(v || '').split('.').map(n => parseInt(n, 10));
+  const x = parts(a), y = parts(b);
+  if (x.some(Number.isNaN) || y.some(Number.isNaN)) return false;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+}
+const UPDATED = 'OneLake Studio was updated. Reload this window to go on reading tables.';
+
 // This window on the server, started if there is none. A server of another build is told to stop
-// and replaced: F5 after a rebuild must not find the old code.
-async function joinServer({ key, stateKey = key, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
+// and replaced: F5 after a rebuild must not find the old code. So is another install's server that holds
+// this lake (`lakeKey`, `tokenOf`), unless that install is the newer one: then this window is the one left
+// behind by an update, and it says so (`superseded`).
+async function joinServer({ key, stateKey = key, lakeKey = stateKey, version = '', tokenOf = null, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
   await fsp.mkdir(stateDir, { recursive: true });
   const id = shortHash(key);
   const logsFile = logFileOf(stateDir, stateKey);
   const plain = typeof options === 'function' ? await options() : options;
+  const held = serverHolder({ stateDir, lakeKey });
+  const other = held && held.key !== key && tokenOf && await pipeHeld(pipePath(held.key)) ? held : null;
+  if (other && newerVersion(other.version, version)) throw Object.assign(new Error(UPDATED), { superseded: true });
+  // Claimed before the other is stopped: its windows read this as they lose it, and know why.
+  if (!held || held.key !== key || held.version !== String(version)) await claimLake({ stateDir, lakeKey, key, version: String(version) });
+  if (other) await stopServer({ key: other.key, getToken: () => tokenOf(other.key) });
   const asked = {
     pipe: pipePath(key), window: crypto.randomBytes(6).toString('hex'), getToken, setToken,
     lockFile: join(stateDir, `${id}.lock`),
@@ -503,6 +543,10 @@ async function stopServer({ key, getToken }) {
     joined.sock.write(`${JSON.stringify({ stop: true })}\n`);
   });
   joined.sock.destroy();
+  // Gone, not only told: what it held open (the lake) is free once its process is.
+  const pid = joined.state && joined.state.pid;
+  const alive = () => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  for (const until = Date.now() + 10_000; pid && alive() && Date.now() < until;) await sleep(100);
 }
 
 /**
@@ -513,6 +557,9 @@ async function stopServer({ key, getToken }) {
  * @param {string} [o.stateKey]  what its log file is named after: the account, not the install
  * @param {string} o.script  dist/engine-server.js
  * @param {object|(() => Promise<object>)} o.options  createEngineHost's plain options, for the server's engine
+ * @param {string} [o.lakeKey]  what the server's lake belongs to: an account, whatever the install
+ * @param {string} [o.version]  this install's version: an older install's server holding the lake is replaced
+ * @param {(key: string) => Promise<string|undefined>} [o.tokenOf]  another install's session token, to stop its server
  * @param {string} o.stateDir  for the lock and the server's logs
  * @param {*} [o.build]  which build this is; a server of another is replaced
  * @param {() => Promise<string|undefined>} o.getToken  the session token, from secret storage
@@ -703,4 +750,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, stopServer, openClient, loadExtension, pipePath, lineReader, watchdog, LOST };
+module.exports = { createRemote, stopServer, openClient, loadExtension, pipePath, lineReader, watchdog, LOST, serverHolder, newerVersion, UPDATED };

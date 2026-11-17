@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost, KEEP_MARK } = require("../../core/engine/engine-host.js");
-const { createRemote, stopServer, openClient, pipePath, lineReader, LOST } = require("../../core/engine/engine-client.js");
+const { createRemote, stopServer, openClient, pipePath, lineReader, LOST, serverHolder, newerVersion } = require("../../core/engine/engine-client.js");
 const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
 const { createLogFile, logFileOf } = require("../../core/logfile.js");
 const { openOldState } = require("../../core/engine/oldstate.js");
@@ -108,6 +108,13 @@ test("a tab's files are its own: no statement or other tab can take them, and th
   }
   await two.call("releaseFiles", [{ views: ["ones_view"] }]);
   assert.deepEqual(await still(), [{ a: 1 }], "another tab's release takes nothing");
+
+  // A view of the same name from another tab is refused, and the first tab's stays; its own it may make again.
+  await assert.rejects(two.call("fileView", ["ones_view", "SELECT 2 AS a"]), /already exists/);
+  await two.call("releaseFiles", [{ views: ["ones_view"] }]);
+  assert.deepEqual(await still(), [{ a: 1 }], "nor does the tab that was refused take it away");
+  await one.call("fileView", ["ones_view", "SELECT 1 AS a"]);
+  assert.deepEqual(await still(), [{ a: 1 }]);
 
   await assert.rejects(one.call("fileView", ["v", "COPY (SELECT 1) TO 'x.csv'"]), /Not run/);
   await assert.rejects(one.call("attachFile", [{ path: "/etc/passwd", alias: "x" }]), /attached from OneLake/);
@@ -404,6 +411,57 @@ test("the log survives an update too, and the server's own log keeps one name an
   assert.ok(text.startsWith("line\n"), "from a whole line");
   assert.ok(text.includes("the end"));
   assert.equal(text.match(/starting: pid/g).length, 2, "both versions in the one file");
+});
+
+// A lake is open in one process only, and a server is one install's. After an update a window that was not
+// reloaded keeps the old install's server, and it held the lake: no new window could read a table.
+test("after an update the new install's window takes the lake from the old install's server, and the old window starts no other", async t => {
+  assert.equal(newerVersion("0.2.10", "0.2.9"), true);
+  assert.equal(newerVersion("0.2.9", "0.2.10"), false);
+  assert.equal(newerVersion("0.3.0", "0.3.0"), false);
+  assert.equal(newerVersion("", "0.3.0"), false, "a version that can't be read is newer than nothing");
+
+  const dir = await mkdtemp(join(tmpdir(), "onelake-update-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  const stateDir = join(dir, "state");
+  const lake = existsSync(join(BUNDLED, "ducklake.duckdb_extension"));
+  const options = { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2,
+                    ...(lake ? { fileCacheDir: join(dir, "cache"), fileCacheMaxBytes: 1e9, lakeFolder: "lake" } : {}) };
+  const secrets = new Map(), gone = [];
+  const keyOf = version => `me|${dir}/onelake-studio-${version}`;
+  const open = version => {
+    const key = keyOf(version);
+    const w = createEngineHost({
+      ...options,
+      remote: createRemote({ key, stateKey: "me", version, tokenOf: async k => secrets.get(k), script: SCRIPT, stateDir, options,
+        getToken: async () => secrets.get(key), setToken: async s => { secrets.set(key, s); }, onGone: () => gone.push(version) }),
+    });
+    t.after(() => w.close({ stop: true }).catch(() => {}));
+    return w;
+  };
+  const listening = pipe => new Promise(resolve => {
+    const up = net.connect(pipe);
+    up.once("connect", () => { up.destroy(); resolve(true); });
+    up.once("error", () => resolve(false));
+  });
+
+  const before = open("0.2.9");
+  assert.deepEqual((await before.call("query", ["SELECT 1 AS a"])).rows, [{ a: 1 }]);
+  assert.deepEqual(serverHolder({ stateDir, lakeKey: "me" }), { key: keyOf("0.2.9"), version: "0.2.9" });
+
+  // The update: a window of the new install, with the old one's still open.
+  const after = open("0.3.0");
+  assert.deepEqual((await after.call("query", ["SELECT 2 AS a"])).rows, [{ a: 2 }], "it reads, the lake being its server's now");
+  await sleep(300);
+  assert.deepEqual(gone, ["0.2.9"], "the old window lost its server, and is told");
+  assert.equal(await listening(pipePath(keyOf("0.2.9"))), false, "which is gone");
+  assert.deepEqual(serverHolder({ stateDir, lakeKey: "me" }), { key: keyOf("0.3.0"), version: "0.3.0" });
+
+  // The old install asked again: it starts no server over the new one's, and says what to do.
+  await assert.rejects(open("0.2.9").call("query", ["SELECT 1"]), /was updated\. Reload this window/);
+  assert.equal(await listening(pipePath(keyOf("0.2.9"))), false);
+  assert.deepEqual((await after.call("query", ["SELECT 3 AS a"])).rows, [{ a: 3 }], "and the new one's goes on");
+  assert.deepEqual(gone, ["0.2.9"]);
 });
 
 test("a server that can't start writes down why, where someone can read it", async t => {

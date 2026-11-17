@@ -1161,19 +1161,32 @@ test("a database file whose view or macro calls what no statement may is not att
   await assert.rejects(ran("SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT 1'))"), /Not run: query\(\) runs what no check here can read/);
 });
 
-// Not fixed, and said here so it is not forgotten: a statement can read the proxy's password back. It is a DuckDB
-// setting like any other. The way out is a secret, which DuckDB keeps from statements, and a proxy to test it with.
-test("known gap: DuckDB gives a proxy's password to any statement that asks", { skip: !existsSync(join(BUNDLED, "httpfs.duckdb_extension")) }, async () => {
-  const { DuckDBInstance } = require("@duckdb/node-api");
-  const duck = await DuckDBInstance.create(":memory:");
-  const c = await duck.connect();
-  try {
-    await c.run(`LOAD '${slash(join(BUNDLED, "httpfs.duckdb_extension"))}'`);
-    await c.run("SET GLOBAL http_proxy_password = 'hunter2secret'");
-    const said = JSON.stringify((await c.runAndReadAll("SELECT current_setting('http_proxy_password') AS v")).getRowObjectsJson());
-    // The day DuckDB hides it, this fails, and the gap is closed by DuckDB.
-    assert.ok(said.includes("hunter2secret"), said);
-  } finally { c.closeSync(); duck.closeSync(); }
+// A setting is read back by any statement (current_setting), so the proxy's password is never one. It is in two
+// secrets, httpfs' and the storage one, and DuckDB shows neither's password.
+test("a proxy's password is in secrets, where no statement reads it back", { skip: !existsSync(BUNDLED) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const warned = [];
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: BUNDLED, fileCacheDir: null,
+                                    httpProxy: "http://corp%5Cme:hunter2secret@127.0.0.1:9", onWarn: w => warned.push(String(w)),
+                                    getToken: async () => "a-storage-token" });
+  t.after(async () => { await engine.close(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); });
+  const said = async sql => JSON.stringify((await engine.call("query", [sql])).rows);
+  // The storage secret is issued, as a read of OneLake would have it.
+  await engine.setStorageToken("a-storage-token");
+  assert.deepEqual(warned.filter(w => /prox/i.test(w)), [], "both secrets took the proxy");
+
+  const secrets = await said("SELECT name, secret_string FROM duckdb_secrets() ORDER BY name");
+  assert.match(secrets, /onelake_proxy/);
+  assert.match(secrets, /onelake_storage[^}]*proxy_user_name=corp/, "the storage secret holds the proxy too");
+  for (const sql of ["SELECT current_setting('http_proxy_password') AS v",
+                     "SELECT current_setting('azure_proxy_password') AS v",
+                     "SELECT name, value FROM duckdb_settings()",
+                     "SELECT * FROM duckdb_secrets()"]) {
+    assert.ok(!(await said(sql)).includes("hunter2secret"), sql);
+  }
+  await assert.rejects(said("SELECT * FROM duckdb_secrets(redact = false)"), /./, "and not by asking for it unhidden");
+  // Where it goes is no secret, and is what a download of an extension uses.
+  assert.match(await said("SELECT current_setting('http_proxy') AS v"), /127\.0\.0\.1:9/);
 });
 
 // A SQLite file's views are text too, and SQLite never checks the functions one names. Whichever way DuckDB reads

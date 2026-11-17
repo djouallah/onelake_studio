@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **Fixed: after an update, a window that was not reloaded stopped every other window reading tables.** Its engine,
+  the old version's, kept the lake. The new version's first window now stops that engine and starts its own, and the
+  window left behind says *OneLake Studio was updated. Reload this window to go on reading tables.* with
+  **Reload Window**. This holds from the update after this one: a version from before can't be told to stop.
+- **Fixed: a statement could read the proxy's password.** A proxy given as `http://user:password@host` was handed to
+  DuckDB as settings, and `current_setting('http_proxy_password')` answered. The password is now in DuckDB secrets,
+  which no statement reads back.
+- **Fixed: one tab could replace another tab's view of a file.** Two tabs that gave a file's view the same name
+  shared it, and the second took the first's. The second is now refused.
+- **Fixed: a page could ask for a file of any size, or a table's first rows without limit.** A file's bytes are
+  read up to 64 MB (a SQLite file up to 200 MB, as before), and a peek up to the result row limit.
+- **Fixed: signing out in the desktop app or the command line was undone by the other.** Each kept its own copy of
+  the token cache for as long as it ran, and wrote it back. Each now reads the file again when it has changed.
+- **Fixed: a `settings.json` that couldn't be read reset every setting with no word of it**, the tenant among them.
+  The desktop app and the command line now say which file and why. A file saved with a byte order mark is read.
+- **Fixed: Profile could leave another query's SQL as the tab's.** A Profile replaced by a newer run while it
+  compiled still set what Export and the next Profile read.
+- **Fixed: Download Tables for Offline counted a table whose size couldn't be read as nothing**, so the check
+  against the disk cache could pass when the tables would not fit. The download is now refused, naming the table.
+- **Fixed: Chart's X and Y pickers broke on a column whose name holds `&`.**
+- **Fixed: the desktop app left a request with a malformed address unanswered.** It answers 400.
+- **Linux: the command line's socket is in the user's runtime folder** (`/run/user/<uid>`), where there is one. The
+  folder it used in `/tmp` had a name anyone could work out and make first, which stopped the command line. The
+  engine's own socket moved there too.
+
 - **The command line's `model` answers for a model whose tables are named `item.schema.table`.** It failed with
   *Cannot read properties of undefined (reading 'workspace')* where it lists the model's raw tables.
 - **An app exported to Fabric has the model's name.** `-explore` is no longer added to it: the model *Sales Model* is

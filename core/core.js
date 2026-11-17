@@ -94,7 +94,7 @@ const accountTurn = serialized(body => body());
 function createCore({
   signIn, connectivity, settings, readLog, extensionDir, storageDir, production, serverTag = '', servesCommandLine = true, servesExcel = true, dev, memento, secrets, httpProxy,
   readmePath, pageDir, build, editorVersion, outputLog, windowLog, exportUi, view, closePanel, closeAllTabs, post,
-  notify, warn, showError, setContext, onAccountChange, subscribe, log, mark,
+  notify, warn, showError, reloadWindow = null, setContext, onAccountChange, subscribe, log, mark,
 }) {
   const { getSession, hostToken, fabricToken, appToken, forgetToken, signedOutByChoice, accountKey, queryAccountOf,
           knownAccount, rememberAccount } = signIn;
@@ -158,7 +158,7 @@ function createCore({
 
   const engines = createEngines({
     extensionDir, storageDir, production, serverTag, secrets, settings, httpProxy,
-    engineCallbacks, logBoot, logCatalog, closePanel, closeAllTabs, warn, showError,
+    engineCallbacks, logBoot, logCatalog, closePanel, closeAllTabs, warn, showError, reloadWindow,
     onStoreCleared: () => onStoreCleared(),
     log,
   });

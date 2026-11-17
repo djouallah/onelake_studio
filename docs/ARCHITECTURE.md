@@ -1250,8 +1250,6 @@ every window. The rest apply at once.
 
 ## Limitations
 
-- **A proxy's password can be read by a statement.** A proxy given as `http://user:password@host` in VS Code's
-  `http.proxy` is handed to DuckDB as settings, and `current_setting('http_proxy_password')` answers. Not fixed yet.
 - **A statement can read any `https://` address.** So SQL someone else wrote, or an agent wrote after reading
   hostile text, can send data out in a URL. The OneLake token goes only to OneLake. See [SECURITY.md](https://github.com/djouallah/onelake_studio/blob/main/SECURITY.md).
 - **The guard on SQL is in the window, not in the engine's process.** Whatever holds the engine's session token can

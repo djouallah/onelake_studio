@@ -108,7 +108,8 @@ OneLake names a table `workspace.lakehouse.schema.table`, and DuckDB's names hav
 
 - **Under the lockdown, httpfs can't find the system's CA bundle.** The engine writes a PEM of its own.
 - **Proxy settings:** DuckDB ignores the editor's proxy, and azure has proxy settings of its own, so both are set.
-  The proxy password can still be read with `current_setting`. That gap is known and not worked around.
+  The proxy's password is never a setting, as `current_setting` answers any statement: it goes in an `http` secret
+  for httpfs and in the storage secret for azure, and DuckDB shows neither's password.
 - **A secret holds its token by value.** It is issued again when the token changes, and once more after an auth
   failure.
 - **A secret's scope is a prefix**, and a OneLake URL has the workspace before the host. The scope is a list, one
