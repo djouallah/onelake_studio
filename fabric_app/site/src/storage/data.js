@@ -14,8 +14,9 @@
 // https://store.local/... (duckdb-wasm's own file system): no httpfs, no SAS in any view, and
 // its worker refuses every other request (blockcache.js). The engine is duckdb-wasm's npm
 // release (DuckDB 2.0), with two of DuckDB's signed extensions: parquet, and icu for time
-// zones (TIMESTAMPTZ). All of it ships with the site, in vendor/ (core/vendored.js, WEBAPP):
-// nothing is loaded from a CDN or DuckDB's repository.
+// zones (TIMESTAMPTZ). All of it ships with the site (core/vendored.js, WEBAPP): the engine is the
+// project's own package, which Vite puts beside the page, and the extensions are the site's own files
+// (duckdb-ext/). Nothing is loaded from a CDN or DuckDB's repository.
 //
 // A table is opened when a query first names its view, v_<table>, so the first paint pays only
 // for the tables it reads. Opening it: its record (the snapshot's live data and delete files),
@@ -52,7 +53,12 @@
 //   model, query
 // =============================================================================
 
-import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/+esm.js";
+import * as duckdb from "@duckdb/duckdb-wasm";
+// The engine, the base build (the page needs Chrome or Edge 121+, which always runs it), and the local
+// store's script: each a file of its own beside the page, whose URL is what a worker is given.
+import WASM_URL from "@duckdb/duckdb-wasm/dist/duckdb-base.wasm?url";
+import WORKER_URL from "@duckdb/duckdb-wasm/dist/duckdb-browser-base.worker.js?url";
+import BLOCKCACHE_URL from "./blockcache.js?url";
 import { engineQueue } from "./queue.js";
 import { SETTINGS, DIRECT_IO, openEngine } from "./session.js";
 import { createResults } from "./results.js";
@@ -64,32 +70,26 @@ import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
 import { columnsIn, readsAll, columnRanges, tailOf, piecesOf } from "./ranges.js";
 import { splitPlan, carried } from "./split.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
-
-// This module's URL, held: Vite's dev server (Fabricator's preview) rewrites a `new URL("<path>", import.meta.url)`
-// written out, a folder's to one without its trailing slash. The site is served as it is.
-const here = import.meta.url;
+import { siteUrl } from "../site.js";
 
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
 // How many times a query is run again after the store said it lacked bytes it read: each time
 // downloads what was missed, with whole columns, so a query needs one or two at most.
 const HEALS = 8;
 const BATCH_MS = 20;   // how long a larger table's new columns gather into one download
-// The site's own copy of the engine (vendor/, core/vendored.js WEBAPP), the base build: the page
-// needs Chrome or Edge 121+, which always runs it.
-const VENDOR = new URL('../vendor/', here).href;
-const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/dist/`;
-const BUNDLE = { mainModule: `${WASM}duckdb-base.wasm`, mainWorker: `${WASM}duckdb-browser-base.worker.js`, pthreadWorker: null };
-// The DuckDB that build is: its extensions are vendored under this version, and an engine that
+// A worker made from a blob reads no relative URL: each in full.
+const BUNDLE = { mainModule: siteUrl(WASM_URL), mainWorker: siteUrl(WORKER_URL), pthreadWorker: null };
+// The DuckDB that build is: the site's extensions are under this version, and an engine that
 // says another would ask for files the site does not have.
 const DUCKDB = 'v2.0.0';
-// The extensions DuckDB installs, from the site's own repository (vendor/duckdb-ext): Parquet,
+// The extensions DuckDB installs, from the site's own repository (duckdb-ext/): Parquet,
 // and icu for time zones (TIMESTAMPTZ). No httpfs: DuckDB reads only the local store.
 const EXTENSIONS = ['parquet', 'icu'];
-const EXT_REPO = `${VENDOR}duckdb-ext`;
+const EXT_REPO = siteUrl('duckdb-ext');
 // The local store DuckDB reads from, and its worker's only way out (blockcache.js).
-const BLOCKCACHE = new URL('./blockcache.js' + new URL(import.meta.url).search, import.meta.url).href;
-// The model, the site's own (fabric_app/export/exportapp.js, setModel), of this build.
-const MODEL_JSON = new URL("../model.json" + new URL(import.meta.url).search, import.meta.url).href;
+const BLOCKCACHE = siteUrl(BLOCKCACHE_URL);
+// The model, the site's own file (fabric_app/export/exportapp.js, setModel).
+const MODEL_JSON = siteUrl('model.json');
 const ENGINES = (() => {
   try { const n = Number(new URLSearchParams(location.search).get('engines')); if (n >= 1 && n <= 4) return Math.floor(n); } catch (e) {}
   // Half the cores: the page, the store's worker and the browser need the rest. Four engines shared a scan
@@ -685,7 +685,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     onStatus("Loading the query engine…");
     // The model, the function's answer (where its tables are, the SAS), the tables' sizes and
     // their plans, while DuckDB's bundle loads: none of them needs it.
-    const modelRead = fetch(MODEL_JSON).then(r => {
+    const modelRead = fetch(MODEL_JSON, { cache: "no-cache" }).then(r => {
       if (!r.ok) throw new Error(`the site has no model.json (HTTP ${r.status}): export the app again`);
       return r.json();
     });

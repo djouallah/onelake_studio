@@ -38,7 +38,7 @@ const FUNCTION_POLLS = 30;   // ~5 minutes, as the CLI waits
 
 // The semantic model's connector, as rayfin.yml declares one (`rayfin connector add`, rayfin-tools-common
 // 1.36's CONNECTOR_CATALOG): delegated is the only auth it takes. The page calls it by this name
-// (fabric_app/site/storage/modeldata.js).
+// (fabric_app/site/src/storage/modeldata.js).
 const MODEL_CONNECTOR = 'model';
 const modelConnector = ({ workspace, id }) => ({
   name: MODEL_CONNECTOR, type: 'fabric-semanticmodel', version: '1',

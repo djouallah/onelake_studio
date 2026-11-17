@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { splitPlan, carried } = await import("../../fabric_app/site/storage/split.js");
+const { splitPlan, carried } = await import("../../fabric_app/site/src/storage/split.js");
 
 const large = t => t === "Sales" || t === "Returns";
 const OUTER = `SELECT f3.g0 AS "City", CAST(f3.a0 AS DOUBLE) AS "Sales Amount" FROM f3`;

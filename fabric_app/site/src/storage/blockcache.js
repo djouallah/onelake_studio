@@ -10,7 +10,7 @@
 // error (404), not a request, which it tells the page ({ miss }) so the page can download them
 // and run the query again. No SAS ever reaches this worker.
 // The one other request a worker may make is DuckDB downloading its extensions from the site's
-// own copy (self.DUCKDB_EXT_REPO, set by data.js: <site>/vendor/duckdb-ext/v<version>/wasm_eh/...),
+// own copy (self.DUCKDB_EXT_REPO, set by data.js: <site>/duckdb-ext/v<version>/wasm_eh/...),
 // each kept here whole after its first load (a file under its version never changes). Every
 // other request is refused: SQL typed in Explore cannot reach any URL, DuckDB's repository
 // included.

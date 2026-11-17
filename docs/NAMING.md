@@ -293,7 +293,7 @@ model is refused for the same reason.
 These do not meet the contract yet:
 
 - **Two features read outside these names.** An app from Export to Fabric uses its own `v_<table>` views
-  (`fabric_app/site/app.js`), and Time travel writes `iceberg_scan` directly (`page/app.js`).
+  (`fabric_app/site/src/app.js`), and Time travel writes `iceberg_scan` directly (`page/app.js`).
 - **A write names its table by display names only.** A GUID name reads, but is not a write's target, and
   neither is a lakehouse whose own name ends in `_warehouse` or another kind.
 

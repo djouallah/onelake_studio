@@ -12,8 +12,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
+// The Report and the model are the site's own files (site/public/); the page's code is site/src/.
 const site = fileURLToPath(new URL("../site/public/", import.meta.url));
-const load = p => import(new URL(`../site/public/${p}`, import.meta.url).href);
+const load = p => import(new URL(`../site/src/${p}`, import.meta.url).href);
 const [{ modelFields }, { checkReport, fieldList }, { tmslOf }, { compileModelSql, EXPLORE_CASTS }, { createCompiler },
   { tmslToModel }, { ossieToTmsl }] = await Promise.all([
   load("explore/explore.js"), load("explore/reportcheck.js"), load("explore/model.js"), load("explore/query.js"),

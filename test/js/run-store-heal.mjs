@@ -1,6 +1,6 @@
 // The Fabric app's store, in real Chrome: a query that reads bytes the store lacks fails, the page
 // downloads them, and the SAME engine, asked again, answers right. The real blockcache.js (the store
-// worker and DuckDB's worker), the real ranges.js, DuckDB-WASM from vendor/, and the engine opened and
+// worker and DuckDB's worker), the real ranges.js, DuckDB-WASM as the project's own package (site-dev.mjs), and the engine opened and
 // set, and its file registered, as data.js does it (storage/session.js). The Parquet file is written by DuckDB-WASM itself: four
 // columns, one of them wide, so that a query of one column leaves the others out of the store.
 //
@@ -8,31 +8,18 @@
 // only reported: it is how the page was before, when the query run again read the same bad bytes.
 //
 // No sign-in, no OneLake. Run: node scripts/vendor.mjs && node test/js/run-store-heal.mjs
-import http from "node:http";
-import { readFile } from "node:fs/promises";
-import { join, extname, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
+import { siteDev, ENGINE_FILES, TEST_HTML } from "./site-dev.mjs";
 
-const require = createRequire(import.meta.url);
-const { WEBAPP } = require("../../core/vendored.js");
-
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const PORT = 5213;
 const CHROME = process.env.CHROME_PATH ||
   (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome");
-const TYPES = { ".js": "text/javascript", ".wasm": "application/wasm", ".html": "text/html", ".json": "application/json" };
 
 // The page: everything runs in it, and it leaves what happened in window.__done.
-const PAGE = `
-import * as duckdb from "/site/vendor/npm/${WEBAPP.duckdbWasm}/+esm.js";
-import { OPEN, SETTINGS, DIRECT_IO, openEngine } from "/site/storage/session.js";
-import { columnRanges, piecesOf, tailOf } from "/site/storage/ranges.js";
+const PAGE = `${ENGINE_FILES}
+import { OPEN, SETTINGS, DIRECT_IO, openEngine } from "./src/storage/session.js";
+import { columnRanges, piecesOf, tailOf } from "./src/storage/ranges.js";
 
-const DIST = location.origin + "/site/vendor/npm/${WEBAPP.duckdbWasm}/dist/";
-const EXT_REPO = location.origin + "/site/vendor/duckdb-ext";
-const BLOCKCACHE = location.origin + "/site/storage/blockcache.js";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const said = [];
 const log = line => { said.push(line); console.log(line); };
@@ -40,8 +27,8 @@ const log = line => { said.push(line); console.log(line); };
 const worker = source => new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
 async function engine(settings) {
   const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), worker(
-    "self.DUCKDB_EXT_REPO = " + JSON.stringify(EXT_REPO) + ";\\nimportScripts(" + JSON.stringify(BLOCKCACHE) + ");\\nimportScripts(" + JSON.stringify(DIST + "duckdb-browser-base.worker.js") + ");"));
-  await db.instantiate(DIST + "duckdb-base.wasm", null);
+    "self.DUCKDB_EXT_REPO = " + JSON.stringify(EXT_REPO) + ";\\nimportScripts(" + JSON.stringify(BLOCKCACHE) + ");\\nimportScripts(" + JSON.stringify(WORKER) + ");"));
+  await db.instantiate(WASM, null);
   await openEngine(db);
   const conn = await db.connect();
   await conn.query("SET home_directory = '/tmp'; SET custom_extension_repository = '" + EXT_REPO + "'; INSTALL parquet; LOAD parquet;");
@@ -149,17 +136,7 @@ async function main() {
 main().then(r => { window.__done = r; }, e => { window.__done = { error: String(e?.stack || e), said }; });
 `;
 
-const server = http.createServer(async (req, res) => {
-  const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
-  if (path === "/") return res.writeHead(200, { "content-type": "text/html" }).end('<!doctype html><meta charset="utf-8"><script type="module" src="/test.js"></script>');
-  if (path === "/test.js") return res.writeHead(200, { "content-type": "text/javascript" }).end(PAGE);
-  const file = path.startsWith("/site/vendor/") ? join(root, "vendor", "webapp", normalize(path.slice("/site/vendor/".length)))
-    : path.startsWith("/site/storage/") ? join(root, "fabric_app", "site", "storage", normalize(path.slice("/site/storage/".length))) : null;
-  if (!file || file.includes("..")) return res.writeHead(404).end();
-  try { res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" }).end(await readFile(file)); }
-  catch { res.writeHead(404).end(); }
-});
-await new Promise(r => server.listen(PORT, "127.0.0.1", r));
+const site = await siteDev({ port: PORT, extra: { "test.html": TEST_HTML, "test.js": PAGE } });
 
 let code = 1, browser;
 try {
@@ -168,7 +145,7 @@ try {
   page.on("pageerror", e => console.log("[pageerror]", e.message));
   page.on("response", r => { if (r.status() === 404) console.log("[404]", r.url()); });
   page.on("console", m => { if (!/^\s*at |Range request|FAIL WITH|runQuery|processRequest/.test(m.text())) console.log(`[page] ${m.text().split("\n")[0]}`); });
-  await page.goto(`http://127.0.0.1:${PORT}/`);
+  await page.goto(`${site.base}test.html`);
   await page.waitForFunction(() => window.__done, null, { timeout: 8 * 60_000 });
   const done = await page.evaluate(() => window.__done);
   if (done.error) throw new Error(done.error);
@@ -189,6 +166,6 @@ try {
   console.log(`FAIL ${e?.stack || e}`);
 } finally {
   await browser?.close().catch(() => {});
-  server.close();
+  await site.stop(code === 0);
 }
 process.exit(code);

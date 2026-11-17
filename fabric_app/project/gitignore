@@ -9,4 +9,8 @@ dist
 .rayfin-local
 .env.local
 rayfin/.env
+rayfin/.env.*
 rayfin/.temp
+rayfin/.deployments.json
+rayfin/functions/local.settings.json
+site/public/rayfin.config.json

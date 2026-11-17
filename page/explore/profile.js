@@ -100,7 +100,7 @@ export function parseProfile(json) {
   if (busy > 0) for (const o of operators) { o.cpu = o.ms; o.ms = o.ms * execution / busy; }
   const top = result(roots.at(-1));
   // What the profile doesn't carry is null, not 0: the exported app's on a semantic model
-  // (fabric_app/site/storage/modeldata.js) is one timed run, so it has no planning and no rows scanned.
+  // (fabric_app/site/src/storage/modeldata.js) is one timed run, so it has no planning and no rows scanned.
   const scans = operators.filter(o => o.scanned != null);
   let scanned = p.cumulative_rows_scanned != null ? Number(p.cumulative_rows_scanned)
     : scans.length ? scans.reduce((s, o) => s + o.scanned, 0) : null;

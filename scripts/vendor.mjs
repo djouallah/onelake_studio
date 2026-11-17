@@ -4,8 +4,9 @@
 // Downloads what core/vendored.js pins — the markdown renderer, ECharts and the dax-sql
 // compiler — into vendor/, which panel.js serves to the page as webview
 // resources. Nothing the page runs comes from a CDN at run time. Export to Fabric copies
-// dax-sql from here into the app it writes, and vendor/webapp/ — the web app's own packages
-// (DuckDB-WASM and its extensions, Arrow, the Rayfin SDK, ECharts) — into its site/vendor/.
+// dax-sql from here into the app it writes, and vendor/webapp/ — the web app's files npm has not
+// (DuckDB's signed extensions, the world's outline) — into its site/public/. The packages its page
+// imports are npm's, bundled by Vite (scripts/site-bundle.mjs).
 //
 // Layout, relative to vendor/:
 //   npm/<pkg>@<v>/+esm.js       a jsDelivr ESM bundle, saved with a .js extension: VS Code
@@ -13,7 +14,7 @@
 //                               refuses anything that is not JavaScript.
 //   npm/<pkg>@<v>/<path>        a plain file of a package (ECharts' own build, dax-sql's
 //                               modules).
-//   webapp/npm/…                the web app's packages, the same two forms.
+//   webapp/world.json           the world's outline a map draws over.
 //   webapp/duckdb-ext/<v>/wasm_eh/<name>.duckdb_extension.wasm
 //                               DuckDB's signed extensions, at the path DuckDB-WASM asks for.
 // Every absolute `/npm/…` import inside a bundle is rewritten to a RELATIVE path, so the
@@ -108,8 +109,7 @@ const WEB = join(OUT, "webapp");
 const panelFiles = files, panelBytes = bytes;
 const { duckdb, platform, names } = VENDOR.webapp.extensions;
 await Promise.all([
-  ...VENDOR.webapp.esm.map(pkg => esmClosure(`/npm/${pkg}/+esm`, WEB)),
-  ...VENDOR.webapp.files.map(async f => save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`), WEB)),
+  ...VENDOR.webapp.files.map(async f => save(f.to, await get(`${JSDELIVR}/npm/${f.from}`), WEB)),
   ...names.map(async n => {
     const rel = `duckdb-ext/${duckdb}/${platform}/${n}.duckdb_extension.wasm`;
     await save(rel, await get(`https://extensions.duckdb.org/${duckdb}/${platform}/${n}.duckdb_extension.wasm`), WEB);

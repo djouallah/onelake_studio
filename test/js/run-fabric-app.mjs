@@ -69,11 +69,11 @@ function modelOf(ws, lh, table, columns) {
 }
 
 // --- The test's own page, beside the site's ---------------------------------------------------------------------
-// The site's data source and compiler, as the app's page uses them (site/app.js), with the queries to run.
+// The page's data source and compiler, as the app's page uses them (site/src/app.js), with the queries to run.
 const pageOf = queries => `
 try {
   const [{ createDataSource }, { createCompiler }, { tmslToModel }, { EXPLORE_CASTS }] = await Promise.all([
-    import("./storage/data.js"), import("./semantic/src/index.js"), import("./semantic/formats/tmsl.js"), import("./explore/query.js")]);
+    import("./src/storage/data.js"), import("./src/semantic/src/index.js"), import("./src/semantic/formats/tmsl.js"), import("./src/explore/query.js")]);
   const data = createDataSource({ onProgress: p => { if (p) window.__progress = p.detail; } });
   await data.init();
   const compiler = createCompiler(tmslToModel(data.model()), { tableSource: t => "v_" + t.name, castOutput: EXPLORE_CASTS });
@@ -133,6 +133,8 @@ try {
     // The function's secrets are the export's; its storage token, ours.
     env: { CATALOG_URL: catalogUrl, TABLES: TABLE, RAYFIN_LOCAL_TOKEN_STORAGE: ONELAKE_TOKEN },
     extra: { "test.html": '<!doctype html><meta charset="utf-8"><body><script type="module" src="./test.js"></script>', "test.js": pageOf(queries) },
+    // The project's own Vite serves it: the test's page imports the page's scripts, and Vite resolves their packages.
+    vite: true,
   });
 
   browser = await chromium.launch({ executablePath: CHROME, headless: true });

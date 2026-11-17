@@ -46,7 +46,7 @@ const browser = { ...globals.browser, acquireVsCodeApi: 'readonly' };
 
 module.exports = [
   // Built or fetched, not written here; the Fabric function is TypeScript, which its own tsc reads.
-  { ignores: ['node_modules/**', 'dist/**', 'vendor/**', 'webview/**', 'duckdb-extensions/**', 'fabric-function/**',
+  { ignores: ['node_modules/**', 'dist/**', 'vendor/**', 'webview/**', 'duckdb-extensions/**', 'fabric-function/**', 'fabric-site/**',
               'fabric_app/rayfin/**', 'desktop/src-tauri/**', 'website/**', 'blog/**', '.tmp/**', '.claude/**',
               'test/fixtures/**', 'test/e2e/driver/**'] },
   { linterOptions: { reportUnusedDisableDirectives: 'error' } },

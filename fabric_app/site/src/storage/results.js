@@ -1,8 +1,8 @@
 // =============================================================================
 // results.js — a query's result kept in this browser across visits
 // =============================================================================
-// IndexedDB, as Arrow IPC (through the apache-arrow module duckdb-wasm itself imports: the
-// same vendored file, the same module). A reload answers every query already seen without an engine.
+// IndexedDB, as Arrow IPC (through the apache-arrow package duckdb-wasm itself imports: the
+// same module). A reload answers every query already seen without an engine.
 // The key is the SQL and what the host says identifies the data it reads (`versions`: for
 // the Iceberg app, the metadata location of every table it names), so new data is a new key
 // and a result is never served over it. Not kept: a query that reads the clock or today's
@@ -12,7 +12,7 @@
 // Shared by the DuckDB hosts; which data a query reads, and its version, is the host's.
 // =============================================================================
 
-import { tableToIPC, tableFromIPC } from "../vendor/npm/apache-arrow@17.0.0/+esm.js";
+import { tableToIPC, tableFromIPC } from "apache-arrow";
 
 const RESULT_MAX = 8 * 1024 * 1024, RESULTS_MAX = 256 * 1024 * 1024;
 const VOLATILE = /\bcurrent_(date|time|timestamp)\b|\b(now|today|random|uuid|gen_random_uuid|setseed|nextval|get_current_time|timezone)\s*\(/i;

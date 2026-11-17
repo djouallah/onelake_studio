@@ -1,26 +1,17 @@
 // The Fabric app's split (?split=1), in real Chrome: a query's scan of a large table shared out between
 // DuckDB-WASM engines, each over its share of the files, and the rest run by one. The real split.js, DuckDB-WASM
-// from vendor/, the engines opened and set as data.js does it (storage/session.js), and the steps data.js takes
+// as the project's own package (site-dev.mjs), the engines opened and set as data.js does it (storage/session.js), and the steps data.js takes
 // (splitRun): DESCRIBE the partial, COPY it to Parquet, the bytes out of one engine and into another, the final
 // statement. Each query's answer split is compared, values and types, with the same engine's answer whole.
 //
 // The files are in each engine's memory: the store has a test of its own (run-store-heal.mjs).
 // No sign-in, no OneLake. Run: node scripts/vendor.mjs && node test/js/run-split.mjs
-import http from "node:http";
-import { readFile } from "node:fs/promises";
-import { join, extname, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
+import { siteDev, ENGINE_FILES, TEST_HTML } from "./site-dev.mjs";
 
-const require = createRequire(import.meta.url);
-const { WEBAPP } = require("../../core/vendored.js");
-
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const PORT = 5214;
 const CHROME = process.env.CHROME_PATH ||
   (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome");
-const TYPES = { ".js": "text/javascript", ".wasm": "application/wasm", ".html": "text/html", ".json": "application/json" };
 
 // The queries, as dax-sql compiles a tile: the fact read in a CTE of its own.
 const QUERIES = {
@@ -37,20 +28,17 @@ const QUERIES = {
 };
 
 // The page: everything runs in it, and it leaves what happened in window.__done.
-const PAGE = `
-import * as duckdb from "/site/vendor/npm/${WEBAPP.duckdbWasm}/+esm.js";
-import { OPEN, SETTINGS, openEngine } from "/site/storage/session.js";
-import { splitPlan, carried } from "/site/storage/split.js";
+const PAGE = `${ENGINE_FILES}
+import { OPEN, SETTINGS, openEngine } from "./src/storage/session.js";
+import { splitPlan, carried } from "./src/storage/split.js";
 
-const DIST = location.origin + "/site/vendor/npm/${WEBAPP.duckdbWasm}/dist/";
-const EXT_REPO = location.origin + "/site/vendor/duckdb-ext";
 const QUERIES = ${JSON.stringify(QUERIES)};
 const ENGINES = 3, FILES = 5;
 
 async function engine(index) {
   const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), new Worker(URL.createObjectURL(new Blob(
-    ["importScripts(" + JSON.stringify(DIST + "duckdb-browser-base.worker.js") + ");"], { type: "text/javascript" }))));
-  await db.instantiate(DIST + "duckdb-base.wasm", null);
+    ["importScripts(" + JSON.stringify(WORKER) + ");"], { type: "text/javascript" }))));
+  await db.instantiate(WASM, null);
   await openEngine(db);
   const conn = await db.connect();
   await conn.query("SET home_directory = '/tmp'; SET custom_extension_repository = '" + EXT_REPO + "'; INSTALL parquet; LOAD parquet;");
@@ -118,17 +106,7 @@ async function main() {
 main().then(r => { window.__done = r; }, e => { window.__done = { error: String(e?.stack || e) }; });
 `;
 
-const server = http.createServer(async (req, res) => {
-  const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
-  if (path === "/") return res.writeHead(200, { "content-type": "text/html" }).end('<!doctype html><meta charset="utf-8"><script type="module" src="/test.js"></script>');
-  if (path === "/test.js") return res.writeHead(200, { "content-type": "text/javascript" }).end(PAGE);
-  const file = path.startsWith("/site/vendor/") ? join(root, "vendor", "webapp", normalize(path.slice("/site/vendor/".length)))
-    : path.startsWith("/site/storage/") ? join(root, "fabric_app", "site", "storage", normalize(path.slice("/site/storage/".length))) : null;
-  if (!file || file.includes("..")) return res.writeHead(404).end();
-  try { res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" }).end(await readFile(file)); }
-  catch { res.writeHead(404).end(); }
-});
-await new Promise(r => server.listen(PORT, "127.0.0.1", r));
+const site = await siteDev({ port: PORT, extra: { "test.html": TEST_HTML, "test.js": PAGE } });
 
 let code = 1, browser;
 try {
@@ -136,7 +114,7 @@ try {
   const page = await (await browser.newContext()).newPage();
   page.on("pageerror", e => console.log("[pageerror]", e.message));
   page.on("response", r => { if (r.status() === 404) console.log("[404]", r.url()); });
-  await page.goto(`http://127.0.0.1:${PORT}/`);
+  await page.goto(`${site.base}test.html`);
   await page.waitForFunction(() => window.__done, null, { timeout: 8 * 60_000 });
   const done = await page.evaluate(() => window.__done);
   if (done.error) throw new Error(done.error);
@@ -152,6 +130,6 @@ try {
   console.log(`FAIL ${e?.stack || e}`);
 } finally {
   await browser?.close().catch(() => {});
-  server.close();
+  await site.stop(code === 0);
 }
 process.exit(code);

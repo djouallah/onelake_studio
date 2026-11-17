@@ -868,15 +868,15 @@ Rayfin project, so Fabricator (or the Rayfin CLI) can grow it and publish it too
 **The local copy is one file**, `<model>.fabricator`: a zip of a Rayfin project, laid out as the Rayfin CLI lays one out.
 `.fabricator` is Fabricator's project file, so a double-click there imports it, installs its packages, previews it and
 publishes it; VS Code and the desktop app open it too (Opening files from disk, above). It holds:
-- `package.json`: Vite, the Rayfin CLI and its local-dev plugin, pinned to the Rayfin version the page's SDK is
-  (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The function,
-  `rayfin/functions`, is its workspace. None of these is in the page, and OneLake Studio needs none of them. It also
-  names the Rayfin SDK the page signs in with (`PAGE_PACKAGES`), at the version of its copy in `vendor/`, the one the
-  page runs: Fabricator's checks read `package.json` for it.
-- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json), named for the
-  app, so Fabricator's `npm install` resolves nothing (without it, an import spent over a minute asking the registry
-  about each package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the
-  public registry; run it after changing any package the project names.
+- `package.json`: the Rayfin CLI and `@microsoft/rayfin-core`, which Fabricator and rayfin-local run
+  (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The page, `site`, and
+  the function, `rayfin/functions`, are its workspaces. OneLake Studio needs none of them. Every `@microsoft/rayfin-*`
+  package is on its `~X.Y.0` line, as the Rayfin CLI's templates have them and Fabricator's checks ask.
+- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json) for a
+  client-side app, `package-lock.model.json` for a semantic model's (each has its own packages), named for the app, so
+  Fabricator's `npm ci` resolves nothing (without it, an import spent over a minute asking the registry about each
+  package). The "Refresh extension lockfile" workflow makes both (`scripts/fabric-lock.mjs`) against the public
+  registry; run it after changing any package the project names.
 - `scripts/validate-report.mjs` ([`fabric_app/project/validate-report.mjs`](../fabric_app/project/validate-report.mjs)),
   `npm run validate`: the Report checked with the page's own modules (`page/explore/reportcheck.js` on Explore's
   `modelFields`, `pivotQuery` and the Report's `reportPages`, then dax-sql), in Node, with no browser and no data.
@@ -886,12 +886,16 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
   them at the project's CLI version. `scripts/function-bundle.mjs` makes them at package time, into
   `fabric-function/agent-files.json`, and every export writes them. The CLI's own `AGENTS.md` is not written: the
   export writes its own.
-- `site/public/`: the page as it is uploaded, but its build stamp, with its engine's one data source (`storage/source.js`
-  names it: DuckDB in the browser, or the semantic model's connector) and its packages (`vendor/`: DuckDB-WASM, Arrow, the
-  Rayfin SDK, ECharts, the extension's own, written again by every export). `rayfin.yml` serves it as it is
-  (`staticHosting`: `path: site`, `folder: public`, no build), and `site/vite.config.mjs` serves it locally. A page
-  with no stamp (published by `rayfin up`, or served by Vite) says nothing of its build. With DuckDB-WASM the file is
-  about 12 MB; an app on a semantic model has no DuckDB and is under 2 MB.
+- `site/`: the page, a Vite project. `site/package.json` names the packages it imports (the Rayfin SDK and ECharts;
+  client side DuckDB-WASM and Arrow, or the semantic model's connector), Vite and Rayfin's local-dev plugin.
+  `site/index.html` and `site/src/` are the page: `app.js`, its engine's one data source (`storage/source.js` names
+  it: DuckDB in the browser, or the semantic model's connector), Studio's Explore (`explore/`) and dax-sql
+  (`semantic/`). `npm run build` makes `site/dist/`, which `rayfin.yml` uploads (`staticHosting`: `path: site`,
+  `folder: dist`, `buildCommand: npm run build`); `site/vite.config.mjs` is its build, and serves it locally.
+- `site/public/`: the site's own files, which Vite copies into the build as they are: the Report, the model, what the
+  page runs on, and what npm has not, the world's outline (`world.json`) and client side DuckDB's signed extensions
+  (`duckdb-ext/`), the extension's own, written again by every export. DuckDB-WASM itself is a
+  package, installed where the project is unpacked.
 - `rayfin/`: `rayfin.yml` and the function's source. Once published, `rayfin/.deployments.json` records the app as
   `rayfin up` records one (keyed by the workspace's name as the CLI keys it), and `site/public/rayfin.config.json` is
   its backend, so a publish from Fabricator or `rayfin up` updates this app, not a new one. Client side,
@@ -912,6 +916,19 @@ After that it offers where the app was saved last. The app's name in Fabric is s
 export saved as `<model>-explore.zip` or `<model>.fabricapp` is offered under its new name, and renamed when saved
 there; an earlier `.fabricapp` opened from disk and exported is renamed `.fabricator` first. Either is read laid out as
 a `.fabricator` is (its `site/` is `site/public/`, its root `export.json` our record) and written so.
+
+**OneLake Studio publishes its own build of the page.** It runs no npm, so the page is built when the extension is
+packaged ([`scripts/site-bundle.mjs`](../scripts/site-bundle.mjs)): the project an export writes, installed from its
+lock file and built by its own Vite, once for each engine, into `fabric-site/duckdb/` and `fabric-site/semanticModel/`.
+A publish uploads one of them, its `index.html` stamped with the build, with the file's `site/public/` and this
+publish's `rayfin.config.json` (`buildDist`): what `npm run build` makes of the project. CI builds an exported project
+and compares the two, file for file (`test/js/run-fabricator-project.mjs`). So a change to the Report or the model is
+published by OneLake Studio, Fabricator or `rayfin up` alike. A change to the page's code (`site/src/`,
+`site/index.html`) is published only by one that builds the project: an app's file opened from disk whose page was
+changed is asked about first, since OneLake Studio would upload its own page, and the file then keeps its page
+(its record says `page: 'own'`, and it is asked about at each publish). An earlier export's file had its page in
+`site/public/`, served as it was with its packages in `vendor/`: its next export, as it is too, lays it out as above
+(`setPage`).
 
 **The app runs on the model as exported**, never on the lakehouse's file as it is now:
 - **Client side**, the file holds its model, `model.ossie.yaml` (`model.bim` for a .bim; `model.yaml` from an earlier export still reads), and each publish makes the site's
@@ -984,15 +1001,15 @@ and the command line's `export` takes no `--mode`.
   So the page queries the model through the app's `fabric-semanticmodel` connector. The export declares it in the app's settings
   (`model`, with the semantic model's workspace and id, [`fabric_app/export/fabricapp.js`](../fabric_app/export/fabricapp.js)), and writes it into
   the local copy's `rayfin.yml`. The function has no token for the model and runs no query.
-- **The page** ([`storage/modeldata.js`](../fabric_app/site/storage/modeldata.js), chosen by `site/public/engine.json`) turns
-  Explore's query over the model into DAX with dax-sql's `sqlToDax` (the copy in `site/public/semantic/`), runs it through the
+- **The page** ([`storage/modeldata.js`](../fabric_app/site/src/storage/modeldata.js), chosen by `site/public/engine.json`) turns
+  Explore's query over the model into DAX with dax-sql's `sqlToDax` (the copy in `site/src/semantic/`), runs it through the
   connector (Rayfin's `ConnectorsRayfinClient` and the connector's own runtime, which decodes its Arrow answer), and
   draws the rows. It takes only a SELECT over the model. Its Show plan has no plan tree: its SQL tab is the DAX, and its
   profile the query's one run.
 - **The page's model is the semantic model's local copy:** `site/public/model.json`, written by the export, and again by a
   publish of the file as it is: the definition Fabric gave when it was opened (or Refreshed), which the page writes its DAX from. A
   change to the semantic model reaches the app when it is exported again.
-- **Rows are cut on the semantic model** ([`storage/modelrows.js`](../fabric_app/site/storage/modelrows.js)): a
+- **Rows are cut on the semantic model** ([`storage/modelrows.js`](../fabric_app/site/src/storage/modelrows.js)): a
   preview's rows, and a LIMIT and OFFSET, are a `TOPN` in the DAX, and a count is `COUNTROWS`, so neither waits for
   the whole answer. executeQueries sends at most 100,000 rows or 1,000,000 values in one answer, and the page keeps at
   most 100,000 rows: an answer cut by either says so, as the client-side app's does.
@@ -1007,33 +1024,35 @@ and the command line's `export` takes no `--mode`.
   caller's applicable model permissions, including Build", and Fabric checks it on whoever publishes (the CI identity was
   refused with "Could not verify Build permission on semantic model"). But a viewer needs only Read: tried on 2026-11-11 with an account that
   was a workspace Viewer, Read on the model and no Build, the app's connector answered its DAX query.
-- `site/public/` holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
+- The project holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
   setting for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))
-- **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
+- **`site/`:** the page, black always: `index.html` and `src/`. Its data source (`src/storage/`) signs in with Rayfin's Fabric SSO,
   takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
-  what the Report reads of the tables into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`,
-  reads them as `v_<table>` views. A table of 32 MB or less comes down whole. Of a larger one, only each file's footer
-  and the columns a query names come down, before it runs ([`storage/ranges.js`](../fabric_app/site/storage/ranges.js)):
+  what the Report reads of the tables into the browser, where DuckDB-WASM (DuckDB 2.0), the project's own package,
+  reads them as `v_<table>` views. The Rayfin SDK is imported as the page starts, so its Fabric provider reads how the
+  page was opened (inside the Fabric portal or not) before sign-in is asked for. A table of 32 MB or less comes down whole. Of a larger one, only each file's footer
+  and the columns a query names come down, before it runs ([`storage/ranges.js`](../fabric_app/site/src/storage/ranges.js)):
   each file's chunks of them are one request where they are less than 8 MB apart, since OneLake takes about 0.6 s per
   request whatever its size. Measured on 2026-11-10, a Report over 2 of 22 columns of a 4 GB table came down in
   12–19 s instead of 123 s. If DuckDB reads bytes the store lacks, the store says which, and the page downloads them with
   their columns and runs the query again.
   DuckDB-WASM runs one thread an engine, so the page starts several (half the machine's cores, two at least and four
   at most), and a query over a table of ten million rows or more is shared out between them
-  ([`storage/split.js`](../fabric_app/site/storage/split.js)). dax-sql reads a fact table in a CTE of its own, a
+  ([`storage/split.js`](../fabric_app/site/src/storage/split.js)). dax-sql reads a fact table in a CTE of its own, a
   GROUP BY of keys and aggregates; each engine runs that CTE over its share of the table's files, the answers cross
   as Parquet (a few KB), and one engine adds them up and runs the rest of the statement. Only what adds up is
   shared out: sums, counts, minimums and maximums. A distinct count, an average, or a measure the compiler wrote as a
   subquery runs whole on one engine, as does any query whose sharing out fails. Measured on 2026-11-11 on a 3.6 GB
   table with four engines: 5.1 s to 1.2 s for a sum by a column. On a table of 4 million rows sharing out cost more than it saved, about
   0.1 s a query: hence the ten million. `?split=0` in the address runs every query whole.
+- **`project/`:** the project around the page: its Vite config, its lock files, its ignore lists and the Report's checker.
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
 
 [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js) writes the local copy from `fabric_app/`, Studio's
-`page/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is built in memory from it
-(`buildDist`): `site/` stamped with the build, the packages from `vendor/webapp`, and `rayfin.config.json`, zipped
+`page/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is put together in memory
+(`buildDist`): the page as Vite built it (`fabric-site/`), the file's `site/public/`, and `rayfin.config.json`, zipped
 in-process.
 
 **Publishing** ([`fabric_app/export/fabricapp.js`](../fabric_app/export/fabricapp.js)) is the REST sequence that `rayfin up` runs,
@@ -1393,9 +1412,9 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 - **`test/js/`** is the `node --test` suite and browser runners. Its `cli*.test.mjs` run `cli/cli.mjs` as a process.
 - **`test/sql/`** is SQL statements and their answers (sqllogictest), run through the agent's `sql`.
 - **`test/e2e/`** is the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet.
-- **`scripts/`** is packaging (bundle, bundle-desktop, stage-webview, vendor, function-bundle, fetch-extensions,
+- **`scripts/`** is packaging (bundle, bundle-desktop, stage-webview, vendor, function-bundle, site-bundle, fetch-extensions,
   check-binding, fetch-binding, fetch-retry, pinned-downloads, release-notes, make-icon) and the website
   (build-website, and website-shots, which takes its screenshots in the installed app).
 
-`dist/`, `webview/`, `vendor/`, `duckdb-extensions/`, `fabric-function/` and `blog/` are ignored by git.
-The first five are build output or fetched at package time, so do not edit them.
+`dist/`, `webview/`, `vendor/`, `duckdb-extensions/`, `fabric-function/`, `fabric-site/` and `blog/` are ignored by git.
+The first six are build output or fetched at package time, so do not edit them.

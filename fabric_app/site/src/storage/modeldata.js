@@ -23,18 +23,15 @@ import { createCompiler, parseQuery } from "../semantic/src/index.js";
 import { printDaxQuery } from "../semantic/src/sql.js";
 import { tmslToModel } from "../semantic/formats/tmsl.js";
 import { ossieToTmsl } from "../semantic/formats/ossie.js";
+// The connector's runtime, which decodes its Arrow answer: the project's own package (site/package.json,
+// core/vendored.js WEBAPP.rayfinSemanticModel).
+import { fabricSemanticModel } from "@microsoft/rayfin-connector-fabric-semanticmodel";
+import { siteUrl } from "../site.js";
 
-// This module's URL, held: Vite's dev server (Fabricator's preview) rewrites a `new URL("<path>", import.meta.url)`
-// written out, a folder's to one without its trailing slash. The site is served as it is.
-const here = import.meta.url;
-
-// The site's own copy (vendor/, core/vendored.js WEBAPP.rayfinSemanticModel): the connector's
-// runtime, which decodes its Arrow answer.
-const SEMANTIC_MODEL_ESM = new URL("../vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.2/+esm.js", here).href;
 // The connector's name in the app's settings (fabric_app/export/fabricapp.js, MODEL_CONNECTOR).
 const CONNECTOR = "model";
-// The model the semantic model was made from (fabric_app/export/exportapp.js, writeModel), of this build.
-const MODEL_JSON = new URL("../model.json" + new URL(import.meta.url).search, import.meta.url).href;
+// The model the semantic model was made from (fabric_app/export/exportapp.js, setModel), the site's own file.
+const MODEL_JSON = () => siteUrl("model.json");
 
 // Explore wraps its query in DuckDB's SQL (its preview as text, its count, its plan and profile:
 // explore/view.js, shared with the DuckDB app); here each is asked of the model for the query
@@ -66,10 +63,7 @@ export { MAX_ROWS };
 
 export function createModelSource({ onStatus = () => {} } = {}) {
   const auth = createAuth({
-    connectors: async () => {
-      const { fabricSemanticModel } = await import(/* @vite-ignore */ SEMANTIC_MODEL_ESM);
-      return { configs: { [CONNECTOR]: { connector: "fabric-semanticmodel" } }, runtimes: { [CONNECTOR]: fabricSemanticModel() } };
-    },
+    connectors: async () => ({ configs: { [CONNECTOR]: { connector: "fabric-semanticmodel" } }, runtimes: { [CONNECTOR]: fabricSemanticModel() } }),
   });
   let doc = null;
   let compiler = null;
@@ -77,7 +71,7 @@ export function createModelSource({ onStatus = () => {} } = {}) {
   async function init() {
     onStatus("Signing in to Fabric…");
     // The model needs no session: fetched while the sign-in is asked for.
-    const read = fetch(MODEL_JSON);
+    const read = fetch(MODEL_JSON(), { cache: "no-cache" });
     read.catch(() => {});
     await auth.signIn();
     onStatus("Reading the model…");

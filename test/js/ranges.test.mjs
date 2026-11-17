@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const { BLOCK, GAP, TAIL, merge, columnsIn, readsAll, columnRanges, tailOf, piecesOf } =
-  await import("../../fabric_app/site/storage/ranges.js");
+  await import("../../fabric_app/site/src/storage/ranges.js");
 
 const MB = 1024 * 1024;
 

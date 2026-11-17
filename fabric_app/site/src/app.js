@@ -6,10 +6,12 @@
 // reads them in this browser. On a semantic model (engine.json), the data source is
 // storage/modeldata.js instead: each query runs as DAX on the semantic model, as the person signed
 // in, and this page loads no DuckDB. Either way the model is model.json, the model as exported. Nothing
-// here is specific to one model; the export writes only rayfin.config.json (the backend), explore.json
-// (the shelves the first view shows), model.json, and on a semantic model engine.json. The Report page
-// is report.json (explore/report.js draws it), which no export writes over: Studio's Report tab
-// (Add to report, a tile's ✕) and the zip's owner grow it, and here it only reads.
+// here is specific to one model; the export writes only the site's own files, beside index.html
+// (site/public/ in the project): rayfin.config.json (the backend), explore.json (the shelves the first
+// view shows), model.json and engine.json. The Report page is report.json (explore/report.js draws
+// it), which no export writes over: Studio's Report tab (Add to report, a tile's ✕) and the zip's owner
+// grow it, and here it only reads.
+// The page's packages are npm's (the project's site/package.json), bundled by Vite.
 // =============================================================================
 import { mountExplore } from "./explore/view.js";
 import { tmslOf } from "./explore/model.js";
@@ -17,13 +19,8 @@ import { EXPLORE_CASTS } from "./explore/query.js";
 import { createCompiler } from "./semantic/src/index.js";
 import { tmslToModel } from "./semantic/formats/tmsl.js";
 import { ossieToTmsl } from "./semantic/formats/ossie.js";
+import { siteUrl } from "./site.js";
 
-const v = new URL(import.meta.url).search;
-// This module's URL, held. Vite's dev server (Fabricator's preview, `npm run dev:frontend`) rewrites a
-// `new URL(<path>, import.meta.url)` written out: a template, into an import of every file in the folder, and
-// rayfin.config.json, which Rayfin's local-dev plugin answers as JSON, stopped app.js from loading; a path, into
-// an import of that file. The site is served as it is (test/js/exportapp.test.mjs keeps it so).
-const here = import.meta.url;
 const status = (s, kind = "") => {
   const el = document.getElementById("status");
   el.textContent = s || "";
@@ -45,18 +42,13 @@ const boot = {
 };
 
 // ECharts, off the critical path: loaded beside everything else, waited for only when a
-// chart is drawn. The site's own copy (vendor/, core/vendored.js WEBAPP).
-const echartsReady = new Promise((resolve, reject) => {
-  const s = Object.assign(document.createElement("script"),
-    { src: new URL("./vendor/npm/echarts@5.5.1/dist/echarts.min.js", here).href, async: true });
-  s.onload = () => resolve(window.echarts);
-  s.onerror = () => reject(new Error("the chart library could not be loaded"));
-  document.head.append(s);
-});
+// chart is drawn. A part of the page of its own (a dynamic import).
+const echartsReady = import("echarts")
+  .catch(() => { throw new Error("the chart library could not be loaded"); });
 echartsReady.catch(() => {});
 // The world's outline a map draws over, read the first time a map is drawn.
 const worldMap = async () => {
-  const r = await fetch(new URL("./vendor/npm/echarts@4.9.0/map/json/world.json", here));
+  const r = await fetch(siteUrl("world.json"));
   if (!r.ok) throw new Error(`the world's map: ${r.status}`);
   return r.json();
 };
@@ -69,8 +61,9 @@ const resultOf = table => ({
 });
 
 // One of the site's JSON files, or `missing` when it has none: the hosting answers a file a site
-// lacks with its index.html (200), which is not JSON.
-const siteJson = (name, missing) => fetch(new URL(`./${name}${v}`, here))
+// lacks with its index.html (200), which is not JSON. Asked of the site each time (no-cache): a publish
+// changes these under the same names.
+const siteJson = (name, missing) => fetch(siteUrl(name), { cache: "no-cache" })
   .then(r => (r.ok ? r.text() : null), () => null)
   .then(text => { try { return text == null ? missing : JSON.parse(text); } catch { return missing; } });
 
@@ -106,7 +99,7 @@ export async function start() {
     const first = null;
     const { engine, name: modelName, maxRows } = (await engineRead) || {};
     // This app's one data source (storage/source.js, which the export writes): DuckDB in the browser over the
-    // tables, or a semantic model asked through its connector. The site holds that one only.
+    // tables, or a semantic model asked through its connector. The page is built with that one only.
     const source = await import("./storage/source.js");
     if (engine === "semanticModel") return await startModel(source, first, modelName, maxRows);
     const { createDataSource } = source;
