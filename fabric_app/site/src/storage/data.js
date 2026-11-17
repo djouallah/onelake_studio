@@ -112,9 +112,10 @@ const STORE_WAIT = 30000;   // how long the page waits for the store's writer to
 // table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
 // in dbo, as in a TMSL partition; item.schema.table is its last two parts.
 function ossieSource(d) {
-  const pbi = (d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
+  // The extension as Ossie has it now (an object), or as a file of the spec before does (custom_extensions, a JSON string).
+  const pbi = (d.nonportable_extensions ?? d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
   let partition;
-  try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
+  try { partition = (typeof pbi.data === 'string' ? JSON.parse(pbi.data) : pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
   if (!d.source || (partition && !partition.source?.entityName)) return null;
   const s = String(d.source);
   // A table named <item>.<schema>.<table>, in the lakehouse the app reads: its schema.table.

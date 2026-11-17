@@ -88,7 +88,7 @@ section.modelOpen #chartBtn { display: none; }
 .tk-num { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
 .tk-lit { color: var(--vscode-debugTokenExpression-boolean, #ff7b72); }
 .tk-com { color: var(--faint); font-style: italic; }
-/* A custom_extensions block: amber, with a bar down its left that moves no text. */
+/* A nonportable_extensions block: amber, with a bar down its left that moves no text. */
 .tk-ext, .tk-ext span { color: var(--vscode-editorWarning-foreground, #cca700); }
 .tk-ext { box-shadow: inset 2px 0 0 var(--vscode-editorWarning-foreground, #cca700); }
 .text-file-note { margin: var(--gap) var(--gutter) 0; font-size: 12px; color: var(--muted); }

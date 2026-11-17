@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 const { isOssie, isOssiePath } = await import("../../page/semantic.js");
 
 test("an Ossie model is told from any other YAML by its text", () => {
-  const ossie = "# models/aac/model.bim as Apache Ossie\nversion: 0.2.0.dev0\nname: aac\ndatasets:\n  - name: dim_calendar\n";
+  const ossie = "# models/aac/model.bim as Apache Ossie\nversion: 0.3.0.dev0\nname: aac\ndatasets:\n  - name: dim_calendar\n";
   assert.equal(isOssie(ossie), true);
   assert.equal(isOssie("version: 2\nmodels:\n  - name: stg_orders\n"), false, "a dbt schema.yml is a document");
   assert.equal(isOssie("steps:\n  datasets:\n    - x\nversion: 1\n"), false, "datasets must be at the top level");
@@ -112,7 +112,7 @@ test("Model's YAML colours a model's file and changes none of its text", async (
   assert.equal(prettyModelText("a: b\n".repeat(PRETTY_MAX / 5 + 1), "yaml"), null);
 });
 
-test("Model's YAML sets a custom_extensions block apart, line by line, and nothing after it", async () => {
+test("Model's YAML sets an extensions block apart, line by line, and nothing after it", async () => {
   const { prettyModelText, extensionVendors } = await import("../../page/explore/pretty.js");
   const yaml = [
     "datasets:",
@@ -120,9 +120,9 @@ test("Model's YAML sets a custom_extensions block apart, line by line, and nothi
     "    fields:",
     "      - name: fare",
     "        datatype: Decimal",
-    "        custom_extensions:",
+    "        nonportable_extensions:",
     "          - vendor_name: POWER_BI",
-    "            data: '{\"formatString\":\"#,##0.00\"}'",
+    "            data: { formatString: '#,##0.00' }",
     "      - name: id",
     "    metrics:",
     "      - name: total",
@@ -158,9 +158,9 @@ test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, i
     "  - name: total",                       // 13
     "    expression:",                       // 14
     "      sql: SUM(mw)",                    // 15
-    "    custom_extensions:",                // 16 amber, as before
+    "    nonportable_extensions:",           // 16 amber, as before
     "      - vendor_name: POWER_BI",         // 17 amber
-    "version: 0.2.0.dev0",                   // 18
+    "version: 0.3.0.dev0",                   // 18
   ].join("\n");
   const amber = prettyModelText(yaml, "yaml").split("\n").map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
   assert.deepEqual(amber, [4, 5, 6, 7, 8, 9, 16, 17]);

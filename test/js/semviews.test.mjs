@@ -123,8 +123,8 @@ test("a view is a pointer, kept per account, and its .bim is read where it is", 
     await assert.rejects(v.put("bad", join(dir, "model.json")), /\.bim file/);
     // An Apache Ossie model is a model file too; semantic.js reads its YAML.
     const ossie = join(dir, "ossie.yaml");
-    await writeFile(ossie, "version: 0.2.0.dev0\ndatasets: []\n");
-    assert.equal((await v.put("ossie", ossie)).text, "version: 0.2.0.dev0\ndatasets: []\n");
+    await writeFile(ossie, "version: 0.3.0.dev0\ndatasets: []\n");
+    assert.equal((await v.put("ossie", ossie)).text, "version: 0.3.0.dev0\ndatasets: []\n");
 
     const texts = await v.texts();
     assert.deepEqual(texts.map(t => t.name).sort(), ["Sales", "nem", "ossie"]);

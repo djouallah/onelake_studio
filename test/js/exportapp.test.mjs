@@ -21,10 +21,10 @@ const semantic = await import("../../page/semantic.js");
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 const LH = "11111111-2222-3333-4444-555555555555";
 const URL_ = `https://onelake.dfs.fabric.microsoft.com/${WS}/${LH}`;
-const OSSIE = "version: 0.2.0.dev0\nname: Sales Model\ndatasets:\n  - name: fct_sales\n";
+const OSSIE = "version: 0.3.0.dev0\nname: Sales Model\ndatasets:\n  - name: fct_sales\n";
 const WHERE = { workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/ossie.yaml" };
 const doc = (over = {}) => ({
-  version: "0.2.0.dev0", name: "Sales Model",
+  version: "0.3.0.dev0", name: "Sales Model",
   datasets: [
     { name: "fct_sales", source: "mart.fct_sales", fields: [{ name: "amount" }] },
     { name: "dim_region", source: "mart.dim_region", fields: [{ name: "Region" }] },
@@ -108,7 +108,7 @@ test("the plan: a .bim's Direct Lake partitions are its tables, and a table with
 });
 
 test("the plan: an Ossie model from Power BI reads as its .bim does, a bare source in dbo and a table with no entity a warning", () => {
-  const partition = source => ({ custom_extensions: [{ vendor_name: "POWER_BI", data: JSON.stringify({ partitions: [{ name: "p", source }] }) }] });
+  const partition = source => ({ nonportable_extensions: [{ vendor_name: "POWER_BI", data: { partitions: [{ name: "p", source }] } }] });
   const ossie = doc({ datasets: [
     { name: "fct_sales", source: "fct_sales", ...partition({ type: "entity", entityName: "fct_sales" }) },
     { name: "dim_region", source: "mart.dim_region", ...partition({ type: "entity", entityName: "dim_region", schemaName: "mart" }) },
@@ -129,11 +129,15 @@ test("the page reads an Ossie dataset's table as the plan does", async () => {
     const code = text.match(/function ossieSource[\s\S]*?\n}\r?\n/)[0].replace(/: any\b/g, "").replace(": string | null", "");
     return new Function(`${code}; return ossieSource;`)();
   };
-  const partition = source => [{ vendor_name: "POWER_BI", data: JSON.stringify({ partitions: [{ source }] }) }];
-  for (const read of [await copy("fabric_app/site/src/storage/data.js")]) {
-    assert.equal(read({ source: "x", custom_extensions: partition({ entityName: "x" }) }), "dbo.x");
-    assert.equal(read({ source: "mart.x", custom_extensions: partition({ entityName: "x", schemaName: "mart" }) }), "mart.x");
-    assert.equal(read({ source: "Time Calc", custom_extensions: partition({ type: "calculationGroup" }) }), null);
+  const partition = source => [{ vendor_name: "POWER_BI", data: { partitions: [{ source }] } }];
+  // A file of the Ossie spec before: custom_extensions, their data a JSON string.
+  const before = source => [{ vendor_name: "POWER_BI", data: JSON.stringify({ partitions: [{ source }] }) }];
+  for (const read of [await copy("fabric_app/site/src/storage/data.js"), await copy("fabric_app/export/exportapp.js")]) {
+    assert.equal(read({ source: "x", nonportable_extensions: partition({ entityName: "x" }) }), "dbo.x");
+    assert.equal(read({ source: "mart.x", nonportable_extensions: partition({ entityName: "x", schemaName: "mart" }) }), "mart.x");
+    assert.equal(read({ source: "Time Calc", nonportable_extensions: partition({ type: "calculationGroup" }) }), null);
+    assert.equal(read({ source: "mart.x", custom_extensions: before({ entityName: "x", schemaName: "mart" }) }), "mart.x");
+    assert.equal(read({ source: "Time Calc", custom_extensions: before({ type: "calculationGroup" }) }), null);
     assert.equal(read({ source: "by_hand" }), "dbo.by_hand");
     assert.equal(read({ source: "nem.mart.x" }), "mart.x", "item.schema.table");
     assert.equal(read({ source: '"my.lake".dbo."my table"' }), "dbo.my table");

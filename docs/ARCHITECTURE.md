@@ -534,12 +534,15 @@ workspace has one model of a name.
   Apache Ossie (dax-sql's `tmslToOssie`) in the cache folder, at `models/<account>/<workspace>/<model>.ossie.yaml`
   (named as Ossie's own tools name a model; a copy an earlier version named `<model>.yaml` is renamed, its view with it),
   then opens that copy. It is under its account because a workspace's name is unique in one tenant only.
-- **What the copy says:** a measure is a metric in Ossie's portable SQL when it means the same there, and DAX
-  when not. When every table is in one lakehouse of the model's workspace, each dataset's `source` is
+- **What the copy says:** it is Ossie as its spec is now (`0.3.0.dev0`; dax-sql is checked against Ossie's own
+  validator every day). A measure is a metric in Ossie's portable SQL when it means the same there, and DAX
+  when not; a measure made of two tables' measures is the model's own metric, each of them `AGG(dataset.metric)`. When every table is in one lakehouse of the model's workspace, each dataset's `source` is
   `<lakehouse>.<schema>.<table>` and the file holds no Direct Lake expression; that lakehouse is found by name
   in the tree's listing, so it opens offline. A model over several lakehouses keeps its expression. The
-  `POWER_BI` extension holds only what Ossie has no field for and something needs: what changes an answer
-  (a relationship's filter direction, a date table, ...) and what a user sees (format strings, hidden, ...).
+  `POWER_BI` extension (`nonportable_extensions`, plain YAML) holds only what Ossie has no field for and something
+  needs: what changes an answer (a relationship's filter direction, a date table, ...) and what a user sees (format
+  strings, hidden, ...). A file of the spec before (`custom_extensions`, a JSON string) reads the same, and is
+  written as the spec is now the next time it is saved.
 - **From a query:** a statement that names a model not open yet opens it first, in the same way.
 - **Nothing is written to OneLake**, so someone who may only read the workspace can open and query it.
 - **Only Direct Lake.** Any other model is refused, and nothing is kept.

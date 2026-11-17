@@ -6,7 +6,8 @@
 // numbers, literals and comments (tk-*, explore.css), so nothing in a file is ever HTML. By
 // hand, with nothing loaded: it works offline and costs the panel nothing until it is shown.
 // What isn't plain Ossie SQL is set apart, each of its lines in a tk-ext span: an Ossie model's
-// custom_extensions blocks (what Ossie has no field for, Power BI's), and an expression in a dialect
+// nonportable_extensions blocks (what Ossie has no field for, Power BI's; custom_extensions in a file
+// of the spec before), and an expression in a dialect
 // other than OSSIE_SQL_2026 (DAX, say): its whole `- dialect:` item.
 // =============================================================================
 
@@ -55,12 +56,12 @@ function yamlValue(text) {
 }
 
 const KEY = /^("(?:[^"\\]|\\[\s\S])*"|'(?:[^']|'')*'|[^\s#'"\-?:,[\]{}&*!|>%@`][^#]*?|-[^\s#][^#]*?)(\s*:)(?=\s|$)/;
-const EXT_KEY = /^(\s*(?:-\s+)*)custom_extensions\s*:/;
+const EXT_KEY = /^(\s*(?:-\s+)*)(?:nonportable|custom)_extensions\s*:/;
 function prettyYaml(text) {
   const colour = lineColour();
   const raws = text.split('\n');
   const foreign = foreignDialectLines(raws.map(r => (r.endsWith('\r') ? r.slice(0, -1) : r)));
-  let ext = -1;   // a custom_extensions key's column, while its lines go on
+  let ext = -1;   // an extensions key's column, while its lines go on
   return raws.map((raw, i) => {
     const html = colour(raw);
     const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
@@ -137,7 +138,7 @@ function lineColour() {
   };
 }
 
-// The vendors whose extensions an Ossie model's file holds (custom_extensions' vendor_name),
+// The vendors whose extensions an Ossie model's file holds (nonportable_extensions' vendor_name),
 // each once, as written: what Model's YAML says its amber lines are.
 export function extensionVendors(text) {
   const out = new Set();

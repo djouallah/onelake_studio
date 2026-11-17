@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A model's YAML is Apache Ossie as its spec is now (0.3.0.dev0).** What Power BI needs and Ossie has no field for
+  (format strings, folders, hierarchies, roles, a relationship's direction) is plain YAML under
+  `nonportable_extensions`, where it was one JSON string. A measure made of two tables' measures, a ratio say, is
+  SQL now, each measure as `AGG(dataset.metric)`, where it was DAX. A file written before opens as it did, and is
+  written this way the next time it is saved.
 - **A Fabric app runs on DuckDB in the browser, and nothing else.** A Power BI semantic model's Export to Fabric
   makes that app too, from the model's local copy: it reads the lakehouse's tables, and no longer queries the semantic
   model in DAX. The model must name one lakehouse. An app exported earlier on a semantic model is not opened or

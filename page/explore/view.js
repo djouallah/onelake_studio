@@ -240,7 +240,7 @@ export function mountExplore(root, ctx) {
   if (editable) { textPre.hidden = false; textPre.setAttribute('aria-hidden', 'true'); }
   const saveBtn = editable ? btn('Save', () => saveFile(), true) : null;
   if (saveBtn) { saveBtn.title = 'Write this text back to the file (Ctrl+S)'; saveBtn.disabled = true; saveBtn.hidden = true; }
-  // Over the file, when it has custom_extensions or a dialect other than Ossie SQL: what its amber
+  // Over the file, when it has nonportable_extensions or a dialect other than Ossie SQL: what its amber
   // lines are (pretty.js tk-ext).
   const ossie = ctx.text != null && !/^bim$/i.test(ctx.ext || '');
   const vendors = ossie ? extensionVendors(ctx.text) : [];
