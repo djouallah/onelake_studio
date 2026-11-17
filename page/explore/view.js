@@ -250,12 +250,19 @@ export function mountExplore(root, ctx) {
     !dialects.length ? `Amber: ${extName}, what Ossie has no field for`
       : !vendors.length ? `Amber: expressions in ${dialects.join(', ')}, not Ossie SQL`
       : `Amber: not plain Ossie SQL — the ${extName}, and expressions in ${dialects.join(', ')}`);
+  // Over that: a semantic model's local copy written as an earlier Ossie spec had it says so, with Upgrade,
+  // which writes it as the spec is now (ctx.upgradeCopy). The copy is never changed unasked.
+  const specWas = ossie && ctx.upgradeCopy && ctx.specNow ? (/^version:\s*["']?([^\s"'#]+)/m.exec(ctx.text) || [])[1] : null;
+  const specNote = specWas && specWas !== ctx.specNow
+    ? el('p', { class: 'text-file-note spec-note', hidden: true }, `This copy is Ossie ${specWas}. The spec is now ${ctx.specNow}.`,
+      hostBtn('Upgrade', 'Upgrading…', ctx.upgradeCopy, `Write this copy as Ossie ${ctx.specNow}. Nothing is read from Fabric.`))
+    : null;
   // At the right of the bar, before Create Semantic Model and Open in Excel. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
   const modelActions = modelSwitch || createBtn || excelBtn
     ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, excelBtn) : null;
-  const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textEdit || textPre);
+  const modelArea = el('div', { class: 'model-area' }, modelPage, specNote, textNote, textEdit || textPre);
 
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
@@ -1056,6 +1063,7 @@ export function mountExplore(root, ctx) {
     modelPage.hidden = on;
     if (editable) { textEdit.hidden = !on; saveBtn.hidden = !on; } else textPre.hidden = !on;
     textNote.hidden = !on || !(vendors.length || dialects.length) || !textPre.querySelector('.tk-ext');
+    if (specNote) specNote.hidden = !on;
   }
 
   // --- The file, written in (editable) ---

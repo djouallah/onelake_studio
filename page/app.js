@@ -372,6 +372,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     // name; else the file, in the workspace it is in (a file from disk: the one its tables are in), by its name.
     const schema = file.modelWorkspace || file.localWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
     const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName);
+    const specNow = await semantic.ossieVersion();
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
     // An app's file holds its model in a zip, which no view can read: not kept.
@@ -439,6 +440,16 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       },
       openOn: openOnText ? 'model' : file.openOn || 'model',
       openOnText,
+      // Upgrade, over the YAML of a semantic model's local copy written as an earlier Ossie spec had it: the copy
+      // written as the spec is now (the host's, from the copy itself), and the model again from that.
+      specNow,
+      upgradeCopy: file.modelWorkspace && file.modelName
+        ? async () => {
+          const next = await engine.upgradeCopy({ workspace: file.modelWorkspace, model: file.modelName });
+          await openModelView(file, next, { fromOneLake: false, openOnText: true });
+          setStatus(`${file.modelName}'s local copy is Ossie ${specNow} now.`, 'ok');
+        }
+        : undefined,
       // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's
       // local copy (Fabric's is the model, and Refresh reads it again) nor an app's file (its model is in a zip).
       saveFileText: !file.appFile && !file.modelWorkspace && (fromOneLake || file.localWorkspace)

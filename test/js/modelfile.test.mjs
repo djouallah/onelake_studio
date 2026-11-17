@@ -111,7 +111,7 @@ test("a semantic model's TMSL is Fabric's model.bim kept beside its Ossie copy, 
   await done();
 });
 
-test("a local copy of an earlier Ossie spec is written as the spec is now when it is read, with no request", async () => {
+test("a local copy of an earlier Ossie spec is read as it is, and written as the spec is now only by Upgrade, with no request", async () => {
   // dax-sql's part, stood in for: it reads either spec and writes the one of now.
   let written = 0;
   const compiler = {
@@ -127,16 +127,22 @@ test("a local copy of an earlier Ossie spec is written as the spec is now when i
   const path = models.modelPath(n);
   await mkdir(dirname(path), { recursive: true });
   // fabric is {} here: a read of Fabric would throw.
-  await writeFile(path, "version: 0.2.0.dev0\nname: NEM Sales\ncustom_extensions: []\n");
-  assert.equal((await models.fetchModel(n)).text, "version: 0.3.0.dev0\nname: NEM Sales\n");
+  const before = "version: 0.2.0.dev0\nname: NEM Sales\ncustom_extensions: []\n";
+  await writeFile(path, before);
+  // Opened: the copy as it is, on disk too.
+  assert.equal((await models.fetchModel(n)).text, before);
+  assert.equal(await readFile(path, "utf8"), before);
+  assert.equal(written, 0);
+  // Upgrade: written as the spec is now, and read so after.
+  assert.equal(await models.upgradeCopy(n), "version: 0.3.0.dev0\nname: NEM Sales\n");
   assert.equal(await readFile(path, "utf8"), "version: 0.3.0.dev0\nname: NEM Sales\n", "the file too");
-  // As the spec is now: read as it is, not written.
   assert.equal((await models.fetchModel(n)).text, "version: 0.3.0.dev0\nname: NEM Sales\n");
-  assert.equal(written, 1);
-  // One that cannot be read so is kept.
+  // One that cannot be read so is kept, and says why.
   const old = "version: 0.2.0.dev0\nname: broken\n";
   await writeFile(path, old);
-  assert.equal((await models.fetchModel(n)).text, old);
+  await assert.rejects(models.upgradeCopy(n), /not read/);
   assert.equal(await readFile(path, "utf8"), old);
+  // No copy: nothing to upgrade.
+  await assert.rejects(models.upgradeCopy({ ...n, model: "Other" }), /has no local copy/);
   await done();
 });

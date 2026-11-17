@@ -89,6 +89,15 @@ test("a model's tables reach the host as the page names them: by GUIDs, or by la
   ]);
 });
 
+test("Upgrade: a page names a model, and nothing else", async () => {
+  const asked = [];
+  const methods = createHostMethods({ onelake: {}, engine: {}, upgradeCopy: async x => { asked.push(x); return "version: now\n"; } });
+  assert.equal(await methods["model.upgradeCopy"]({ workspace: "ws", model: "m", path: "C:/x" }), "version: now\n");
+  assert.deepEqual(asked, [{ workspace: "ws", model: "m" }]);
+  await assert.rejects(methods["model.upgradeCopy"]({ model: "m" }), /needs a semantic model/);
+  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["model.upgradeCopy"]({ workspace: "ws", model: "m" }), /not available here/);
+});
+
 test("Keep offline: a page names a model and on or off, and nothing else", async () => {
   const asked = [];
   const methods = createHostMethods({ onelake: {}, engine: {},

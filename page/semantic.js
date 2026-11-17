@@ -48,10 +48,14 @@ function compilerModules() {
   ]).then(([c, t, o, y]) => ({
     createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
     ossieToTmsl: o.ossieToTmsl, parseYaml: y.parse,
+    // The Ossie spec dax-sql writes: what a model's copy is written as now.
+    ossieVersion: o.tmslToOssie({ model: { tables: [] } }).version,
   }))
     .catch(e => { modulesP = null; throw new Error(`Could not load the DAX compiler: ${e.message}`); });
   return modulesP;
 }
+
+export const ossieVersion = async () => (await compilerModules()).ossieVersion;
 
 // The views (dax-sql's registry) and, per view, its Direct Lake tables.
 let mods = null, views = null;

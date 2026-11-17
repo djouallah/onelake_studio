@@ -106,26 +106,22 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     await fetchModel(n, { fresh: true, say });
     return fsp.readFile(modelBimPath(n));
   }
-  // A copy written as an earlier Ossie spec had it, written again as the spec is now when it is next
-  // read: from itself (dax-sql reads the spec before), so nothing is asked of Fabric, offline too, and
-  // a change made in Fabric still waits for Refresh. A copy that cannot be read so is kept as it is.
-  async function asSpecNow(n, path, text) {
+  // Upgrade, over Model's YAML: a copy written as an earlier Ossie spec had it, written as the spec is
+  // now. Only when asked: a copy is never changed by being read. From itself (dax-sql reads the spec
+  // before), so nothing is asked of Fabric, offline too, and a change made in Fabric still waits for
+  // Refresh. A copy that cannot be read so is kept as it is, and the error says why. Its new text.
+  async function upgradeCopy(n) {
+    await modelsAdopted;
+    const path = modelPath(n);
+    const text = await fsp.readFile(path, 'utf8').catch(() => null);
+    if (text == null) throw new Error(`${n.model} has no local copy`);
     const { compiler } = await modules();
-    const was = /^version:\s*["']?([^\s"'#]+)/m.exec(text);
-    if (!was || !compiler.tmslToOssie) return text;
-    try {
-      const now = compiler.tmslToOssie({ model: { tables: [] } }).version;
-      if (was[1] === now) return text;
-      const doc = compiler.parseYaml(text);
-      const next = compiler.stringifyYaml(compiler.tmslToOssie(compiler.ossieToTmsl(doc), doc.name), { lineWidth: 0 });
-      await writeWhole(path, next);
-      log(`${n.workspace}/${n.model}: its local copy was Ossie ${was[1]}, and is written as ${now}`);
-      onModelChanged(n);
-      return next;
-    } catch (e) {
-      log(`${n.workspace}/${n.model}: its local copy is Ossie ${was[1]} and could not be written as the spec is now, so it is kept — ${e.message}`);
-      return text;
-    }
+    const doc = compiler.parseYaml(text);
+    const next = compiler.stringifyYaml(compiler.tmslToOssie(compiler.ossieToTmsl(doc), doc.name), { lineWidth: 0 });
+    await writeWhole(path, next);
+    log(`${n.workspace}/${n.model}: its local copy was Ossie ${doc.version}, and is written as the spec is now`);
+    onModelChanged(n);
+    return next;
   }
   function fetchModel(n, { fresh = false, say = () => {} } = {}) {
     const path = modelPath(n);
@@ -134,7 +130,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       await modelsAdopted;
       if (!fresh) {
         const kept = await fsp.readFile(path, 'utf8').catch(() => null);
-        if (kept != null) return { path, text: await asSpecNow(n, path, kept) };
+        if (kept != null) return { path, text: kept };
       }
       say('reading its definition from Fabric…');
       const bim = await fabric.getBim(n.workspace, n.modelId);
@@ -324,7 +320,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   return {
     adoptModels, adopted: () => modelsAdopted,
     modelPath, modelBimPath, fetchModelBim, modelKey, cachedModel, unsupportedModels, unsupportedNote,
-    fetchModel, walkTables, openSqlModel, completionNames, modelFile,
+    fetchModel, upgradeCopy, walkTables, openSqlModel, completionNames, modelFile,
     forgetNames: () => { namesKept = null; },
   };
 }
