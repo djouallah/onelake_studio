@@ -39,13 +39,13 @@ async function main() {
   process.on('uncaughtException', e => log(`uncaught: ${(e && e.stack) || e}`));
   process.on('unhandledRejection', e => log(`unhandled: ${(e && e.stack) || e}`));
 
-  // VS Code's settings where there are any, so the app reads the same tenant and the same cache, and
-  // whatever is changed in the app's Settings tab over them.
+  // A settings.json in the app's own folder, written by hand if at all, and whatever is changed in the
+  // app's Settings tab over it.
   const appSettings = keptIn(join(home, 'app-settings.json'));
   // How the window was left: the tree's width, whether it shows, the zoom. Not the page's localStorage:
   // its origin's port is new each start.
   const windowState = keptIn(join(home, 'window-state.json'));
-  const base = readSettings(settingsFile);
+  const base = readSettings(settingsFile, { warn: log });
   const setting = (key, fallback) => {
     const mine = appSettings.get(key);
     if (mine !== undefined) return mine;

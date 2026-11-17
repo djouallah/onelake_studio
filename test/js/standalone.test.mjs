@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { pathsOf, parseSettings, keptIn } = require("../../core/home.js");
+const { pathsOf, parseSettings, readSettings, keptIn } = require("../../core/home.js");
 const { createMsalSession, scopesFor, CLIENT_ID } = require("../../core/msalsession.js");
 const { createTokenStore, dpapiProtect, dpapiUnprotect } = require("../../core/tokenstore.js");
 
@@ -53,6 +53,29 @@ test("VS Code's settings: comments and trailing commas go, and text in a string 
 test("settings that can't be read are none, not a failure", () => {
   assert.deepEqual(parseSettings("{ not json"), {});
   assert.deepEqual(parseSettings("[1]"), {});
+});
+
+test("a settings file that is there and can't be read is said, once; a missing or empty one is not", async () => {
+  const dir = await temp();
+  const file = join(dir, "settings.json");
+  const said = [];
+  const read = () => readSettings(file, { warn: line => said.push(line) });
+  assert.deepEqual(read(), {}, "no file");
+  await writeFile(file, "  \n");
+  assert.deepEqual(read(), {}, "an empty one");
+  assert.deepEqual(said, []);
+  // Saved by an editor that puts a byte order mark first: still read.
+  await writeFile(file, `﻿{ "onelakeStudio.tenantId": "t" }`);
+  assert.deepEqual(read(), { "onelakeStudio.tenantId": "t" });
+  assert.deepEqual(said, []);
+  await writeFile(file, `{ "onelakeStudio.tenantId": "t" `);
+  assert.deepEqual(read(), {});
+  assert.equal(said.length, 1);
+  assert.ok(said[0].includes(file) && /none of its settings hold/.test(said[0]), said[0]);
+  await writeFile(file, "[1]");
+  assert.deepEqual(read(), {});
+  assert.match(said[1], /not a \{ \} of settings/);
+  await rm(dir, { recursive: true, force: true });
 });
 
 test("what is kept outlives the process, and a missing file is nothing kept", async () => {
@@ -195,6 +218,38 @@ test("the token cache: encrypted on disk, read once, and what can't be read is n
   assert.equal(await broken.read(), null);
   await b.clear();
   assert.equal(await createTokenStore(file, { unprotect: async s => s }).read(), null);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("two processes on one token cache: each reads what the other wrote, and a sign-out in one holds in the other", async () => {
+  const dir = await temp();
+  const file = join(dir, "cache.bin");
+  let reads = 0;
+  const store = () => createTokenStore(file, { protect: async t => `sealed:${t}`, unprotect: async s => { reads++; return s.replace("sealed:", ""); } });
+  const app = store(), cli = store();
+  await app.write("alice");
+  assert.equal(await cli.read(), "alice");
+  await cli.write("bob, who signed in from the command line");
+  assert.equal(await app.read(), "bob, who signed in from the command line", "not what it held");
+  const before = reads;
+  await app.read();
+  assert.equal(reads, before, "an unchanged file is not read again");
+  await cli.clear();
+  assert.equal(await app.read(), null, "signed out there is signed out here");
+
+  // And MSAL's own copy is emptied with it, so its next write doesn't bring the account back.
+  const fake = fakeMsal();
+  await createMsalSession({ tenant: () => "", store: app, msal: fake.library, openBrowser: async () => {} }).keepOnly("nobody");
+  const plugin = fake.made[0].cache.cachePlugin;
+  const given = [];
+  const tokenCache = { deserialize: text => given.push(text), serialize: () => "what MSAL holds" };
+  await plugin.beforeCacheAccess({ tokenCache });
+  assert.deepEqual(given, ["{}"]);
+  await plugin.afterCacheAccess({ tokenCache, cacheHasChanged: false });
+  assert.equal(await cli.read(), null);
+  await cli.write("carol");
+  await plugin.beforeCacheAccess({ tokenCache });
+  assert.equal(given.at(-1), "carol");
   await rm(dir, { recursive: true, force: true });
 });
 

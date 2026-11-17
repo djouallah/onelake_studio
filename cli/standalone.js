@@ -48,7 +48,7 @@ function buildOf(extensionDir) {
 function createStandalone({ extensionDir = join(__dirname, '..'), env = process.env, say = () => {} } = {}) {
   const { home, settingsFile } = pathsOf(extensionDir, env);
   mkdirSync(home, { recursive: true });
-  const config = readSettings(settingsFile);
+  const config = readSettings(settingsFile, { warn: say });
   const read = (key, fallback) => { const v = config[`onelakeStudio.${key}`]; return v === undefined ? fallback : v; };
   const tenant = () => String(read('tenantId', '')).trim();
   const settings = createSettings(read);

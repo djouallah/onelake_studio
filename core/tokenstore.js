@@ -4,7 +4,8 @@
 // =============================================================================
 // VS Code keeps its own tokens. With no editor, the refresh token is this file's, so it is encrypted
 // for this Windows user with DPAPI. PowerShell does that, as it drives Excel for Open in Excel: no
-// native module to ship. It takes a moment, so what was read is held for as long as this process runs.
+// native module to ship. It takes a moment, so what was read is held until the file changes: the desktop
+// app and the command line keep one file, and a sign-out in one is a sign-out in the other.
 // A file that can't be read (another user's, another machine's) is no sign-in, not a failure.
 // =============================================================================
 
@@ -50,25 +51,35 @@ const dpapiUnprotect = base64 => throughDpapi('Unprotect', base64).then(b => Buf
  */
 function createTokenStore(file, { protect = dpapiProtect, unprotect = dpapiUnprotect } = {}) {
   let held;   // undefined until the file has been read: then its text, or null with none
+  let seen;   // the file as it was when `held` was read or written: another process may have changed it since
+  // The desktop app and the command line keep one file. What says it changed: its time, its size, or that it is gone.
+  const stamp = async () => {
+    const st = await fsp.stat(file).catch(() => null);
+    return st ? `${st.mtimeMs}:${st.size}` : 'none';
+  };
   return {
     async read() {
-      if (held !== undefined) return held;
-      const stored = await fsp.readFile(file, 'utf8').catch(() => null);
+      const now = await stamp();
+      if (held !== undefined && now === seen) return held;
+      const stored = now === 'none' ? null : await fsp.readFile(file, 'utf8').catch(() => null);
       held = stored ? await unprotect(stored).catch(() => null) : null;
+      seen = now;
       return held;
     },
     async write(text) {
-      held = text;
       const stored = await protect(text);
       await fsp.mkdir(dirname(file), { recursive: true });
       // Whole or not at all: another process may be reading it.
       const partial = `${file}.${process.pid}.tmp`;
       await fsp.writeFile(partial, stored);
       await fsp.rename(partial, file).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
+      held = text;
+      seen = await stamp();
     },
     async clear() {
-      held = null;
       await fsp.rm(file, { force: true });
+      held = null;
+      seen = 'none';
     },
   };
 }

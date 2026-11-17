@@ -11,6 +11,7 @@
 const { join } = require('node:path');
 const { homedir } = require('node:os');
 const { readFileSync, writeFileSync, renameSync } = require('node:fs');
+const { stripBom } = require('./names');
 
 const EXTENSION_ID = 'djouallah.onelake-studio';
 
@@ -29,17 +30,34 @@ function pathsOf(extensionDir, env = process.env) {
 }
 
 // VS Code's settings.json allows comments and trailing commas. Text in a string is left alone.
-function parseSettings(text) {
-  const plain = String(text).replace(/"(?:[^"\\]|\\.)*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, m => (m[0] === '"' ? m : ''))
+// Throws when the text is not settings.
+function settingsOf(text) {
+  const plain = stripBom(text).replace(/"(?:[^"\\]|\\.)*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, m => (m[0] === '"' ? m : ''))
     .replace(/"(?:[^"\\]|\\.)*"|,(\s*[}\]])/g, (m, tail) => (m[0] === '"' ? m : tail));
-  try {
-    const v = JSON.parse(plain);
-    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-  } catch (_) { return {}; }
+  if (!plain.trim()) return {};
+  const v = JSON.parse(plain);
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('it is not a { } of settings');
+  return v;
 }
 
-function readSettings(file) {
-  try { return parseSettings(readFileSync(file, 'utf8')); } catch (_) { return {}; }
+function parseSettings(text) {
+  try { return settingsOf(text); } catch (_) { return {}; }
+}
+
+// No file is no settings, and nothing to say. A file that is there and can't be read is said (`warn`): its
+// settings, the tenant among them, would otherwise be gone with no word of why.
+function readSettings(file, { warn = () => {} } = {}) {
+  let text;
+  try { text = readFileSync(file, 'utf8'); }
+  catch (e) {
+    if (e.code !== 'ENOENT') warn(`${file} could not be read, so none of its settings hold: ${e.message}`);
+    return {};
+  }
+  try { return settingsOf(text); }
+  catch (e) {
+    warn(`${file} could not be read as settings, so none of its settings hold: ${e.message}`);
+    return {};
+  }
 }
 
 // A small JSON file with what VS Code's globalState and secrets hold there. Only this user can read it
