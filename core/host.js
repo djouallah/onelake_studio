@@ -29,6 +29,12 @@ const { tableFacts, findings, lakehouseHealth } = require('./lake/health');
 const lhOf = x =>({ workspace: String(x.workspace), item: String(x.item) });
 const tableOf = x => ({ schema: String(x.schema || ''), table: String(x.table) });
 const RANGE = /^bytes=\d+-\d*$/;
+// The most a page is handed in one call: the bytes cross as base64 in one message, held whole on both sides.
+const PAGE_MAX_BYTES = 64 * 1024 * 1024;
+// The most the host copies to disk for the engine (a SQLite file): the page's own limit for one (data.js).
+const LOCAL_COPY_MAX_BYTES = 200e6;
+// A peek's rows when the engine doesn't say how many a result holds: its default (engine-host.js).
+const PEEK_MAX_ROWS = 200_000;
 // What a tab's Save writes back: a .sql file in the SQL box, a model file on its Model page.
 const SAVABLE = /\.(sql|bim|ya?ml)$/i;
 
@@ -146,8 +152,9 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!x.schema) throw new Error('a semantic model is kept in its workspace');
       const path = String(x.path);
       // The page names a model's local copy or a OneLake file — never any other file on disk.
-      if (modelsDir && !ONELAKE_FILE_URL.test(path)) {
-        const rel = relative(resolve(modelsDir), resolve(path));
+      // With no folder of local copies, no file on disk is one.
+      if (!ONELAKE_FILE_URL.test(path)) {
+        const rel = modelsDir ? relative(resolve(modelsDir), resolve(path)) : '';
         if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${path}: not a semantic model's local copy`);
       }
       return views().put(String(x.name), path, String(x.schema));
@@ -208,13 +215,18 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       });
       return rows.map(r => ({ ...r, sqlName: sqlNameOf(lh, r) }));
     },
-    'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql]), x.limit),
+    // No more rows than a result holds: a larger LIMIT reads the table for rows the engine would cut.
+    'onelake.peek': x => {
+      const most = Number.isInteger(engine.maxRows) && engine.maxRows > 0 ? engine.maxRows : PEEK_MAX_ROWS;
+      const limit = Number.isFinite(Number(x.limit)) && Number(x.limit) > 0 ? Math.min(Math.floor(Number(x.limit)), most) : undefined;
+      return onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql]), limit);
+    },
     'onelake.rowsOutOfReach': x => onelake.rowsOutOfReach(lhOf(x), tableOf(x)),
     // A file's bytes, or a range of them, signed here. base64, because a webview message
     // is JSON and a Uint8Array does not survive it.
     'onelake.readBytes': async x => {
       const range = typeof x.range === 'string' && RANGE.test(x.range) ? x.range : undefined;
-      const bytes = await onelake.readBytes(String(x.workspace), String(x.path), { range });
+      const bytes = await onelake.readBytes(String(x.workspace), String(x.path), { range, maxBytes: PAGE_MAX_BYTES });
       return { base64: Buffer.from(bytes).toString('base64') };
     },
     // A Files/ object the engine must open as a LOCAL file (a SQLite database: DuckDB's
@@ -225,7 +237,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       // Bytes are read only when this session has no copy of this version yet: a file rewritten since is
       // another file, as its version comes from the kept listing.
       const version = onelake.versionOf ? await onelake.versionOf(ws, path) : '';
-      return engine.copyToTemp(`${ws}/${path}@${version}`, () => onelake.readBytes(ws, path));
+      return engine.copyToTemp(`${ws}/${path}@${version}`, () => onelake.readBytes(ws, path, { maxBytes: LOCAL_COPY_MAX_BYTES }));
     },
     // Save, through the editor's save dialog: text the page made (a CSV), or a OneLake
     // file the host reads itself — its bytes never cross into the page to be saved.

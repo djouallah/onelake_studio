@@ -8,7 +8,7 @@
 // hold tables, what a kind is called) is names.js; caching the answers is onelake.js.
 // =============================================================================
 
-const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('../names');
+const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl, fmtBytes } = require('../names');
 const { authedFetch: send, discard, limiter, mapPool, oneLakeMessage, okJson } = require('./http');
 
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
@@ -47,6 +47,12 @@ const EXTERNAL_ACCESS_HINT = ' If this happens for every workspace, the tenant s
 const TABLE_SECURITY_HINT = ' If only this table is refused, it may have OneLake security, with rules on its rows or columns: ' +
   'a statement still reads the rows and columns those rules allow.';
 const sentence = said => (said ? ` — ${said}${/[.!?]$/.test(said) ? '' : '.'}` : '.');
+// A file past the most a caller reads whole (readBytes' maxBytes).
+function tooLarge(path, maxBytes, size) {
+  const e = new Error(`${path} is ${size ? fmtBytes(size) : 'too large'}: more than the ${fmtBytes(maxBytes)} that is read here`);
+  e.code = 'TOO_LARGE';
+  return e;
+}
 const forbidden = status => (status === 403 ? EXTERNAL_ACCESS_HINT : '');
 
 // A snapshot's id is 64 bits, and parsed as a number it comes out rounded, naming a snapshot that isn't
@@ -381,7 +387,8 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // A file's bytes — whole, or the `range` asked for (`bytes=0-15` to sniff a header).
   // For the panel's image and .bim previews, its SQLite copies, and anything else that
   // needs the bytes rather than a query.
-  async function readBytes(ws, path, { range } = {}) {
+  // `maxBytes`: the most that is read. A larger answer is refused, and not held in memory first.
+  async function readBytes(ws, path, { range, maxBytes } = {}) {
     const r = await authedFetch(dfsFileUrl(ws, path, dfsOrigin),
       range ? { range } : {}, READ_TIMEOUT_MS);
     if (!r.ok) {
@@ -390,7 +397,28 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       e.status = r.status;
       throw e;
     }
-    return new Uint8Array(await r.arrayBuffer());
+    if (!(maxBytes > 0)) return new Uint8Array(await r.arrayBuffer());
+    const said = Number(r.headers.get('content-length'));
+    if (said > maxBytes) { await discard(r); throw tooLarge(path, maxBytes, said); }
+    if (!r.body || typeof r.body.getReader !== 'function') {
+      const all = new Uint8Array(await r.arrayBuffer());
+      if (all.length > maxBytes) throw tooLarge(path, maxBytes, all.length);
+      return all;
+    }
+    // No length said, or a wrong one: counted as it arrives, and stopped past the most.
+    const reader = r.body.getReader(), chunks = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > maxBytes) { await reader.cancel().catch(() => {}); throw tooLarge(path, maxBytes); }
+      chunks.push(value);
+    }
+    const all = new Uint8Array(total);
+    let at = 0;
+    for (const c of chunks) { all.set(c, at); at += c.length; }
+    return all;
   }
 
   // One level of any directory under an item, workspace-relative: a table's _delta_log.

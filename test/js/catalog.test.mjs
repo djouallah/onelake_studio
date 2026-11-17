@@ -282,6 +282,29 @@ test("a kept prefix that 404s is replaced from the config, and the call made aga
   } finally { restore(); }
 });
 
+test("a file's bytes up to the most asked for: a larger one is refused by its length, or as it arrives", async () => {
+  const bytes = n => new Uint8Array(n).fill(7);
+  const streamOf = (...chunks) => new ReadableStream({ start(c) { for (const k of chunks) c.enqueue(k); c.close(); } });
+  let whole = 0;
+  const { catalog, restore } = catalogWith([
+    [/Files\/said\.bin$/, () => ({ ...res(200, {}, { "content-length": "5000" }),
+      arrayBuffer: async () => { whole++; return bytes(5000).buffer; } })],
+    [/Files\/unsaid\.bin$/, () => ({ ...res(200, {}), body: streamOf(bytes(600), bytes(600)),
+      arrayBuffer: async () => { whole++; return bytes(1200).buffer; } })],
+    [/Files\/small\.bin$/, () => ({ ...res(200, {}), body: streamOf(bytes(300), bytes(200)) })],
+    [/Files\/plain\.bin$/, () => ({ ...res(200, {}), arrayBuffer: async () => bytes(1200).buffer })],
+  ]);
+  try {
+    const read = (name, o) => catalog.readBytes("ws", `lh.Lakehouse/Files/${name}`, o);
+    await assert.rejects(read("said.bin", { maxBytes: 1000 }), e => e.code === "TOO_LARGE" && /4\.9 KB|5(\.0)? KB|5,?000/.test(e.message));
+    await assert.rejects(read("unsaid.bin", { maxBytes: 1000 }), e => e.code === "TOO_LARGE");
+    assert.equal(whole, 0, "neither was held whole first");
+    assert.equal((await read("small.bin", { maxBytes: 1000 })).length, 500);
+    await assert.rejects(read("plain.bin", { maxBytes: 1000 }), e => e.code === "TOO_LARGE");
+    assert.equal((await read("plain.bin")).length, 1200, "with no most, all of it");
+  } finally { restore(); }
+});
+
 // A table with no Iceberg metadata says why in Fabric's own words, out of the conversion
 // log the conversion leaves beside it — not a guess about tenant settings.
 test("a table that never converts is reported with its conversion log's error", async () => {

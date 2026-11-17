@@ -246,9 +246,9 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
    * as its listing has moved, which the listing's own TTL decides. The version comes from
    * the host's listing, never from the page. Anything else is read live.
    */
-  async function readBytes(ws, path, { range } = {}) {
+  async function readBytes(ws, path, { range, maxBytes } = {}) {
     const version = await versionOf(ws, path);
-    if (!version) return catalog.readBytes(ws, path, { range });
+    if (!version) return catalog.readBytes(ws, path, { range, maxBytes });
     const k = keys.bytes(ws, path, version);
     const t0 = Date.now();
     let bytes = await store.getBlob(k);
@@ -257,11 +257,18 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     } else {
       // A header sniff of a file not kept yet stays a range read: the whole file is not
       // worth pulling to answer 16 bytes.
-      if (range) return catalog.readBytes(ws, path, { range });
-      bytes = await catalog.readBytes(ws, path);
+      if (range) return catalog.readBytes(ws, path, { range, maxBytes });
+      bytes = await catalog.readBytes(ws, path, { maxBytes });
       await store.putBlob(k, bytes);
     }
-    return range ? sliceRange(bytes, range) : bytes;
+    const out = range ? sliceRange(bytes, range) : bytes;
+    // A kept file can be larger than this caller reads: a Save keeps it whole, whatever its size.
+    if (maxBytes > 0 && out.length > maxBytes) {
+      const e = new Error(`${path} is ${names.fmtBytes(out.length)}: more than the ${names.fmtBytes(maxBytes)} that is read here`);
+      e.code = 'TOO_LARGE';
+      throw e;
+    }
+    return out;
   }
 
   // `item/Files/a/b.png` -> the version of b.png in the cached listing of Files/a.

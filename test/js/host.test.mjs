@@ -152,6 +152,25 @@ test("bytes cross as base64; a range is passed on only in its one valid shape", 
   }
 });
 
+test("what a page asks for has a size: a file's bytes, a local copy, and a peek's rows", async () => {
+  const { ask, calls } = fixture();
+  await ask("onelake.readBytes", [{ workspace: "ws", path: "lh/Files/a", range: "bytes=16-" }]);
+  assert.equal(calls.findLast(c => c[0] === "readBytes")[3].maxBytes, 64 * 1024 * 1024, "an open range too");
+  await ask("onelake.localCopy", [{ workspace: "ws", path: "lh/Files/db.sqlite" }]);
+  assert.equal(calls.findLast(c => c[0] === "readBytes")[3].maxBytes, 200e6);
+
+  const limits = [];
+  const onelake = { peek: async (lh, t, run, limit) => { limits.push(limit); return { rows: [] }; } };
+  const peek = (engine, limit) => createHostMethods({ onelake, engine })["onelake.peek"]({ workspace: "ws", item: "lh", table: "t", limit });
+  await peek({}, 1000);
+  await peek({}, 1e12);
+  await peek({ maxRows: 5000 }, 1e12);
+  await peek({ maxRows: 5000 }, 20);
+  await peek({}, undefined);
+  await peek({}, "many");
+  assert.deepEqual(limits, [1000, 200_000, 5000, 20, undefined, undefined]);
+});
+
 test("a local copy is the host's: the page gets a path, the bytes never cross", async () => {
   const { calls, ask } = fixture();
   const [r] = await ask("onelake.localCopy", [{ workspace: "ws", path: "lh/Files/db.sqlite" }]);
@@ -179,6 +198,12 @@ test("a semantic model is kept from a OneLake file or its local copy, and no oth
     assert.match(r.message, /not a semantic model's local copy/, bad);
   }
   assert.deepEqual(kept, [inLake, "/cache/models/a/ws/m.yaml"]);
+
+  // With no folder of local copies, a OneLake file is the only one there is.
+  const none = createHostMethods({ onelake: {}, engine: {}, semviews: { put: async (name, path) => { kept.push(path); return {}; } } });
+  await none["semantic.keep"]({ name: "m", schema: "ws", path: inLake });
+  await assert.rejects(none["semantic.keep"]({ name: "m", schema: "ws", path: "/home/me/secret.yaml" }), /not a semantic model's local copy/);
+  assert.equal(kept.length, 3);
 });
 
 test("a failure is posted, never dropped, and a Stop says so", async () => {

@@ -541,6 +541,8 @@ test("a Files/ object's bytes are kept under the version its listing gave", asyn
     assert.deepEqual([...await onelake.readBytes("ws", path, { range: "bytes=1-1" })], [2],
       "a range of a kept file is a slice of it");
     assert.equal(reads, 3, "and every read after it is from disk");
+    await assert.rejects(onelake.readBytes("ws", path, { maxBytes: 2 }), e => e.code === "TOO_LARGE", "a kept file has a size too");
+    assert.deepEqual([...await onelake.readBytes("ws", path, { range: "bytes=1-1", maxBytes: 2 })], [2]);
     assert.ok(hits.some(h => h.path === `ws/${path}`), "a kept read is reported as a hit");
 
     // The file is rewritten: its listing gives a new version, and the bytes are read again.
