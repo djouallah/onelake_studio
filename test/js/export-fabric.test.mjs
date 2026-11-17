@@ -8,12 +8,13 @@
 // model" (HTTP 403), the query with PowerBINotAuthorizedException. Both need a person signed in.
 //
 // FABRIC_TOKEN, POWERBI_TOKEN and ONELAKE_TOKEN are the identity's tokens for the Fabric API, the Power BI
-// API and storage; ONELAKE_CI_WORKSPACE and ONELAKE_CI_LAKEHOUSE name where. Needs vendor/ and
-// fabric-function/ (scripts/vendor.mjs, scripts/function-bundle.mjs).
+// API and storage; ONELAKE_CI_WORKSPACE and ONELAKE_CI_LAKEHOUSE name where. Needs vendor/, fabric-function/
+// and fabric-site/ (scripts/vendor.mjs, scripts/function-bundle.mjs, scripts/site-bundle.mjs).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, copyFile } from "node:fs/promises";
+import { mkdtemp, copyFile, writeFile } from "node:fs/promises";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -107,7 +108,7 @@ async function setup() {
 }
 
 // What was published: the zip's record names the item and its site, Fabric says it deployed it just now,
-// the site answers nobody who isn't signed in, and every module the uploaded files import was uploaded.
+// the site answers nobody who isn't signed in, and what was uploaded is the page as Vite built it, with the app's own files.
 async function published(s, said, zipName, engine, since) {
   const { readApp, unzip } = require("../../fabric_app/export/exportapp.js");
   const { marker } = await readApp(join(s.dir, zipName));
@@ -120,27 +121,34 @@ async function published(s, said, zipName, engine, since) {
   assert.ok(Date.parse(live.lastSuccessfulDeploymentAt) >= since - 5 * 60_000, `deployed ${live.lastSuccessfulDeploymentAt}, not by this run`);
   assert.ok(new URL(marker.hostingUrl).origin && marker.redirects.includes(new URL(marker.hostingUrl).origin), "sign-in comes back to the site");
 
-  const anonymous = await fetch(new URL("app.js", marker.hostingUrl));
+  const anonymous = await fetch(new URL("report.json", marker.hostingUrl));
   assert.equal(anonymous.status, 401, "the site is not public");
-  const signed = await fetch(new URL("app.js", marker.hostingUrl), { headers: { authorization: `Bearer ${FABRIC_TOKEN}` } });
-  console.log(`${new URL("app.js", marker.hostingUrl)} with the identity's Fabric token: HTTP ${signed.status}`);
+  const signed = await fetch(new URL("report.json", marker.hostingUrl), { headers: { authorization: `Bearer ${FABRIC_TOKEN}` } });
+  console.log(`${new URL("report.json", marker.hostingUrl)} with the identity's Fabric token: HTTP ${signed.status}`);
 
   const site = unzip(s.sites.at(-1));
-  for (const p of ["index.html", "app.js", "model.json", "engine.json", "report.json", "rayfin.config.json", "storage/source.js"]) assert.ok(site.has(p), `the site has ${p}`);
-  // The engine's data source alone: app.js names only storage/source.js, which names it.
-  assert.ok(!site.has(engine === "duckdb" ? "storage/modeldata.js" : "storage/data.js"), "no other engine's data source");
+  for (const p of ["index.html", "model.json", "engine.json", "report.json", "rayfin.config.json", "world.json"]) assert.ok(site.has(p), `the site has ${p}`);
+  // The page as Vite built it, never the project's own scripts.
+  assert.ok(![...site.keys()].some(p => /^src\/|^storage\/|^explore\/|^vendor\/|vite\.config|package\.json$/.test(p)), `no script of the project: ${[...site.keys()].join(", ")}`);
+  // The engine's alone: DuckDB-WASM and its extensions client side, neither on a semantic model.
+  const wasm = [...site.keys()].filter(p => /\.wasm$/.test(p));
+  if (engine === "duckdb") {
+    assert.ok(wasm.some(p => /^assets\/duckdb-base-[^/]+\.wasm$/.test(p)), `DuckDB-WASM is in the site: ${wasm.join(", ")}`);
+    assert.ok(wasm.some(p => /^duckdb-ext\/v[^/]+\/wasm_eh\/parquet\.duckdb_extension\.wasm$/.test(p)), `DuckDB's extensions are in the site: ${wasm.join(", ")}`);
+  } else {
+    assert.deepEqual(wasm, [], "no engine on a semantic model");
+  }
   assert.equal(JSON.parse(site.get("engine.json").toString("utf8")).engine, engine);
   assert.equal(JSON.parse(site.get("rayfin.config.json").toString("utf8")).itemId, marker.itemId);
-  let imports = 0;
-  for (const [path, bytes] of site) {
-    if (!/\.(html|js)$/.test(path) || path.startsWith("vendor/")) continue;
-    for (const [, spec] of bytes.toString("utf8").matchAll(/\b(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"'?]+\.js)(?:\?v=[\w-]+)?["']/g)) {
-      const to = new URL(spec, new URL(path, "http://site/")).pathname.slice(1);
-      assert.ok(site.has(to), `${path} imports ${spec}, and the site has no ${to}`);
-      imports++;
-    }
+  // Every file its index.html names was uploaded, and it is stamped with this publish's build.
+  const html = site.get("index.html").toString("utf8");
+  assert.doesNotMatch(html, /__BUILD__/, "the build is stamped");
+  let named = 0;
+  for (const [, ref] of html.matchAll(/\b(?:src|href)="\.\/([^"?#]+)"/g)) {
+    assert.ok(site.has(ref), `index.html names ${ref}, and the site has none`);
+    named++;
   }
-  assert.ok(imports > 10, `${imports} imports found`);
+  assert.ok(named >= 2, `${named} files named by index.html: its script and its styles`);
   return marker;
 }
 
@@ -172,11 +180,16 @@ async function project(s, zipName, marker) {
   const { files } = await readApp(join(s.dir, zipName));
   const pkg = JSON.parse(files.get("package.json").toString("utf8"));
   assert.ok(pkg.devDependencies["@microsoft/rayfin-cli"], "the project's own Rayfin CLI");
-  assert.ok(pkg.dependencies["@microsoft/rayfin-auth-provider-fabric"], "the Fabric sign-in package, which Fabricator's check asks for");
+  const page = JSON.parse(files.get("site/package.json").toString("utf8"));
+  assert.ok(page.dependencies["@microsoft/rayfin-auth-provider-fabric"], "the Fabric sign-in package, which Fabricator's check asks for");
+  assert.ok(page.dependencies["@duckdb/duckdb-wasm"], "DuckDB-WASM is the page's own package");
+  assert.equal(page.scripts.build, "vite build");
+  for (const p of ["site/index.html", "site/vite.config.mjs", "site/src/app.js", "site/src/storage/data.js", "site/src/storage/source.js"]) assert.ok(files.has(p), p);
   assert.ok(files.has("package-lock.json"), "its lock file");
   assert.ok(files.has(".agents/skills/rayfin/SKILL.md"), "Rayfin's agent files");
   assert.equal(JSON.parse(files.get("site/public/report.json").toString("utf8")).pages[0].tiles.length, 2, "the Report tab's tiles");
-  assert.ok([...files.keys()].some(p => p.startsWith(`${SITE}vendor/npm/@duckdb/`)), "DuckDB-WASM is in the file");
+  assert.ok([...files.keys()].some(p => p.startsWith(`${SITE}duckdb-ext/`)), "DuckDB's extensions are in the file");
+  assert.ok(![...files.keys()].some(p => p.startsWith(SITE) && /\.(m?js|html)$/.test(p)), "no script in site/public/");
   const reg = JSON.parse(files.get(DEPLOYMENTS).toString("utf8"));
   assert.equal(reg.deployments[reg.active].fabricItemId, marker.itemId, "rayfin up's record names the app just published");
   assert.equal(reg.deployments[reg.active].hostingUrl, marker.hostingUrl);
@@ -195,11 +208,15 @@ async function project(s, zipName, marker) {
 // in CI the app is published as an export publishes it, with no exchange.
 async function signedIn(s) {
   if (!EXCHANGE_TOKEN) return console.log("published app: not signed in to (no EXCHANGE_TOKEN: a person's token is needed)");
-  const { unzip } = require("../../fabric_app/export/exportapp.js");
-  const { WEBAPP } = require("../../core/vendored.js");
+  const { unzip, sitePackages } = require("../../fabric_app/export/exportapp.js");
   const config = JSON.parse(unzip(s.sites.at(-1)).get("rayfin.config.json").toString("utf8"));
-  const load = p => import(pathToFileURL(join(ROOT, "vendor", "webapp", "npm", p, "+esm.js")).href);
-  const [rayfin, provider] = await Promise.all([load(WEBAPP.rayfinClient), load(WEBAPP.rayfinFabric)]);
+  // The Rayfin SDK the page imports, installed as the project installs it: a module beside it names the two packages.
+  const sdk = await mkdtemp(join(tmpdir(), "rayfin-sdk-"));
+  const deps = Object.fromEntries(Object.entries(sitePackages("duckdb")).filter(([name]) => name.startsWith("@microsoft/rayfin-")));
+  await writeFile(join(sdk, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: deps }));
+  await writeFile(join(sdk, "sdk.mjs"), 'export * as rayfin from "@microsoft/rayfin-client";\nexport * as provider from "@microsoft/rayfin-auth-provider-fabric";\n');
+  execSync("npm install --no-audit --no-fund --loglevel=error", { cwd: sdk, stdio: ["ignore", "ignore", "inherit"] });
+  const { rayfin, provider } = await import(pathToFileURL(join(sdk, "sdk.mjs")).href);
   const client = new rayfin.RayfinClient({ ...config, baseUrl: config.apiUrl, publishableKey: config.publishableKey, authStorage: false });
   await provider.signInWithEntraToken(client.auth, { entraToken: EXCHANGE_TOKEN });
   assert.ok(client.auth.getSession()?.isAuthenticated, "the published app gives a session for the token");

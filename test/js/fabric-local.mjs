@@ -1,6 +1,6 @@
 // A Fabric app on a local Rayfin backend (rayfin-local), for the tests that open one (run-fabric-local.mjs,
 // run-fabric-app.mjs): its project as an export's .fabricator holds it (package.json, rayfin/: rayfin.yml and the
-// function; the site, site/public/, as it is with its packages), served by rayfin-local, which runs the function with the real
+// function; the page, site/, a Vite project, with the site's own files in site/public/), served by rayfin-local, which runs the function with the real
 // @microsoft/fabric-user-data-functions and answers the page's SDK as Fabric's backend does.
 // Nothing of the product is stood in for or written over: the page signs in with its own sign-in and asks its
 // own function. What the tests add is beside the product: a page of their own in the site (`extra`), a local user.
@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 const require = createRequire(import.meta.url);
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const { PINS, WEBAPP } = require("../../core/vendored.js");
-const { appFiles, setPackages, vendorFiles, SITE } = require("../../fabric_app/export/exportapp.js");
+const { appFiles, setStatic, staticFiles, PAGE } = require("../../fabric_app/export/exportapp.js");
 
 export const RAYFIN_LOCAL = process.env.RAYFIN_LOCAL || "rayfin-local";
 export const CHROME = process.env.CHROME_PATH ||
@@ -27,25 +27,27 @@ const npm = (what, cwd) => execSync(`npm ${what} --no-audit --no-fund --loglevel
 /**
  * The app served: { ready (rayfin-local's ready event: appUrl, embedUrl, features), said (its last lines), stop(ok) }.
  * `plan`, `model`, `report`: an export's (exportapp.js appFiles); `engine`: duckdb or semanticModel;
- * `env`: the function's secrets and rayfin-local's tokens; `extra`: path -> text, files put in the site beside its own;
+ * `env`: the function's secrets and rayfin-local's tokens; `extra`: path -> text, files put in site/ beside its index.html;
  * `user`: { name, password }, a user of the local backend's own.
  * `vite`: the site served by the project's own Vite, as Fabricator's preview serves it (rayfin-local's
- * frontend, with Rayfin's local-dev plugin); else as it is, as Fabric's hosting serves the published site.
+ * frontend, with Rayfin's local-dev plugin); else its build (site/dist/), as Fabric's hosting serves the published site.
  */
 export async function serveApp(name, { plan, model, report = null, engine, env = {}, extra = {}, user = null, vite = false }) {
   const files = await appFiles({ plan, state: null, model, kept: report ? Buffer.from(JSON.stringify(report)) : null,
                                  fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"), daxSqlDir: join(root, "vendor", "npm", PINS.daxSql),
                                  agentFiles: join(root, "fabric-function", "agent-files.json") });
-  setPackages(files, await vendorFiles(join(root, "vendor", "webapp"), engine));
+  setStatic(files, await staticFiles(join(root, "vendor", "webapp"), engine));
   // The project as the export's file holds it, unpacked as Fabricator unpacks one. Not published, it has no
   // rayfin.config.json: the backend's to answer, where it is and its key.
   const project = await mkdtemp(join(tmpdir(), "fabric-local-"));
   const put = async (path, bytes) => { const to = join(project, path); await mkdir(dirname(to), { recursive: true }); await writeFile(to, bytes); };
   for (const [path, bytes] of files) await put(path, bytes);
-  for (const [path, text] of Object.entries(extra)) await put(SITE + path, text);
+  for (const [path, text] of Object.entries(extra)) await put(PAGE + path, text);
   console.log(`${name}: the project is ${project} (Rayfin ${SDK})`);
-  // Its own package.json: its Rayfin, Vite, and the function, its workspace.
-  npm("install", project);
+  // Its own package.json and lock file: its Rayfin, and its workspaces, the page (Vite) and the function.
+  npm("ci", project);
+  // Served as it is published: built as rayfin.yml's buildCommand builds it.
+  if (!vite) execSync("npm run build", { cwd: project, stdio: ["ignore", "ignore", "inherit"] });
   if (user) execFileSync(RAYFIN_LOCAL, ["users", "add", user.name, "--password", user.password, "-C", project], { stdio: ["ignore", "ignore", "inherit"] });
 
   const said = [];

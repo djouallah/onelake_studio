@@ -2,10 +2,19 @@
 
 ## Unreleased
 
+- **An exported app is a Vite project.** Its page is `site/index.html` and `site/src/`, and it imports its packages
+  from npm (the Rayfin SDK, DuckDB-WASM, Arrow, ECharts) where it carried copies of them: `npm run build` makes
+  `site/dist/`, which is what Fabricator and `rayfin up` publish. The Rayfin SDK is imported as the page starts, as
+  Fabricator's check asks, and every Rayfin package is on its `~1.36.0` line. The `.fabricator` no longer holds DuckDB-WASM, which is a
+  package now. OneLake Studio still publishes it itself, with no Node or npm: it uploads the same build, made when the
+  extension was packaged, with the file's Report and model. A file from an earlier export is laid out this way the
+  next time it is exported.
+- **A page changed in the project is published by Fabricator, not OneLake Studio.** OneLake Studio cannot build a
+  project. It publishes the Report and the model a `.fabricator` holds, with its own page. Opened from disk with its
+  page's code changed, the file is asked about first, and keeps its page.
 - **Export to Fabric saves a Fabricator project.** The local copy is `<model>.fabricator` now, a Rayfin project:
   Fabricator imports it with a double-click, installs it, previews it and publishes it, over the same app. It holds
-  the page's packages too (about 12 MB with DuckDB-WASM), a `package.json`, and once published the app as
-  `rayfin up` records it. OneLake Studio still publishes it itself, with no Node or CLI. An earlier `.fabricapp`
+  a `package.json` and, once published, the app as `rayfin up` records it. OneLake Studio still publishes it itself, with no Node or CLI. An earlier `.fabricapp`
   still opens, and is saved as a `.fabricator` the next time it is exported.
 - **A .fabricator opens in Fabricator much faster.** The project ships a `package-lock.json`, so Fabricator's
   `npm install` takes the packages it names. Without one, npm asked the registry about each of some 300 packages
@@ -19,9 +28,9 @@
   names when one is wrong), its filters, mark and layout, the filter bar, and that each tile's query compiles.
   `npm run validate -- --fields` lists the fields a tile can name. `AGENTS.md` says to run it after every change.
   Fabricator's agent had only a check it wrote itself, after searching the model six times for field names.
-- **Quieter in Fabricator.** The packages lose the source-map comments that made Vite log a warning for each
-  one, the page's own imports no longer warn, and the function's metadata is written as rayfin-local writes it,
-  so it no longer shows as changed in every chat turn's commit.
+- **Quieter in Fabricator.** Vite no longer warns about the page's imports or its packages' source maps, and the
+  function's metadata is written as rayfin-local writes it, so it no longer shows as changed in every chat turn's
+  commit.
 - **An exported app is on Rayfin 1.36.2**, Rayfin's latest: the page's SDK, its semantic-model connector, the
   function's runtime and the project's CLI. Fabricator flagged 1.36.1 as out of date, and team workspaces need
   1.36.2.

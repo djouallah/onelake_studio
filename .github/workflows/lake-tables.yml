@@ -239,6 +239,12 @@ jobs:
           path: fabric-function
           key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'fabric_app/export/fabricapp.js', 'fabric_app/rayfin/**') }}
       - run: node scripts/function-bundle.mjs
+      # The app's page as Vite builds it (scripts/site-bundle.mjs): what an export uploads, nobody who exports needing npm.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: fabric-site
+          key: fabric-site-${{ hashFiles('scripts/site-bundle.mjs', 'fabric_app/site/**', 'fabric_app/project/**', 'fabric_app/export/exportapp.js', 'fabric_app/rayfin/functions/package.json', 'page/explore/**', 'page/paths.js', 'core/vendored.js') }}
+      - run: node scripts/site-bundle.mjs
       - name: Sign in to fabriccat as fabric-github-deploy
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:

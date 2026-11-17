@@ -11,8 +11,9 @@ const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { createHash } = require('node:crypto');
 const { PINS } = require('../../core/vendored');
-const { planExport, planOnModel, modelDoc, appFiles, setModel, setModelCopy, modelCopyOf, tablesOf, engineOf, readApp, writeApp, vendorFiles, vendorSize, buildDist,
-        fingerprint, zip, rayfinYml, REPORT, APP_EXT, LEGACY_EXT, SITE, DEPLOYMENTS, CONFIG, setPackages, setSecrets, setDeployment } = require('./exportapp');
+const { planExport, planOnModel, modelDoc, appFiles, setModel, setModelCopy, modelCopyOf, tablesOf, engineOf, readApp, writeApp, staticFiles, siteBuild, sizeOf,
+        buildDist, fingerprint, zip, rayfinYml, REPORT, APP_EXT, LEGACY_EXT, SITE, DEPLOYMENTS, CONFIG, setStatic, setPage, pageChanges, oldLayout,
+        setSecrets, setDeployment } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createFabricModel } = require('./fabricmodel');
 const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
@@ -262,10 +263,33 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
         takeOver = true;
       }
 
-      // Every question is answered: from here on it writes.
       const ext = extensionDir;
       const fabricAppDir = join(ext, 'fabric_app');
       const appDir = await pageDir();
+      // The project this build writes for the app, its Report `kept`.
+      const projectOf = (kept, redirects) => appFiles({
+        plan, state, model: definition, modelText: text, modelFile: file, kept, redirects, fabricAppDir, appDir, maxRows: maxRows(),
+        daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql), agentFiles: join(ext, 'fabric-function', 'agent-files.json') });
+      // A file published as it is takes this build's page, where its own is the one an export wrote (an earlier
+      // build's, or an earlier layout's). A page someone changed is not OneLake Studio's to publish: it runs no
+      // npm, and uploads its own build of the page with the file's Report and model. Asked, and the file's page
+      // is then kept as it is, for a publish that builds it; an earlier layout's cannot be built, and is replaced.
+      // A file whose page was kept so says it (its record's page: 'own'): from then on its page is compared with
+      // this build's, not with what the record kept, and asked about at each publish.
+      let pageOf = null, keepPage = false;
+      if (asIs) {
+        pageOf = await projectOf(local.files.get(REPORT) || null, (before && before.redirects) || []);
+        const changed = pageChanges(local.files, before && before.page === 'own' ? { files: {} } : before, pageOf);
+        if (changed.length) {
+          const pick = await ui.warn(
+            `The page in ${basename(outZip)} was changed, and OneLake Studio publishes its own page with this file's Report and model. Publish it so?`,
+            { modal: true, detail: `Changed: ${changed.slice(0, 8).join(', ')}${changed.length > 8 ? `, and ${changed.length - 8} more` : ''}\n` +
+                'Fabricator, or npm run rayfin:up in the project, publishes a changed page.' }, 'Publish It');
+          if (pick !== 'Publish It') throw declined(`Not exported: the page in ${basename(outZip)} was changed.`);
+          keepPage = !oldLayout(local.files);
+        }
+      }
+      // Every question is answered: from here on it writes.
       // One publish, under a progress notification.
       const r = await ui.withProgress(`Export to Fabric: ${plan.name}`,
         async progress => {
@@ -274,6 +298,8 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
           if (asIs) {
             say(`app ${plan.name}: publishing ${outZip} as it is`);
             files = local.files;
+            if (!keepPage) setPage(files, pageOf);
+            marker = { ...marker, page: keepPage ? 'own' : undefined };
             if (plan.engine === 'duckdb') {
               // The app runs on its own model.yaml, an edit to it included; a zip from before it had one gets one.
               if (!modelCopyOf(files)) setModelCopy(files, file, text);
@@ -295,17 +321,14 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
               : await fsp.readFile(was.file).catch(() => null);
             const studioReport = was && was.file && wasReport ? was.file : null;
             const kept = (local && local.files.get(REPORT)) || wasReport || null;
-            files = await appFiles({ plan, state, model: definition, modelText: text, modelFile: file, kept,
-                                     redirects: marker.redirects || [], fabricAppDir, appDir, maxRows: maxRows(),
-                                     daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql),
-                                     agentFiles: join(ext, 'fabric-function', 'agent-files.json') });
+            files = await projectOf(kept, marker.redirects || []);
             fromStudio = kept && studioReport ? studioReport : null;
             // The app `rayfin up` would update, kept while this publishes: a publish that fails leaves the file naming it.
             for (const p of [DEPLOYMENTS, CONFIG]) if (local && local.files.has(p)) files.set(p, local.files.get(p));
             // `report`: the names Studio's Report tab knows the model by (reportKey), for opening the file;
             // `semanticModel`: the model a semantic model's app queries, by its ids.
             marker = { ...marker, name: plan.name, model: plan.modelPath, workspaceId: plan.workspace,
-                       lakehouseId: plan.lakehouse, engine: plan.engine || 'duckdb',
+                       lakehouseId: plan.lakehouse, engine: plan.engine || 'duckdb', page: undefined,
                        report: { workspace: pbi.workspace, model: name },
                        ...(plan.semanticModel ? { semanticModel: plan.semanticModel } : {}) };
           }
@@ -316,14 +339,15 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
             const report = now && now.files.get(REPORT);
             if (report) files.set(REPORT, report);
           };
-          // The page's packages, the extension's own, in the file (so it runs where it is unpacked) and
-          // uploaded: what they weigh, here in the log.
-          const vendor = await vendorFiles(join(ext, 'vendor', 'webapp'), plan.engine);
+          // The site's files npm has not, the extension's own, in the file (so it builds where it is unpacked);
+          // and the page as Vite built it when the extension was packaged, which is what is uploaded: what it
+          // weighs, here in the log.
+          setStatic(files, await staticFiles(join(ext, 'vendor', 'webapp'), plan.engine));
+          const page = await siteBuild(join(ext, 'fabric-site'), plan.engine);
           const mb = n => `${(n / 1048576).toFixed(1)} MB`;
-          const size = vendorSize(vendor);
-          say(`app ${plan.name}: the packages are ${mb(size.total)}`);
+          const size = sizeOf(page);
+          say(`app ${plan.name}: the page is ${mb(size.total)}`);
           for (const [name, bytes] of size.parts) log(`  ${mb(bytes).padStart(9)}  ${name}`);
-          setPackages(files, vendor);
           // Client side, the tables the function may sign: the ones the model the app runs on names.
           const tables = plan.engine === 'duckdb' ? tablesOf(JSON.parse(files.get(`${SITE}model.json`).toString('utf8'))).join(',') : null;
           setSecrets(files, { catalogUrl: plan.catalogUrl, tables });
@@ -338,7 +362,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
             done = await fabricApp.publish({
               workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
               catalogUrl: plan.catalogUrl, semanticModel: plan.semanticModel || null, tables,
-              site: async config => await zip(buildDist(files, config, vendor)),
+              site: async config => await zip(buildDist(files, config, page)),
               fn, redirects: marker.redirects || [],
               itemId: marker.itemId || null, takeOver,
               // Kept as soon as there is one: if a later step fails, the next export must know this

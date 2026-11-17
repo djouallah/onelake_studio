@@ -16,22 +16,18 @@
 //                  Rayfin's ConnectorsRayfinClient, client.connectors.<name>.
 // =============================================================================
 
-// This module's URL, held: Vite's dev server (Fabricator's preview) rewrites a `new URL("<path>", import.meta.url)`
-// written out, a folder's to one without its trailing slash. The site is served as it is.
-const here = import.meta.url;
-
-// The site's own copy (vendor/, core/vendored.js WEBAPP). Keep these on the same version: their
-// shared deps (rayfin-auth, rayfin-lib) are the same vendored files, so the provider operates on
-// the client's own Auth instance.
-const RAYFIN_CLIENT_ESM = new URL("../vendor/npm/@microsoft/rayfin-client@1.36.2/+esm.js", here).href;
-const RAYFIN_FABRIC_ESM = new URL("../vendor/npm/@microsoft/rayfin-auth-provider-fabric@1.36.2/+esm.js", here).href;
+// The Rayfin SDK, the project's own packages (site/package.json, core/vendored.js WEBAPP), imported as the
+// page starts: the Fabric provider reads how the page was opened (inside the Fabric portal or not) when it
+// loads. Kept on the same version: their shared deps (rayfin-auth, rayfin-lib) are one module each, so the
+// provider operates on the client's own Auth instance.
+import { RayfinClient, ConnectorsRayfinClient, resolveRayfinConfig } from "@microsoft/rayfin-client";
+import { initEmbeddedAuth, ensureSignedInWithFabric } from "@microsoft/rayfin-auth-provider-fabric";
 
 // --- Rayfin provider: Fabric SSO session (no second login; inside the Fabric portal iframe the
 // session is handed over by postMessage). Backend URL, key and Fabric coordinates come from the
 // rayfin.config.json that `rayfin up` writes next to the site.
 function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
   let _client = null;
-  let _fabric = null;
   let _fabricOpts = null;
 
   // The gate: over the whole page until the Fabric session resolves, so the dashboard is not
@@ -44,13 +40,12 @@ function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
   // One init, whoever asks first.
   let _init = null;
   const init = () => _init ??= (async () => {
-    const [rayfin, fabric, wired] = await Promise.all([import(/* @vite-ignore */ RAYFIN_CLIENT_ESM), import(/* @vite-ignore */ RAYFIN_FABRIC_ESM),
-                                                       connectors ? connectors() : null]);
-    const resolved = await rayfin.resolveRayfinConfig({});
+    const wired = connectors ? await connectors() : null;
+    const resolved = await resolveRayfinConfig({});
     if (!resolved.baseUrl) throw new Error('rayfin.config.json not found — deploy with `rayfin up`');
     _client = wired
-      ? new rayfin.ConnectorsRayfinClient({ ...resolved, authStorage: true, connectors: wired.configs }, wired.runtimes)
-      : new rayfin.RayfinClient({ ...resolved, authStorage: true });
+      ? new ConnectorsRayfinClient({ ...resolved, authStorage: true, connectors: wired.configs }, wired.runtimes)
+      : new RayfinClient({ ...resolved, authStorage: true });
     const rc = _client.runtimeConfig || {};
     _fabricOpts = {
       workspaceId: rc.workspaceId,
@@ -58,7 +53,6 @@ function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
       fabricPortalUrl: rc.portalUrl,
       returnOrigin: window.location.origin,
     };
-    _fabric = fabric;
   })().catch(e => { _init = null; throw e; });
 
   // Silent: what the app already holds / stored session / refresh token / Fabric iframe handoff.
@@ -67,8 +61,8 @@ function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
     if (!interactive && ready()) return true;
     await init();
     if (_client.auth.getSession()?.isAuthenticated) return true;
-    if (interactive) return !!(await _fabric.ensureSignedInWithFabric(_client.auth, _fabricOpts))?.isAuthenticated;
-    return !!(await _fabric.initEmbeddedAuth(_client.auth, _fabricOpts))?.isAuthenticated;
+    if (interactive) return !!(await ensureSignedInWithFabric(_client.auth, _fabricOpts))?.isAuthenticated;
+    return !!(await initEmbeddedAuth(_client.auth, _fabricOpts))?.isAuthenticated;
   }
 
   // Resolves once there is a session, and takes the gate down. The silent check covers what

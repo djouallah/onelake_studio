@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Explore</title>
-<link rel="stylesheet" href="./explore/explore.css">
+<link rel="stylesheet" href="./src/explore/explore.css">
 <style>
   /* Black, always: no light theme. explore.css's tokens, and the sign-in gate's
      (storage/auth.js: --bg, --muted, --accent, --on-accent). The chrome is the text's colour;
@@ -95,6 +95,6 @@
 </main>
 <div id="status" role="status" aria-live="polite"></div>
 <footer><span id="build">build __BUILD__ · </span>Explore, exported from <a href="https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio" target="_blank" rel="noopener">OneLake Studio</a></footer>
-<script type="module">import { start } from "./app.js"; start();</script>
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>

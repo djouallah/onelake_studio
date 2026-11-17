@@ -19,7 +19,7 @@ const { DuckDBInstance } = require("@duckdb/node-api");
 const load = (...p) => import(pathToFileURL(join(ROOT, ...p)).href);
 const [{ createCompiler }, { tmslToModel }, { EXPLORE_CASTS }, { splitPlan, carried }] = await Promise.all([
   load("vendor", "npm", PINS.daxSql, "src", "index.js"), load("vendor", "npm", PINS.daxSql, "formats", "tmsl.js"),
-  load("page", "explore", "query.js"), load("fabric_app", "site", "storage", "split.js")]);
+  load("page", "explore", "query.js"), load("fabric_app", "site", "src", "storage", "split.js")]);
 
 // Two fact tables and two dimensions; a sale of a customer and a product the dimensions lack, and NULLs.
 const SETUP = `
