@@ -516,9 +516,10 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   // All sent to the worker at once, which takes them in order: one at a time, a table of hundreds of files
   // waited for as many answers, on every engine.
   async function register(e, files) {
-    await Promise.all(files.filter(f => !e.registered.has(f.path)).map(async f => {
-      await e.db.registerFileURL(localName(f.path), localUrl(f.path), duckdb.DuckDBDataProtocol.HTTP, DIRECT_IO);
-      e.registered.add(f.path);
+    const paths = [...new Set(files.map(f => f.path))].filter(p => !e.registered.has(p));
+    await Promise.all(paths.map(async p => {
+      await e.db.registerFileURL(localName(p), localUrl(p), duckdb.DuckDBDataProtocol.HTTP, DIRECT_IO);
+      e.registered.add(p);
     }));
   }
   // The table's view on engine `e`, over a copy in its memory or over the files.
