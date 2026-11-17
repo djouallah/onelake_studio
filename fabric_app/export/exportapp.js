@@ -549,6 +549,8 @@ const SITE_DEV_PACKAGES = {
 /** The packages the page imports: the Rayfin SDK, ECharts, DuckDB-WASM and Arrow. */
 const sitePackages = () => Object.fromEntries([
   [nameOf(WEBAPP.rayfinClient), RAYFIN_RANGE],
+  [nameOf(WEBAPP.rayfinAuth), RAYFIN_RANGE],
+  [nameOf(WEBAPP.rayfinFunctions), RAYFIN_RANGE],
   [nameOf(WEBAPP.rayfinFabric), RAYFIN_RANGE],
   pinOf(WEBAPP.duckdbWasm), pinOf(WEBAPP.arrow),
   pinOf(WEBAPP.echarts),

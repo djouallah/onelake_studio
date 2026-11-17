@@ -48,8 +48,8 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          FABRICATOR_VERSION: 1.55.0
-          FABRICATOR_SHA256: 6449b6cbc5df20a553c0c40e17c988f2078edf2297157d9d95809cf68ee2b9f9
+          FABRICATOR_VERSION: 1.59.0
+          FABRICATOR_SHA256: 4c7f15ebcd7fd9a040ee6e9b799e915c207aaf0eb9d201e9c56f87fc670f0c13
         run: |
           $ErrorActionPreference = 'Stop'
           $setup = "Rayfin.Fabricator_${env:FABRICATOR_VERSION}_x64-setup.exe"

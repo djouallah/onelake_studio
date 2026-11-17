@@ -106,7 +106,7 @@ test("publish: item, backend, key, settings, secrets, site, function, redirect â
   assert.deepEqual(first.staticHosting, { enabled: true, folder: "dist", indexDocument: "index.html", anonymousAccess: false });
   assert.deepEqual(first.functions, { enabled: true, auth: { type: "application" } });
   assert.deepEqual(first.auth, { enabled: true, fabric: { enabled: true }, allowedRedirectUris: [] });
-  assert.equal(first.packageVersions["@microsoft/rayfin-cli"], "1.36.2");
+  assert.equal(first.packageVersions["@microsoft/rayfin-cli"], "2.0.0");
   assert.deepEqual(JSON.parse(calls[6].body), { name: "CATALOG_URL", value: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/lh` });
   assert.deepEqual(JSON.parse(calls[7].body), { name: "TABLES", value: "mart.fct_sales,mart.dim_region" });
   assert.equal(calls[8].headers["content-type"], "application/zip");

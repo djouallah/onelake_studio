@@ -21,7 +21,14 @@ const { projectPackage, sitePackage } = require("../fabric_app/export/exportapp.
 // served nothing younger than about a week: tar 7.5.23 and postcss 8.5.33 were 404 there on 2026-11-16), and
 // npm ci then fails on every package the lock names that the mirror has not taken yet. Every pin the project
 // names must be older than this too: npm says ETARGET for one that is not.
-const before = new Date(Date.now() - 10 * 86_400_000).toISOString();
+// But the Rayfin release the project is on, when it is younger than that: the lock then takes what was published
+// up to an hour after it (its packages are published within minutes of each other), and nothing newer.
+const rayfin = JSON.parse(projectPackage("fabric-app")).devDependencies["@microsoft/rayfin-cli"].replace(/^[~^]/, "");
+const published = (await (await fetch("https://registry.npmjs.org/@microsoft/rayfin-cli")).json()).time?.[rayfin];
+if (!published) throw new Error(`@microsoft/rayfin-cli ${rayfin} is not on the public registry`);
+const tenDays = Date.now() - 10 * 86_400_000;
+const before = new Date(Math.max(tenDays, Date.parse(published) + 3_600_000)).toISOString();
+console.log(`packages published before ${before} (Rayfin ${rayfin}: ${published})`);
 {
   const dir = await mkdtemp(join(tmpdir(), "fabric-lock-"));
   try {

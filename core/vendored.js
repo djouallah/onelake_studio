@@ -35,9 +35,13 @@ const WEBAPP = {
   extensions: ['parquet', 'icu'],
   // The Arrow DuckDB-WASM itself imports (its own dependency, ^17): one module for both.
   arrow: 'apache-arrow@17.0.0',
+  // Rayfin 2: the client holds only what the page gives it, so the page names each part it uses: the browser's
+  // session (rayfin-auth), the function's calls (rayfin-functions), Fabric's sign-in.
   // Kept on the same version: they share rayfin-auth and rayfin-lib, one module each.
-  rayfinClient: '@microsoft/rayfin-client@1.36.2',
-  rayfinFabric: '@microsoft/rayfin-auth-provider-fabric@1.36.2',
+  rayfinClient: '@microsoft/rayfin-client@2.0.0',
+  rayfinAuth: '@microsoft/rayfin-auth@2.0.0',
+  rayfinFunctions: '@microsoft/rayfin-functions@2.0.0',
+  rayfinFabric: '@microsoft/rayfin-auth-provider-fabric@2.0.0',
   echarts: PINS.echarts,
   worldMap: PINS.worldMap,
 };

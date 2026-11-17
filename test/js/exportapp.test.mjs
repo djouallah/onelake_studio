@@ -243,7 +243,8 @@ test("the app's files: its DuckDB data source and packages, its own model, and w
     assert.deepEqual(JSON.parse(duck.get("site/public/settings.json")), {});
     assert.deepEqual(JSON.parse((await appFiles({ plan, state: null, model, maxRows: 5000, ...dirs })).get("site/public/settings.json")), { maxRows: 5000 });
     assert.deepEqual(JSON.parse(duck.get("site/package.json")).dependencies, {
-      "@duckdb/duckdb-wasm": WEBAPP.duckdbWasm.split("@").pop(), "@microsoft/rayfin-auth-provider-fabric": RAYFIN_RANGE,
+      "@duckdb/duckdb-wasm": WEBAPP.duckdbWasm.split("@").pop(), "@microsoft/rayfin-auth": RAYFIN_RANGE,
+      "@microsoft/rayfin-auth-provider-fabric": RAYFIN_RANGE, "@microsoft/rayfin-functions": RAYFIN_RANGE,
       "@microsoft/rayfin-client": RAYFIN_RANGE, "apache-arrow": WEBAPP.arrow.split("@").pop(), echarts: WEBAPP.echarts.split("@").pop() });
     assert.ok(JSON.parse(duck.get("package-lock.json")).packages["node_modules/@duckdb/duckdb-wasm"], "the project's lock file");
     // The app runs on its own model: the file's model.yaml, and the site's model.json made from it.
@@ -517,6 +518,11 @@ test("the shipped page and its data source parse; the page reads its model from 
   const auth = await site("src/storage/auth.js");
   assert.match(auth, /^import \{[^}]*\} from "@microsoft\/rayfin-client";$/m);
   assert.match(auth, /^import \{[^}]*\} from "@microsoft\/rayfin-auth-provider-fabric";$/m);
+  // Rayfin 2: the client is made of the parts the page gives it.
+  assert.match(auth, /^import \{ browserSession \} from "@microsoft\/rayfin-auth";$/m);
+  assert.match(auth, /^import \{ functionsService \} from "@microsoft\/rayfin-functions";$/m);
+  assert.match(auth, /RayfinClient\.create\(/);
+  assert.doesNotMatch(auth, /new RayfinClient\(|authStorage/, "Rayfin 1's constructor");
   assert.doesNotMatch(auth, /\bimport\s*\(/, "no dynamic import of the SDK");
   assert.match(await site("src/app.js"), /import\("echarts"\)/);
   assert.match(await site("src/app.js"), /siteUrl\("world\.json"\)/);

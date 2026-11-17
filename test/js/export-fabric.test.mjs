@@ -207,10 +207,13 @@ async function signedIn(s) {
   const sdk = await mkdtemp(join(tmpdir(), "rayfin-sdk-"));
   const deps = Object.fromEntries(Object.entries(sitePackages()).filter(([name]) => name.startsWith("@microsoft/rayfin-")));
   await writeFile(join(sdk, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: deps }));
-  await writeFile(join(sdk, "sdk.mjs"), 'export * as rayfin from "@microsoft/rayfin-client";\nexport * as provider from "@microsoft/rayfin-auth-provider-fabric";\n');
+  await writeFile(join(sdk, "sdk.mjs"), 'export * as rayfin from "@microsoft/rayfin-client";\nexport * as provider from "@microsoft/rayfin-auth-provider-fabric";\n' +
+    'export { browserSession } from "@microsoft/rayfin-auth";\nexport { functionsService } from "@microsoft/rayfin-functions";\n');
   execSync("npm install --no-audit --no-fund --loglevel=error", { cwd: sdk, stdio: ["ignore", "ignore", "inherit"] });
-  const { rayfin, provider } = await import(pathToFileURL(join(sdk, "sdk.mjs")).href);
-  const client = new rayfin.RayfinClient({ ...config, baseUrl: config.apiUrl, publishableKey: config.publishableKey, authStorage: false });
+  const { rayfin, provider, browserSession, functionsService } = await import(pathToFileURL(join(sdk, "sdk.mjs")).href);
+  // The client as the page makes it (storage/auth.js), but for a session kept nowhere.
+  const client = rayfin.RayfinClient.create({ baseUrl: config.apiUrl, publishableKey: config.publishableKey, runtimeConfig: config,
+                                             auth: browserSession({ storage: false, persistSession: false }), services: { functions: functionsService() } });
   await provider.signInWithEntraToken(client.auth, { entraToken: EXCHANGE_TOKEN });
   assert.ok(client.auth.getSession()?.isAuthenticated, "the published app gives a session for the token");
   // What the page asks of its function (storage/catalog.js), of the function Fabric runs.

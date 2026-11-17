@@ -1,12 +1,12 @@
 {
-  "schemaVersion": "2.0",
+  "schemaVersion": "3.0",
   "functions": [
     {
       "functionName": "openCatalog",
       "delegateParameters": [
         {
           "name": "ctx",
-          "type": "RayfinContext<BlankAppSchema, AudienceType.Storage>",
+          "type": "RayfinContext",
           "optional": false,
           "hasDefault": false,
           "position": 0,
@@ -23,7 +23,8 @@
       ],
       "contextAudiences": [
         "Storage"
-      ]
+      ],
+      "capabilities": []
     }
   ]
 }

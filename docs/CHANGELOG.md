@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **An exported app is on Rayfin 2.0.** Every Rayfin package of its project is on the `~2.0.0` line: the page's
+  SDK, the function's runtime, the project's CLI. Fabricator's Advisor flagged 1.36 as out of date. The page makes
+  its Rayfin client as Rayfin 2 asks, from the parts it uses: the browser's session and the function's calls.
+
 - **An app exported to Fabric has the model's name.** `-explore` is no longer added to it: the model *Sales Model* is
   the app `sales-model`. An app already published as `sales-model-explore` keeps that name, and is published over as
   before.

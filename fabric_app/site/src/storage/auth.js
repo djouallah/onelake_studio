@@ -18,7 +18,10 @@
 // page starts: the Fabric provider reads how the page was opened (inside the Fabric portal or not) when it
 // loads. Kept on the same version: their shared deps (rayfin-auth, rayfin-lib) are one module each, so the
 // provider operates on the client's own Auth instance.
+// Rayfin 2's client is made of the parts it is given: the browser's session, and the function's calls.
 import { RayfinClient, resolveRayfinConfig } from "@microsoft/rayfin-client";
+import { browserSession } from "@microsoft/rayfin-auth";
+import { functionsService } from "@microsoft/rayfin-functions";
 import { initEmbeddedAuth, ensureSignedInWithFabric } from "@microsoft/rayfin-auth-provider-fabric";
 
 // --- Rayfin provider: Fabric SSO session (no second login; inside the Fabric portal iframe the
@@ -39,13 +42,18 @@ function createRayfinAuth({ ready = () => false } = {}) {
   let _init = null;
   const init = () => _init ??= (async () => {
     const resolved = await resolveRayfinConfig({});
-    if (!resolved.baseUrl) throw new Error('rayfin.config.json not found — deploy with `rayfin up`');
-    _client = new RayfinClient({ ...resolved, authStorage: true });
+    if (!resolved.baseUrl || !resolved.publishableKey) throw new Error('rayfin.config.json not found — deploy with `rayfin up`');
+    _client = RayfinClient.create({
+      baseUrl: resolved.baseUrl, publishableKey: resolved.publishableKey, runtimeConfig: resolved.runtimeConfig,
+      auth: browserSession({ storage: true }),
+      services: { functions: functionsService() },
+    });
     const rc = _client.runtimeConfig || {};
     _fabricOpts = {
       workspaceId: rc.workspaceId,
       projectId: rc.itemId,
       fabricPortalUrl: rc.portalUrl,
+      ...(rc.tenantId ? { tenantId: rc.tenantId } : {}),
       returnOrigin: window.location.origin,
     };
   })().catch(e => { _init = null; throw e; });

@@ -3,7 +3,7 @@
 // fabricapp.js — a Fabric app (item type AppBackend) created and deployed over plain REST
 // =============================================================================
 // What `rayfin up` does for a project with static hosting and one function, and nothing else,
-// read from @microsoft/rayfin-cli and rayfin-tools-common 1.36.2: no CLI, no npm, no Node on
+// read from @microsoft/rayfin-cli and rayfin-tools-common 2.0.0: no CLI, no npm, no Node on
 // anyone's machine but the extension's. Every call is the Fabric API's, with the user's
 // Fabric-audience token; the calls under the item name it again in a header (MONIKER).
 //   1. the item: the one an earlier export created (its id, kept in the local copy), else a new
@@ -28,7 +28,7 @@ const MONIKER = 'X-Ms-Workload-Resource-Moniker';
 const PORTAL_URL = 'https://app.fabric.microsoft.com/';
 // The workload refuses static hosting from a client that does not say its version: the
 // version of the CLI these calls were read from.
-const CLIENT_VERSION = '1.36.2';
+const CLIENT_VERSION = '2.0.0';
 const FETCH_TIMEOUT_MS = 120_000;
 const MAX_ZIP_BYTES = 100 * 1024 * 1024;
 const FUNCTION_POLL_MS = 10_000;
