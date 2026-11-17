@@ -285,6 +285,13 @@ test("with an export's zip, the Report is the zip's site/public/report.json: sav
   assert.equal(app.files.get(`${SITE}app.js`).toString("utf8"), "// app");
   assert.deepEqual(app.marker, { ...marker, format: FORMAT });
   assert.deepEqual((await flow.reportOf(OPENED)).spec, TILES);
+  // The zip deleted: the Report is drawn from Studio's own copy of it, and saved there.
+  await rm(zipPath);
+  const after = await flow.reportOf(OPENED);
+  assert.deepEqual(after.spec, TILES, "the zip took no Report with it");
+  assert.match(after.from, /reports[\\/][0-9a-f]{40}\.json$/);
+  await flow.reportSave({ ...MODEL, spec: { tiles: [] }, stamp: after.stamp });
+  assert.deepEqual((await flow.reportOf(OPENED)).spec, { tiles: [] });
   await rm(open, { recursive: true, force: true });
   await done();
 });

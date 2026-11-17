@@ -697,7 +697,8 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
   - **Which tiles:** the model's Export to Fabric zip's `site/public/report.json`, when it has one (the zip its last export was
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
-    the zip, and the file goes.
+    the zip. Studio's file stays as its copy of the zip's Report, written when the zip's is read or saved: a zip that
+    is deleted or moved takes no Report with it, and the Report is drawn from the copy, and saved there.
   - **Add to report, ✕ and the grip:** Visual's **Add to report** puts the shelves on screen after the tiles, as a
     `pivot` tile (a slicer too); a tile's ✕ takes it out, and its grip ⠿ drags it anywhere on the grid and its ◢ drags its size (or the arrow keys, on
     either), drawn there at once with nothing run again. ⧉ adds a copy after the tiles, as big as the tile, in the first

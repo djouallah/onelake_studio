@@ -269,7 +269,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       const r = await ui.withProgress(`Export to Fabric: ${plan.name}`,
         async progress => {
           const say = line => { log(line); progress.report({ message: line.replace(/^app \S+: /, '') }); };
-          let files, marker = before || {}, fromStudio = null;
+          let files, marker = before || {};
           if (asIs) {
             say(`app ${plan.name}: publishing ${outZip} as it is`);
             files = local.files;
@@ -289,10 +289,8 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
             const wasReport = !was || !was.st ? null
               : was.zipPath ? ((await readApp(was.zipPath).catch(() => null))?.files.get(REPORT) || null)
               : await fsp.readFile(was.file).catch(() => null);
-            const studioReport = was && was.file && wasReport ? was.file : null;
             const kept = (local && local.files.get(REPORT)) || wasReport || null;
             files = await projectOf(kept, marker.redirects || []);
-            fromStudio = kept && studioReport ? studioReport : null;
             // The app `rayfin up` would update, kept while this publishes: a publish that fails leaves the file naming it.
             for (const p of [DEPLOYMENTS, CONFIG]) if (local && local.files.has(p)) files.set(p, local.files.get(p));
             // `report`: the names Studio's Report tab knows the model by (reportKey), for opening the file.
@@ -321,8 +319,8 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
           setSecrets(files, { catalogUrl: plan.catalogUrl, tables });
           // Kept before anything is published: a failure from here leaves the zip as it is.
           await writeApp(outZip, files, marker);
-          // The zip holds the Report now, and is where it is kept from here on.
-          if (fromStudio) await fsp.rm(fromStudio, { force: true }).catch(() => {});
+          // The zip holds the Report now; Studio's own file stays as its copy (keepCopy), drawn again if the zip
+          // is deleted or moved.
           const quiet = appLog;
           appLog = say;
           let done;
@@ -389,11 +387,26 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
     const file = reportDir ? join(reportDir, reportName(workspace, model)) : null;
     return { file, st: file ? await fsp.stat(file).catch(() => null) : null };
   }
+  // Studio's own copy of a Report that is in a zip (reportDir, where it was before the zip): a zip that is
+  // deleted or moved takes no Report with it. Written when the zip's Report is read or saved, if it differs.
+  async function keepCopy({ workspace, model }, bytes) {
+    if (!reportDir) return;
+    const file = join(reportDir, reportName(workspace, model));
+    try {
+      const has = await fsp.readFile(file).catch(() => null);
+      if (has && has.equals(bytes)) return;
+      await fsp.mkdir(reportDir, { recursive: true });
+      const tmp = `${file}.${process.pid}.tmp`;
+      await fsp.writeFile(tmp, bytes);
+      await fsp.rename(tmp, file);
+    } catch (e) { log(`report: no copy kept of ${workspace}/${model}: ${e.message}`); }
+  }
   async function reportOf({ workspace, model }) {
     const home = await reportHome({ workspace, model });
     const from = home.zipPath || home.file;
     const bytes = !home.st ? null : home.zipPath ? (await readApp(home.zipPath).catch(() => null))?.files.get(REPORT)
       : await fsp.readFile(home.file).catch(() => null);
+    if (bytes && home.zipPath) await keepCopy({ workspace, model }, bytes);
     if (bytes) {
       let spec;
       try { spec = JSON.parse(bytes.toString('utf8')); }
@@ -427,6 +440,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
         app.files.set(REPORT, bytes);
         await writeApp(home.zipPath, app.files, app.marker);
       });
+      await keepCopy({ workspace, model }, bytes);
     } else {
       if (!home.file) throw new Error('the Report is not kept here');
       await fsp.mkdir(dirname(home.file), { recursive: true });

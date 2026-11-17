@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fixed: deleting or moving an exported `.fabricator` lost the model's Report.** The Report was kept only in that
+  file. OneLake Studio now keeps its own copy of every Report, and draws and saves it there when the file is gone.
 - **Fixed: a Fabric app showed `metadata.json: HTTP 401` on every tile.** The page keeps the function's answer for
   about an hour, and when OneLake refused the signatures in it the page did not ask again. It now asks the function
   once and tries again. In Fabricator's preview, which serves one app after another at the same address, an answer

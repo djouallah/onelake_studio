@@ -195,7 +195,7 @@ test("an export saved to another file keeps the Report the Report tab drew", asy
   await b.flow.exportExplore({ ...REQUEST, file: "sales.yaml" });
   assert.deepEqual(JSON.parse((await readApp(join(dir, "first.fabricator"))).files.get(`${SITE}report.json`).toString("utf8")), TILES);
   assert.deepEqual((await b.flow.reportOf(MODEL)).spec, TILES);
-  assert.equal(existsSync(studio), false, "Studio's own file goes: the zip holds the Report now");
+  assert.equal(existsSync(studio), true, "Studio's own file stays, as its copy of the zip's Report");
   await b.done();
   await rm(dir, { recursive: true, force: true });
 });
