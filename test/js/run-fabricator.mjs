@@ -123,16 +123,19 @@ try {
   try { cache = execFileSync("npm", ["config", "get", "cache"], { encoding: "utf8", shell: true }).trim() || cache; } catch { /* the default */ }
   const logs = join(cache, "_logs");
   console.log(`npm's logs: ${logs}`);
-  const installs = [];
+  const installs = [], seen = [];
   for (const f of await readdir(logs).catch(() => [])) {
     const text = await readFile(join(logs, f), "utf8").catch(() => "");
     const argv = text.match(/verbose argv (.*)/)?.[1] ?? "";
     const cwd = text.match(/verbose cwd (.*)/)?.[1]?.trim() ?? "";
+    seen.push(`${f}: npm ${argv} in ${cwd}`);
     if (/"(ci|install|i)"/.test(argv) && cwd.toLowerCase() === studio.path.toLowerCase()) {
       installs.push({ argv, packuments: (text.match(/http fetch GET 200 \S+ \d+ms/g) || []).filter(l => !/\.tgz /.test(l)).length });
     }
   }
   for (const i of installs) console.log(`  npm ${i.argv}: ${i.packuments} package lookups`);
+  // No install found (2026-11-17, once, with the app running from an install all the same): what npm's logs do hold.
+  if (!installs.length) for (const s of seen.length ? seen : ["(no log file)"]) console.log(`  ${s}`);
   check(installs.length > 0 && installs.every(i => /^"ci"/.test(i.argv)), `Fabricator installed the project with npm ci (${installs.map(i => i.argv.split(" ")[0]).join(", ") || "no npm log"})`);
   check(installs.every(i => i.packuments === 0), "npm looked up no package: the lock file names them all");
 
