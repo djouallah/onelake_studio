@@ -444,6 +444,11 @@ function createCore({
     fetchModel: n => fetchModel(n, { fresh: true }),
     openModel: x => openSqlModel(x),
     nameTables: list => nameModelTables(list),
+    // `report`: a model's Report, the Report tab's own (below).
+    report: {
+      load: m => (modelReport ? modelReport.load(m) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      save: m => (modelReport ? modelReport.save(m) : Promise.reject(new Error('OneLake Studio is still starting'))),
+    },
     signedIn: () => signedIn,
     offlineReason: () => connectivity.reason(),
     diagnostics: {

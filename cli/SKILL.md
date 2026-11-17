@@ -34,6 +34,7 @@ node --no-warnings "{{cli}}" <command>
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Report as a Fabric app, which queries the semantic model as it is; nothing is written to the model. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`) |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/: the app reads its tables client side, DuckDB in the browser. For an app on a semantic model of the file, run `semanticmodel` first, then `export <ws> <model>` |
 | `semanticmodel <ws> <item> <Files/path>` | the Power BI semantic model of a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/, named for the file, in its workspace, and no app: `--mode directlake` (the default) or `directquery`. VS Code asks before it updates a model of that name; with VS Code closed it exits 3 |
+| `report <ws> <model>` | a model's Report, the pages of tiles its Report tab draws, as JSON: where it is kept (*not written yet* when none is), and every field a tile can name. `report <ws> <item> <Files/path>` is a model file's (`.bim`, Ossie `.yaml`) in a lakehouse's Files/. `--set <file.json>` (or `--set -`, stdin) writes one: checked first with the page's own code, and refused with each problem named (exit 1, `error.problems` in `--json`) when the tab could not draw it. See *Building a Report* below |
 | `status` | this window on itself, for debugging the extension: its build, session, startup timeline, catalog, sync, and where its files are. Answers signed out too |
 | `log [<text>]` | this window's own log, the lines holding `<text>` if given, newest last. Prefixes: `start:`, `session:`, `move:`, `catalog:`, `sync:`. Default 200 lines, `--limit N` for more |
 
@@ -41,6 +42,56 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--json`, `--fresh` (
 `--show-sql` (print the SQL a model query compiles to — the answer to "is this SQL right?"),
 `--timeout SEC` (give up and stop the query; default 600, `0` waits; `export` waits unless told otherwise),
 `--` (what follows is not an option: `find -- -x`). `<command> --help` says what one command takes.
+
+## Building a Report
+
+A model's Report is the one its Report tab in OneLake Studio draws, and the one Export to Fabric publishes. It is data, not
+code: a person edits every tile of it in that tab (move, resize, rename, ✎ opens a tile in Visual), so write only what this
+format says. A tile's query is generated from its shelves; there is no SQL in a Report. When it can't show something asked
+for, say what is missing rather than faking it with a text tile.
+
+1. `report <ws> <model>` (or `report <ws> <item> <Files/path>`): the Report as it is, and the fields. Use those ids exactly.
+2. Write the whole Report to a file, then `report … --set <file.json>`. Fix whatever it names and set it again. Each set
+   replaces the Report; the tab draws it at once.
+
+```json
+{
+  "theme": { "style": "midnight", "textSize": "S" },
+  "filters": [{ "field": "dim_date.year", "style": "list" }],
+  "pages": [{ "name": "Overview", "tiles": [
+    { "kind": "text", "text": "# Sales\nWhat sold, where.", "layout": { "x": 0, "y": 0, "w": 12, "h": 8 } },
+    { "kind": "pivot", "title": "Sales", "layout": { "x": 0, "y": 8, "w": 3, "h": 10 },
+      "pivot": { "values": ["Total Sales"], "mark": "card" } },
+    { "kind": "pivot", "title": "Sales by region", "subtitle": "Top 10", "layout": { "x": 3, "y": 8, "w": 9, "h": 32 },
+      "pivot": { "rows": ["dim_customer.Region"], "values": ["Total Sales"], "mark": "bar", "sort": "desc", "top": 10,
+                 "format": { "labels": true, "numbers": { "Total Sales": "short" } } } }
+  ] }]
+}
+```
+
+- **Report**: `pages` (each `{ name, tiles }`); `filters`, the filter bar over every page: model columns, `style` `dropdown`,
+  `list` or `dates`; `theme`: `style` (`paper`, `midnight`, `slate`), `palette` (`studio`, `ocean`, `warm`, `mono`, or a style's),
+  `textSize` (`S`, `L`), `colors` (`{ "a value as shown": "#rrggbb" }`, that value's colour in every tile).
+- **Tile**: `kind` `pivot` or `text`; `title`, `subtitle`, `showTitle: false`, `titleSize` (`S`, `L`); `layout`
+  `{ x, y, w, h }`: 12 columns, rows of 10 px (`h` 6 at least), `x + w` at most 12; tiles float up and never overlap;
+  `ignore`: filter-bar fields the tile doesn't follow. A `text` tile's `text` is Markdown: `#`–`###`, `**bold**`,
+  `*italic*`, `[link](https://…)`, `- lists`.
+- **Shelves** (`pivot`): `rows`, `cols` (columns, `table.column`), `values` (measures by name, or a column summarised as
+  `"\u0000sum\u0000table.column"`: `sum`, `avg`, `min`, `max`, `count`, `distinct`), `filters`
+  (`{ field, op, ... }`: `in`/`notIn` with `values`, `range` with `min`/`max`, `last` with `n` days, `blank`, `notBlank`;
+  a measure's has `"measure": true` and filters the figures), `sort` (`fields`, or `desc`: the first value, largest first), `top` (first n rows),
+  `totals`, `mark`.
+- **Marks**: `auto`, `table`, `highlight` (a table coloured by value), `bar`, `stacked`, `line`, `area` (Rows across,
+  Columns as series), `heatmap` (a field on Rows and one on Columns), `scatter` (two measures), `treemap` (one or two
+  Rows), `calendar` (a date column on Rows), `map` (latitude, longitude, then a name, on Rows), `card` (its Values'
+  totals; a date on Rows draws its trend under them), `slicer` (its first Rows field filters every other tile on the page;
+  `slicer` `list`, `buttons`, `dropdown`, or `range` for a date or a number). A click on a bar, point or row filters the
+  other tiles too.
+- **Format** (`pivot.format`): `numbers` (`{ "field as shown": "int"|"dec2"|"short"|"pct"|"usd" }`), `labels`, `legend`
+  (`top`, `bottom`, `right`, `off`), `xTitle`, `yTitle`, `yMin`, `yMax`, `zoom`, `maxLabel`, `totalLine`, `colors`
+  (`{ series: "#rrggbb" }`), `measures` (`{ measure: { "as": "bar"|"line"|"area"|"dashed", "axis": "right" } }`: several
+  measures in one plot), a table's `byValue` (`{ "measure as shown": "background"|"bar" }`) and `banded`, a card's `figureSize`
+  (`S`, `L`), `figureColor`, `change` (a measure on Values shown as the first figure's ▲/▼) and `goodWhen: "down"`.
 
 ## An OLAP server on a model file
 
@@ -158,7 +209,7 @@ VS Code extension); nothing is written to Fabric or OneLake.
   waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why
   nothing was published. The app is one file, `<model>.fabricator` (a zip of a Rayfin project, which Fabricator
   imports), and is the model's Report alone.
-- To grow that report: edit `site/public/report.json` in the file (its `AGENTS.md` says how: unzip, edit, zip again). A
+- To grow a Report before its export, or after (it is then the zip's), use `report … --set`. Or edit `site/public/report.json` in the file (its `AGENTS.md` says how: unzip, edit, zip again). A
   client-side app's model is `model.ossie.yaml` beside it, the model the app runs on.
   Each tile is a Visual, `{ title, kind: "pivot", pivot }`, its `pivot` Explore's shelves (fields, measures, filters,
   mark, sort, top), or `{ kind: "text", text }`: never SQL, the tile's query is generated from its shelves. The report

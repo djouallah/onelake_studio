@@ -27,6 +27,7 @@
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model, queried
 //   export <ws> <item> <Files/path>  as it is, or a model file in Files/, read client side
 //   semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file, and no app
+//   report <ws> <model> | <ws> <item> <Files/path>  a model's Report as JSON; --set writes one, checked first
 //   status                           this window: build, session, startup, catalog, sync, its files
 //   log [<text>]                     this window's own log
 //
@@ -112,7 +113,7 @@ function closestNames(wanted, names, most = 5) {
 
 function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
                        readNow = (job, o) => readJob(onelake, job, o),
-                       exportApp = null, createModel = null, fetchModel = null, openModel = null, nameTables = null,
+                       exportApp = null, createModel = null, fetchModel = null, openModel = null, nameTables = null, report = null,
                        signedIn = () => true, offlineReason = () => null, diagnostics = null }) {
   let mods = null;
   async function modules() {
@@ -771,6 +772,69 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       io.data({ message });
       io.out(message);
     },
+
+    // A model's Report, the one its Report tab draws and edits (exportflow.js reportOf, reportSave): a semantic
+    // model's local copy, or a model file in a lakehouse's Files/, by the names the tab gives it. Read, it is the
+    // Report as JSON, where it is kept, and the fields a tile can name. --set writes one, checked first as the page
+    // reads it (explore/reportcheck.js) and each pivot tile's query compiled as Explore compiles it: a Report the
+    // tab could not draw is refused, its problems named. The tab draws what is written at once.
+    async report([ws, a, b], opts, io) {
+      if (!report) throw new Error('a model\'s Report is not available here');
+      const { semantic, compiler } = await modules();
+      let key, file, text;
+      if (!b) {
+        const m = await modelOf(ws, a, opts);
+        const path = modelPath(ws, m.name);
+        if (!await exists(path)) {
+          throw Object.assign(new Error(`${ws}/${m.name} is not downloaded yet — open it in the OneLake Studio tree, ` +
+            `or \`model "${ws}" "${m.name}" --fresh\``), { notCached: true, retry: `model "${ws}" "${m.name}" --fresh` });
+        }
+        key = { workspace: ws, model: m.name };
+        file = path;
+        text = await fsp.readFile(path, 'utf8');
+      } else {
+        const lh = await itemOf(ws, a, await look('items', [ws], opts));
+        if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
+        file = `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}`;
+        text = Buffer.from(await onelake.readBytes(lh.workspace, file)).toString('utf8');
+        key = { workspace: lh.workspace, model: semantic.modelName(file) };
+      }
+      const dir = typeof appDir === 'function' ? await appDir() : appDir;
+      const load = p => import(pathToFileURL(join(dir, p)).href);
+      const [{ modelFields }, { tmslOf }, { compileModelSql, EXPLORE_CASTS }, { checkReport, fieldList }] = await Promise.all([
+        load('explore/explore.js'), load('explore/model.js'), load('explore/query.js'), load('explore/reportcheck.js')]);
+      const bim = semantic.bimOf(file, text, compiler);
+      const fields = modelFields(tmslOf(bim));
+      const sqlName = `${key.workspace}.${key.model}_semanticmodel`;
+
+      if (opts.set == null) {
+        const kept = await report.load(key);
+        io.data({ model: sqlName, kept: kept.from, report: kept.spec, fields: fieldList(fields) });
+        io.out(`${sqlName}'s Report, ${kept.from ? `kept in ${kept.from}` : 'not written yet: none is kept for it'}\n\n` +
+          `${fence('json', JSON.stringify(kept.spec, null, 2))}\n\nThe fields a tile can name:\n` +
+          fieldList(fields).map(t => `- ${t.table}${t.kind ? ` (${t.kind})` : ''}: ${t.fields.map(f => `${f.id} (${f.type})`).join(', ')}`).join('\n'));
+        return;
+      }
+      let spec;
+      try { spec = JSON.parse(String(opts.set)); }
+      catch (e) { throw new Error(`the Report is not JSON: ${e.message}`); }
+      const { problems, pages, tiles, queries } = checkReport(spec, fields);
+      const explore = compiler.createCompiler(compiler.tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS });
+      for (const q of queries) {
+        try { compileModelSql(explore, q.sql); }
+        catch (e) { problems.push(`${q.where}: its query does not compile: ${String(e.message).split('\n')[0]}`); }
+      }
+      if (problems.length) {
+        throw Object.assign(new Error(`the Report was not written: ${problems.length} problem(s)\n${problems.map(p => `  - ${p}`).join('\n')}`),
+          { detail: { problems } });
+      }
+      await report.save({ ...key, spec, stamp: null });
+      const kept = await report.load(key);
+      const message = `${sqlName}'s Report written: ${pages} page(s), ${tiles} tile(s), every field in the model and every query compiles. ` +
+        `Kept in ${kept.from}; its Report tab draws it.`;
+      io.data({ message, model: sqlName, kept: kept.from });
+      io.out(message);
+    },
   };
 
   // An engine result, as one table: `numRows` is how many there were, whatever came back.
@@ -866,7 +930,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json,
-        explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, mode: opts.mode, seen, signal,
+        explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, mode: opts.mode, set: opts.set, seen, signal,
       }, answer);
       // An answer off disk says how old it is: the oldest listing it was made of.
       if (seen.length) {

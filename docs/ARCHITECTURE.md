@@ -878,8 +878,9 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
   about each package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the
   public registry; run it after changing any package the project names.
 - `scripts/validate-report.mjs` ([`fabric_app/project/validate-report.mjs`](../fabric_app/project/validate-report.mjs)),
-  `npm run validate`: the Report checked with the page's own modules (Explore's `modelFields`, `pivotQuery`, the
-  Report's `reportPages`, dax-sql), in Node, with no browser and no data. `-- --fields` lists the model's fields.
+  `npm run validate`: the Report checked with the page's own modules (`page/explore/reportcheck.js` on Explore's
+  `modelFields`, `pivotQuery` and the Report's `reportPages`, then dax-sql), in Node, with no browser and no data.
+  `-- --fields` lists the model's fields.
   `AGENTS.md` tells an agent to run it after every change to the Report.
 - `.agents/skills/`, `.mcp.json`, `rayfin/.lockfile.json`: Rayfin's agent files, as `rayfin init ai-files install` writes
   them at the project's CLI version. `scripts/function-bundle.mjs` makes them at package time, into
@@ -902,7 +903,10 @@ publishes it; VS Code and the desktop app open it too (Opening files from disk, 
 
 Its report, `site/public/report.json`, is the Report tab's (Explore, above). No export writes that entry again, and it
 is not one of the local changes an export asks about, so a person or an agent grows it in the file and exports again to
-publish it. The Save dialog first offers the model file's own name, its model extension (`.ossie.yaml`, `.yaml`, `.bim`)
+publish it. The command line's `report <ws> <model>` (or `report <ws> <item> <Files/path>`) reads a model's Report wherever it is
+kept, the zip's or Studio's file before an export, with the fields a tile can name; `--set` writes one there after the
+same checks, `reportcheck.js` and each pivot tile's query compiled as Explore compiles it, and refuses one with problems,
+each named. The Report tab draws what it writes. The Save dialog first offers the model file's own name, its model extension (`.ossie.yaml`, `.yaml`, `.bim`)
 made `.fabricator`: `sales.ossie.yaml` is `sales.fabricator`, and a semantic model's app is `<model name>.fabricator`.
 After that it offers where the app was saved last. The app's name in Fabric is still `<model>-explore`. One an earlier
 export saved as `<model>-explore.zip` or `<model>.fabricapp` is offered under its new name, and renamed when saved

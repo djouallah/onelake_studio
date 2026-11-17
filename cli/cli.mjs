@@ -13,6 +13,7 @@
 // =============================================================================
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -59,6 +60,11 @@ const USAGE = {
                                         Ossie .yaml) in Files/, named for the file, in its workspace,
                                         and no app. Asks in VS Code before it updates one of that name
     --mode directlake|directquery     on Direct Lake (the default) or the SQL endpoint`,
+  report: `  report <ws> <model>                 a model's Report, the pages of tiles its Report tab draws, as JSON:
+                                        where it is kept, and every field a tile can name
+  report <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
+    --set <file.json>                 write it, checked first with the page's own code: refused, with
+                                        each problem named, when the page could not draw it; - is stdin`,
   status: `  status                              this window: its build, session, startup timeline, catalog,
                                         sync, and where its files are. Answers signed out too`,
   log: `  log [<text>]                        this window's own log, the lines holding <text> if given,
@@ -93,7 +99,7 @@ ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
 const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded", "--open": "open" };
-const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name", "--mode": "mode" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name", "--mode": "mode", "--set": "set" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {
@@ -211,6 +217,11 @@ async function ask() {
     if (args[0] === "sql" && args[1] === "-") {
       args[1] = await withinTimeout(readStdin(), timeoutMs);
       if (!args[1].trim()) return fail(EXIT.USAGE, "sql -: nothing on stdin");
+    }
+    // The Report to write, read here: a path is this shell's, which the extension's may not be.
+    if (args[0] === "report" && sent.set != null) {
+      sent.set = sent.set === "-" ? await withinTimeout(readStdin(), timeoutMs) : readFileSync(resolve(sent.set), "utf8");
+      if (!sent.set.trim()) return fail(EXIT.USAGE, "report --set: the Report is empty");
     }
     const request = { args, opts: sent };
     if (JSON.stringify(request).length >= MAX_REQUEST) {
