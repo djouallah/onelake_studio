@@ -485,12 +485,13 @@ export async function statement(sql, modules = null) {
 }
 
 // A view's Direct Lake tables: the model's table name, the engine's view of it — which SQL
-// can name directly to read the raw table — and where it lives in OneLake (by GUID).
+// can name directly to read the raw table — and where it lives in OneLake: `lh` (by GUID) for one its
+// Direct Lake expression places, `item` (by name, in the model's workspace) for one named item.schema.table.
 export function lakeTablesOf(name) {
   const v = views && views.get(name);
   const lake = v && lakes.get(lc(v.sqlName));
   if (!lake) return [];
-  return [...lake].map(([table, l]) => ({ table, ident: l.ident, schema: l.t.schema, entity: l.t.table, lh: l.lh }));
+  return [...lake].map(([table, l]) => ({ table, ident: l.ident, schema: l.t.schema, entity: l.t.table, lh: l.lh, item: l.item }));
 }
 
 // A model's (dax-sql's Model) first measure, and the first text column of another table it

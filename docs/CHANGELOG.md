@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **The command line's `model` answers for a model whose tables are named `item.schema.table`.** It failed with
+  *Cannot read properties of undefined (reading 'workspace')* where it lists the model's raw tables.
 - **An app exported to Fabric has the model's name.** `-explore` is no longer added to it: the model *Sales Model* is
   the app `sales-model`. An app already published as `sales-model-explore` keeps that name, and is published over as
   before.

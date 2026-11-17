@@ -653,8 +653,9 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (raw.length) {
         io.out('\n## Raw tables\n');
         io.table([col('model_table', 'text', 'model table'), col('sql_name', 'text', 'in sql (raw, as stored)'),
-                  col('onelake', 'text', 'OneLake (workspace/item GUIDs)')],
-                 raw.map(r => [r.table, r.ident, `${r.lh.workspace}/${r.lh.item} ${r.schema}.${r.entity}`]),
+                  col('onelake', 'text', 'OneLake (workspace/item)')],
+                 // By GUIDs, or by name for a table the model names item.schema.table (in its own workspace).
+                 raw.map(r => [r.table, r.ident, `${r.lh ? `${r.lh.workspace}/${r.lh.item}` : `${ws}/${r.item}`} ${r.schema}.${r.entity}`]),
                  { name: 'rawTables', limit: Infinity });
       }
       io.out(`\nExample:\n\n${m.sample}`);
