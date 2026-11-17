@@ -358,6 +358,8 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   async function layoutOf(name, t, record) {
     const runs = await held(record.files.map(f => f.path));
     await download(name, t, record.files.flatMap(f => piecesOf(f.path, f.size, [tailOf(f.size)], runs.get(f.path))));
+    // The footers came down with no engine; reading them needs one, set up (its Parquet extension loaded).
+    await enginesUp;
     const rows = await healing(() => submit(async e => {
       await register(e, record.files);
       const r = await e.conn.query(`SELECT file_name, path_in_schema, dictionary_page_offset, data_page_offset,
@@ -511,12 +513,13 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     if (still.size) throw new Error(`${name}: ${still.size} files not in the local store after their download`);
   }
   // The files registered on engine `e`, by their local names.
+  // All sent to the worker at once, which takes them in order: one at a time, a table of hundreds of files
+  // waited for as many answers, on every engine.
   async function register(e, files) {
-    for (const f of files) {
-      if (e.registered.has(f.path)) continue;
+    await Promise.all(files.filter(f => !e.registered.has(f.path)).map(async f => {
       await e.db.registerFileURL(localName(f.path), localUrl(f.path), duckdb.DuckDBDataProtocol.HTTP, DIRECT_IO);
       e.registered.add(f.path);
-    }
+    }));
   }
   // The table's view on engine `e`, over a copy in its memory or over the files.
   async function bind(e, name, t, record) {
@@ -677,6 +680,12 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     // The browser may drop a site's storage when the disk is short: asked to keep this one, which is gigabytes
     // of downloads. It answers with no prompt, and a no changes nothing.
     try { navigator.storage?.persist?.().catch(() => {}); } catch (e) {}
+    // The model, asked for at once: it waits for nothing.
+    const modelRead = fetch(MODEL_JSON, { cache: "no-cache" }).then(r => {
+      if (!r.ok) throw new Error(`the site has no model.json (HTTP ${r.status}): export the app again`);
+      return r.json();
+    });
+    modelRead.catch(() => {});   // awaited below
     // Before sign-in: a kept answer from the function is what lets the page start without one.
     await kv.load();
     // Asked for, and waited for below: the model and the engines need no session, and start meanwhile. Only the
@@ -686,10 +695,6 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     onStatus("Loading the query engine…");
     // The model, the function's answer (where its tables are, the SAS), the tables' sizes and
     // their plans, while DuckDB's bundle loads: none of them needs it.
-    const modelRead = fetch(MODEL_JSON, { cache: "no-cache" }).then(r => {
-      if (!r.ok) throw new Error(`the site has no model.json (HTTP ${r.status}): export the app again`);
-      return r.json();
-    });
     const ready = Promise.all([modelRead, signed.then(() => catalog.open())]).then(async ([doc, answer]) => {
       access = answer;
       model = doc;
@@ -768,6 +773,9 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       const key = TIMED ? null : resultKey(sql);
       const saved = key && await results.get(key);
       if (saved) return saved;
+      // What the query reads starts coming down now, while the engines start: a download needs none (a larger
+      // table's layout does, and waits for them itself). Asked for again below, where a failure is the query's.
+      readyFor(sql).catch(() => {});
       await enginesUp;
       const whole = async () => {
         const started = performance.now();

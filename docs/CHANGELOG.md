@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A Fabric app starts its downloads while its engines start.** What the first tiles read came down only once every
+  engine was up. The engines also read the store in fewer steps: a read takes only its own bytes, where it took the
+  whole 256 KB blocks around them, and a table's files are registered on an engine in one go.
+
 - **A model's YAML is Apache Ossie as its spec is now (0.3.0.dev0).** What Power BI needs and Ossie has no field for
   (format strings, folders, hierarchies, roles, a relationship's direction) is plain YAML under
   `nonportable_extensions`, where it was one JSON string. A measure made of two tables' measures, a ratio say, is

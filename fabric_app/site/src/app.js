@@ -67,6 +67,10 @@ const siteJson = (name, missing) => fetch(siteUrl(name), { cache: "no-cache" })
 
 // The page's settings and its Report, asked for now, together: each was asked for when the one before had
 // answered, and report.json only once the engines were up.
+// The data source too, a part of the page of its own (DuckDB in the browser over the tables): it was asked
+// for once settings.json had answered.
+const dataRead = import("./storage/data.js");
+dataRead.catch(() => {});   // said by start
 const settingsRead = siteJson("settings.json", {});
 const reportRead = siteJson("report.json", null);
 
@@ -96,8 +100,7 @@ export async function start() {
     // The shelves a first Visual would show (explore.json): the app shows the Report alone, so they aren't fetched.
     const first = null;
     const { maxRows } = (await settingsRead) || {};
-    // The data source, a part of the page of its own: DuckDB in the browser over the tables.
-    const { createDataSource } = await import("./storage/data.js");
+    const { createDataSource } = await dataRead;
     const data = createDataSource({
       onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
       onProgress: p => status(p ? (p.detail || p.label) : ""),

@@ -276,10 +276,10 @@
     for (let n = Math.floor(a / BLOCK); n <= Math.floor(b / BLOCK); n++) {
       const at = where.get(`${path}#${n}`);
       if (!at) return null;
-      const block = new Uint8Array(at[1]);
-      blocks.read(block, { at: at[0] });
+      // Only the bytes asked for, read straight into the answer: DuckDB's reads are small (session.js,
+      // DIRECT_IO), and each one read its whole blocks first, then copied its part out of them.
       const s = Math.max(a, n * BLOCK), e = Math.min(b, n * BLOCK + at[1] - 1);
-      out.set(block.subarray(s - n * BLOCK, e - n * BLOCK + 1), s - a);
+      if (e >= s) blocks.read(out.subarray(s - a, e - a + 1), { at: at[0] + (s - n * BLOCK) });
     }
     return out;
   }
