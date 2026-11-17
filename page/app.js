@@ -972,12 +972,13 @@ async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
       // The SUMMARIZE is of the SQL the query compiles to.
       const compiled = await semantic.statement(source, null).catch(() => null);
       statementSql = `SUMMARIZE ${(compiled ? compiled.sql : source).trim().replace(/;+\s*$/, '')}`;
-      currentSql = statementSql;
     } else {
       model = await semantic.statement(sql, null);
       statementSql = model ? model.sql : sql;
     }
     if (stale()) return false;
+    // After the check: a run that was replaced while it compiled must not leave its SQL as the tab's.
+    if (summarize != null) currentSql = statementSql;
     if (model) docAllowed = false;
     lastRun.rewritten = !!model;
     t0 = performance.now();
