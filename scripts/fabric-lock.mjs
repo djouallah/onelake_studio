@@ -33,6 +33,11 @@ console.log(`packages published before ${before} (Rayfin ${rayfin}: ${published}
   const dir = await mkdtemp(join(tmpdir(), "fabric-lock-"));
   try {
     await writeFile(join(dir, "package.json"), projectPackage("fabric-app"));
+    // On top of the lock file there is: npm keeps every version it names that still fits, so a Rayfin release
+    // younger than ten days moves its own packages and what they newly ask for, and no other package to a
+    // version a mirror has not taken yet (from nothing, Rayfin 2.0.0's lock named Rolldown 1.2.19 and tar 7.5.23,
+    // both 404 on a mirror on 2026-11-17).
+    await copyFile(join(root, "fabric_app", "project", "package-lock.json"), join(dir, "package-lock.json"));
     await mkdir(join(dir, "site"), { recursive: true });
     await writeFile(join(dir, "site", "package.json"), sitePackage());
     await mkdir(join(dir, "rayfin", "functions"), { recursive: true });
