@@ -864,7 +864,7 @@ question is asked in VS Code. Needs a connection, as Export does.
 
 One of two writes, with Upload (above). The Report's **Export to Fabric** button, or the command line's `export`, publishes
 the model's Report as a Fabric app, and nothing else of Explore (item type `AppBackend`, named
-`<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub. The file it saves is a
+`<model>`, its name in lower case with dashes). VS Code and the extension are all it needs: no CLI, no Node, no GitHub. The file it saves is a
 Rayfin project, so Fabricator (or the Rayfin CLI) can grow it and publish it too, over the same app.
 
 **The local copy is one file**, `<model>.fabricator`: a zip of a Rayfin project, laid out as the Rayfin CLI lays one out.
@@ -913,7 +913,7 @@ kept, the zip's or Studio's file before an export, with the fields a tile can na
 same checks, `reportcheck.js` and each pivot tile's query compiled as Explore compiles it, and refuses one with problems,
 each named. The Report tab draws what it writes. The Save dialog first offers the model file's own name, its model extension (`.ossie.yaml`, `.yaml`, `.bim`)
 made `.fabricator`: `sales.ossie.yaml` is `sales.fabricator`.
-After that it offers where the app was saved last. The app's name in Fabric is still `<model>-explore`. One an earlier
+After that it offers where the app was saved last. The app's name in Fabric is the model's; one published as `<model>-explore` by an earlier build keeps that name. One an earlier
 export saved as `<model>-explore.zip` or `<model>.fabricapp` is offered under its new name, and renamed when saved
 there; an earlier `.fabricapp` opened from disk and exported is renamed `.fabricator` first. Either is read laid out as
 a `.fabricator` is (its `site/` is `site/public/`, its root `export.json` our record) and written so.

@@ -37,9 +37,9 @@ const bimOf = (url, tables = ["fct_sales", "dim_region"]) => ({ model: {
 } });
 const mods = (bim, d = doc()) => ({ semantic, compiler: { parseYaml: () => d, ossieToTmsl: () => bim } });
 
-test("the plan: its own -explore name, the lakehouse's catalog, where its model is", () => {
+test("the plan: the model's name, the lakehouse's catalog, where its model is", () => {
   const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE);
-  assert.equal(plan.name, "sales-model-explore");
+  assert.equal(plan.name, "sales-model");
   assert.equal(plan.modelName, "sales");
   assert.equal(plan.workspace, WS);
   assert.equal(plan.lakehouse, LH);
@@ -49,7 +49,7 @@ test("the plan: its own -explore name, the lakehouse's catalog, where its model 
   assert.deepEqual(plan.tables, [["fct_sales", "mart.fct_sales"], ["dim_region", "mart.dim_region"]]);
   assert.deepEqual(plan.warnings, []);
   assert.equal(plan.doc, undefined, "the plan carries no model to write");
-  assert.equal(appName("2024 Sales"), "m-2024-sales-explore");
+  assert.equal(appName("2024 Sales"), "m-2024-sales");
   assert.equal(dfsUrl("ws", "/a b.Lakehouse/Files/m#1.yaml"), "https://onelake.dfs.fabric.microsoft.com/ws/a%20b.Lakehouse/Files/m%231.yaml");
 });
 
@@ -286,7 +286,7 @@ test("the local copy is one zip: the whole project, written and read back; the u
     assert.ok(!oldLayout(files));
     // The project around it, as the Rayfin CLI's template has one: Fabricator installs it and runs its Vite.
     const pkg = JSON.parse(files.get("package.json"));
-    assert.equal(pkg.name, "sales-model-explore");
+    assert.equal(pkg.name, "sales-model");
     assert.deepEqual(pkg.workspaces, ["site", "rayfin/functions"]);
     assert.equal(pkg.scripts.dev, "rayfin dev");
     assert.equal(pkg.scripts.build, "npm run build -w site");
@@ -321,8 +321,8 @@ test("the local copy is one zip: the whole project, written and read back; the u
     assert.ok(files.has(".mcp.json") && files.has("rayfin/.lockfile.json"));
     // The lock file, named for the app: npm installs what it names and resolves nothing.
     const lock = JSON.parse(files.get("package-lock.json"));
-    assert.equal(lock.name, "sales-model-explore");
-    assert.equal(lock.packages[""].name, "sales-model-explore");
+    assert.equal(lock.name, "sales-model");
+    assert.equal(lock.packages[""].name, "sales-model");
     // A workspace's package is in the lock by its name: the page's own package.json must say the same one.
     assert.equal(lock.packages.site.name, sitePkg.name);
     assert.deepEqual(lock.packages[`node_modules/${sitePkg.name}`], { resolved: "site", link: true });
@@ -330,7 +330,7 @@ test("the local copy is one zip: the whole project, written and read back; the u
     assert.equal(files.get(".gitattributes").toString(), "* text=auto eol=lf\n");
     assert.equal(files.get("site/vite.config.mjs").toString(), "export default {};\n");
     assert.deepEqual(JSON.parse(files.get("site/public/explore.json")), state);
-    assert.match(files.get("rayfin/rayfin.yml").toString(), /^id: sales-model-explore$/m);
+    assert.match(files.get("rayfin/rayfin.yml").toString(), /^id: sales-model$/m);
     assert.match(files.get("rayfin/rayfin.yml").toString(), /- https:\/\/x\.webapp\.fabricapps\.net/);
     const agents = files.get("AGENTS.md").toString();
     assert.match(agents, /- `fct_sales` ← `mart\.fct_sales`/);

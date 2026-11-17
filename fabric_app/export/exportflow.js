@@ -12,7 +12,7 @@ const fsp = require('node:fs/promises');
 const { createHash } = require('node:crypto');
 const { PINS } = require('../../core/vendored');
 const { planExport, modelDoc, appFiles, setModel, setModelCopy, modelCopyOf, tablesOf, readApp, writeApp, staticFiles, siteBuild, sizeOf,
-        buildDist, fingerprint, zip, rayfinYml, REPORT, APP_EXT, LEGACY_EXT, SITE, DEPLOYMENTS, CONFIG, setStatic, setPage, pageChanges, oldLayout,
+        buildDist, fingerprint, zip, rayfinYml, appNameBefore, REPORT, APP_EXT, LEGACY_EXT, SITE, DEPLOYMENTS, CONFIG, setStatic, setPage, pageChanges, oldLayout,
         setSecrets, setDeployment } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createFabricModel } = require('./fabricmodel');
@@ -24,7 +24,7 @@ const oldMarker = dir => fsp.readFile(join(dir, OLD_MARKER), 'utf8')
   .then(t => { const m = JSON.parse(t); delete m.files; return m; }, () => null).catch(() => null);
 // The local copy's name before its extension: the model file's own name with no model extension
 // (sales.ossie.yaml is sales), less what Windows refuses in a file name.
-// The app's name in Fabric is plan.name, and stays so.
+// The app's name in Fabric is plan.name, the model's (exportapp.js appName).
 const localName = s => String(s || '').split(/[\\/]/).pop()
   .replace(/(\.ossie)?\.(ya?ml|bim)$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'model';
 // The apps this computer published, each with the file it was published from (memento, item id -> path): an
@@ -123,9 +123,13 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       // question, opened where this app was saved last, else in Documents. Saving over the file is
       // the dialog's own question; Cancel is a refusal, with nothing written. One an earlier export
       // saved as <app>.zip or <model>.fabricapp is offered under its new name, and renamed when saved there.
-      const appKey = `${plan.workspace}/${plan.lakehouse}/${plan.name}`;
+      // An earlier build named the app <model>-explore: what it kept is under that name, and an app it published
+      // keeps that name (below), as nothing here renames an app in Fabric.
+      const keyOf = n => `${plan.workspace}/${plan.lakehouse}/${n}`;
+      const nameBefore = appNameBefore(plan.name);
+      let appKey = keyOf(plan.name);
       const asApp = p => String(p).replace(/\.(zip|fabricapp)$/i, APP_EXT);
-      const remembered = memento.get(`exportZip:${appKey}`);
+      const remembered = memento.get(`exportZip:${appKey}`) ?? memento.get(`exportZip:${keyOf(nameBefore)}`);
       const zipName = `${localName(file)}${APP_EXT}`;
       const oldZip = remembered && /\.(zip|fabricapp)$/i.test(remembered) && existsSync(remembered) ? remembered : null;
       const documents = join(os.homedir(), 'Documents');
@@ -141,7 +145,8 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       // An earlier export's folder, <app>/ with its marker: no longer written, but what it published
       // is the app's, and a zip not written yet starts from it.
       const open = ui.openFolder();
-      const oldDir = [memento.get(`exportFolder:${appKey}`), open && join(open, plan.name)]
+      const oldDir = [memento.get(`exportFolder:${appKey}`), memento.get(`exportFolder:${keyOf(nameBefore)}`),
+                      open && join(open, plan.name), open && join(open, nameBefore)]
         .find(d => d && existsSync(join(d, OLD_MARKER)));
       // The earlier export's .zip or .fabricapp becomes the .fabricator, if it is one Export to Fabric wrote
       // (its marker): the next write lays it out as a .fabricator is.
@@ -152,6 +157,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       // A file Export to Fabric did not write is refused here, before anything else is asked.
       const local = await readApp(outZip);
       const before = local ? local.marker : oldDir ? await oldMarker(oldDir) : null;
+      if (before && before.itemId && before.name === nameBefore) { plan.name = nameBefore; appKey = keyOf(nameBefore); }
       await memento.update(`exportZip:${appKey}`, outZip);
       // Where the Report tab drew this model's Report from until now: an earlier zip (this export saved to another
       // file), or Studio's own file before the model had one. A zip with no Report of its own starts from it:

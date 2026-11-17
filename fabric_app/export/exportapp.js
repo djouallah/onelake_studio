@@ -111,12 +111,14 @@ function modelCopyOf(files) {
   return name ? { name, text: files.get(name).toString('utf8') } : null;
 }
 
-// An app's name: lower case, letters, digits and dashes (as a Rayfin id), and -explore: its
-// own, never the name of an app someone else deployed for the same model.
+// An app's name: the model's, lower case, letters, digits and dashes (as a Rayfin id). An app of that name
+// that no export made is asked about before it is replaced (exportflow.js).
 function appName(s) {
   const out = String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return `${!out ? 'model' : /^[a-z]/.test(out) ? out : `m-${out}`}-explore`;
+  return !out ? 'model' : /^[a-z]/.test(out) ? out : `m-${out}`;
 }
+// The name an earlier build gave the same app: one published under it keeps it (exportflow.js).
+const appNameBefore = name => `${name}-explore`;
 
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
 // by the spec, so a model from Power BI has one even for a calculation group or a calculated
@@ -839,7 +841,7 @@ async function zip(files) {
 }
 
 module.exports = { planExport, modelDoc, appFiles, setModel, readApp, writeApp, unzip, staticFiles,
-                   siteBuild, sizeOf, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT,
+                   siteBuild, sizeOf, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, appNameBefore, dfsUrl, MARKER, REPORT,
                    APP_EXT, LEGACY_EXT, PAGE, SITE, CONFIG, DEPLOYMENTS, FABRICATOR_RECORD, FORMAT, MODEL_COPIES, setModelCopy, modelCopyOf,
                    tablesOf, setStatic, setPage, pageChanges, oldLayout, setSecrets, setDeployment, projectPackage, sitePackage,
                    sitePackages, projectPackages, projectLock, workspaceKey, PROJECT_PACKAGES, SITE_DEV_PACKAGES, RAYFIN_RANGE,

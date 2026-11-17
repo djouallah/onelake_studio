@@ -210,7 +210,7 @@ jobs:
 
   # Export to Fabric, for real, as the same identity (test/js/export-fabric.test.mjs): a model file of
   # lakeci_plain published as an app with its function, and made a Direct Lake semantic model.
-  # The app (lakeci-explore) and the model (lakeci_model) stay in the workspace, replaced by each run.
+  # The app (lakeci) and the model (lakeci_model) stay in the workspace, replaced by each run.
   export:
     needs: onelake
     runs-on: ubuntu-26.04
