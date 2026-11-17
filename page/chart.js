@@ -7,6 +7,7 @@
 // =============================================================================
 
 import { PALETTE, registerChartTheme } from './explore/theme.js';
+import { escapeHtml } from './paths.js';
 
 const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMAL|HUGEINT)/;
 const MAX_POINTS = 10000;   // past this a chart is a smear: the first rows are drawn, and it says so
@@ -26,13 +27,18 @@ export function guessAxes(res) {
   return { x, y };
 }
 
+// One choice of a picker. A column's name can hold anything: & < > and quotes too.
+export function optionHtml(v, label = v) {
+  return `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`;
+}
+
 /** The chart view in `root`: its controls, then the chart. Returns { destroy }. */
 export async function mountChart(root, res, { echarts, css, say = () => {} }) {
   const ec = await echarts();
   registerChartTheme(ec, css);
   const nums = numericColumns(res);
   const { x: x0, y: y0 } = guessAxes(res);
-  const opt = (v, label = v) => `<option value="${String(v).replace(/"/g, '&quot;')}">${String(label).replace(/</g, '&lt;')}</option>`;
+  const opt = optionHtml;
   root.innerHTML = `<div class="chartBar">
       <label>Chart <select data-k="type">${opt('bar', 'Bar')}${opt('line', 'Line')}${opt('scatter', 'Scatter')}</select></label>
       <label>X <select data-k="x">${res.fields.map(f => opt(f)).join('')}</select></label>

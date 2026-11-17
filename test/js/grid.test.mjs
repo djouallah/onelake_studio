@@ -53,3 +53,10 @@ test("a chart's first guess: a label across, a number up", async () => {
   assert.deepEqual(guessAxes(res), { x: "region", y: "sales" });
   assert.deepEqual(guessAxes({ fields: ["n"], types: ["BIGINT"], rows: [{ n: 1 }] }), { x: "n", y: null });
 });
+
+test("a chart's picker holds a column's name whole, whatever is in it", async () => {
+  const { optionHtml } = await import("../../page/chart.js");
+  assert.equal(optionHtml("a&amp;b"), `<option value="a&amp;amp;b">a&amp;amp;b</option>`);
+  assert.equal(optionHtml(`R&D "x" <y>`), `<option value="R&amp;D &quot;x&quot; &lt;y&gt;">R&amp;D &quot;x&quot; &lt;y&gt;</option>`);
+  assert.equal(optionHtml("*", "Every number"), `<option value="*">Every number</option>`);
+});
