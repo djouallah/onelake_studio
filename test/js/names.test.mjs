@@ -154,7 +154,7 @@ test("a lakehouse's Context/ and SystemContext/ are named as Files/ is, and only
   for (const p of ["data.Lakehouse/Tables/dbo/t", "data.Lakehouse/Contexts/x", "data.Lakehouse/context/x", "data.Lakehouse"]) assert.equal(n.areaOf(p), null, p);
   assert.equal(n.areaWriteError("Files"), null);
   assert.match(n.areaWriteError("SystemContext").message, /read-only: Fabric writes it/);
-  assert.match(n.areaWriteError("Context").message, /read-only in OneLake Studio/);
+  assert.match(n.areaWriteError("Context").message, /Context\/ gets a semantic view only from a semantic model's Export YAML/);
   const host = "onelake.dfs.fabric.microsoft.com";
   assert.equal(n.fileNamesIn(`FROM 'abfss://ws@${host}/lh.Lakehouse/SystemContext/Semantic Views/s/s.tmdl'`),
     "FROM 'ws.lh/SystemContext/Semantic Views/s/s.tmdl'");

@@ -101,7 +101,7 @@ const hasFilesArea = name => /^lakehouse$/i.test(itemKind(name));
 // `writes`: the error a write there gets, or nothing where one is allowed.
 const AREAS = {
   Files: {},
-  Context: { writes: "only a lakehouse's Files/ is written here; Context/ is read-only in OneLake Studio" },
+  Context: { writes: "only a lakehouse's Files/ is written here; Context/ gets a semantic view only from a semantic model's Export YAML" },
   SystemContext: { writes: "SystemContext/ is read-only: Fabric writes it when a semantic view is published" },
 };
 const AREA_NAMES = Object.keys(AREAS);

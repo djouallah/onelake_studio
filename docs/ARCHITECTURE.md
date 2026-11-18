@@ -500,11 +500,24 @@ once and counts, though the answer still comes through the host.
   line says when its temp tables and variables went with the old.
 - **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List. Files, folders
   and semantic models have no right-click: their actions are icons on the row, shown on hover.
-  - **A file:** Download File… and Copy SQL Name. A semantic model: Download File…, which asks Ossie (its local copy,
-    `<model>.ossie.yaml`, read from Fabric first when there is none yet; experimental) or TMSL (`<model>.bim`, Fabric's
-    own model.bim, kept beside the copy each time Fabric is read, so it downloads offline; Power BI's default), and Copy
-    SQL Name. A file is read from OneLake after the save
-    dialog, so a cancel reads nothing.
+  - **A file:** Download File… and Copy SQL Name. A file is read from OneLake after the save dialog, so a cancel
+    reads nothing.
+  - **A semantic model:** **Export YAML** and Copy SQL Name. Export YAML writes the model as a Fabric semantic view, in
+    the format Fabric's own New semantic view writes
+    ([reference](https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-yaml-reference)): one file,
+    `<lakehouse>/Context/Semantic Views/<model>/<model>_semantic_view.yaml`, in the lakehouse its tables are in.
+    Fabric has no way yet to make a view from a model, so Studio does it. It reads the model's TMSL from Fabric as
+    it is now and keeps nothing. Datasets are `schema.table` with no columns, since Fabric reads them from the
+    table. A renamed column is written as the lake names it, in relationships and in DAX. Every measure is a metric.
+    Relationships are active and one column each.
+    - **What a view has no place for is dropped and said:** calculated tables and columns, inactive relationships,
+      formats, hierarchies, roles, and a measure that names one of those. The message lists the first three, and the
+      log lists them all.
+    - **Refused, with why:** a model that isn't Direct Lake on one lakehouse, one whose lakehouse is another kind of
+      item, and one with a table named `Metrics` (Fabric's table for a view's metrics).
+    - **A folder of that name already there is asked about**, as a copy asks. **Replace** deletes it and everything
+      in it. **Keep Both** writes this one beside it as `<model> (2)`. Studio writes the file and stops: Publish is
+      Fabric's ([`core/models/semanticview.js`](../core/models/semanticview.js)).
   - **A folder** (Files/ itself, or one under it): **Upload Files…**, Copy SQL Name and Refresh. Upload picks files on
     this computer and writes each into that folder ([`fabric_app/export/onelakewrite.js`](../fabric_app/export/onelakewrite.js)): a name already
     there asks Replace or Skip, each file is written beside the target in 32 MB pieces and renamed into place, so a
@@ -513,8 +526,8 @@ once and counts, though the answer still comes through the host.
   - **A folder of `Context/` or `SystemContext/`** (`dirReadOnly`): Copy SQL Name and Refresh. A lakehouse shows
     both after Files, closed, and drawing them asks nothing. `Context/` holds a semantic view's YAML, and
     `SystemContext/` the TMDL Fabric makes of it, marked read-only. Their files open as Files/'s do, a `.yaml`,
-    `.bim` or `.sql` as a document. Nothing is written to either: Upload, Save and `COPY … TO` are refused
-    (`AREAS` in [`core/names.js`](../core/names.js)).
+    `.bim` or `.sql` as a document. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
+    [`core/names.js`](../core/names.js)). The only thing Studio writes to `Context/` is a semantic model's Export YAML.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
 

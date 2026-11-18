@@ -9,7 +9,8 @@ const fsp = require('node:fs/promises');
 const { walkCached } = require('../onelake/onelake');
 const { modelAccountDir, modelCopyPath } = require('./fabric');
 const { readFromOneLake } = require('./sqlendpoint');
-const { fmtBytes, sqlKind, displayName, MODEL_KIND, modelSqlName, stripBom, splitItem, sqlPart } = require('../names');
+const { fmtBytes, sqlKind, displayName, MODEL_KIND, modelSqlName, stripBom, splitItem, sqlPart, hasFilesArea, itemKind } = require('../names');
+const { viewOf } = require('./semanticview');
 
 /**
  * @param {object} o
@@ -317,10 +318,33 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return value;
   }
 
+  // A model as a Fabric semantic view (semanticview.js), for Export YAML: { workspace, item } (the lakehouse,
+  // as the tree names it), `name`, `doc`, `text` (the view's YAML) and `dropped`. Read from Fabric as it is now,
+  // and nothing kept: the local copy is not touched.
+  async function semanticViewOf(n) {
+    const bim = await fabric.getBim(n.workspace, n.modelId);
+    let doc;
+    try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }
+    catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
+    const read = await readFromOneLake(doc, n.workspace, { fabric, onelake });
+    if (read.refused) throw new Error(`${n.model} is ${read.refused}${read.why ? ` (${read.why})` : ''}`);
+    const { semantic, compiler } = await modules();
+    const view = viewOf(doc, n.model, semantic);
+    if (view.refused) throw Object.assign(new Error(view.refused), { refused: true });
+    const where = await fabric.itemOf(view.lake.workspace, view.lake.item);
+    if (!hasFilesArea(where.item)) {
+      throw Object.assign(new Error(`${n.model}'s tables are in ${displayName(where.item)}, a ${itemKind(where.item)}: Fabric makes semantic views in a lakehouse only`), { refused: true });
+    }
+    for (const note of read.notes) log(`${n.workspace}/${n.model}: ${note}`);
+    // `textAs(folder)`: the file, named as its folder is, which is the name Publish gives its model.
+    return { ...where, name: n.model, doc: view.doc, dropped: view.dropped,
+             textAs: folder => compiler.stringifyYaml({ ...view.doc, name: folder }, { lineWidth: 0 }) };
+  }
+
   return {
     adoptModels, adopted: () => modelsAdopted,
     modelPath, modelBimPath, fetchModelBim, modelKey, cachedModel, unsupportedModels, unsupportedNote,
-    fetchModel, upgradeCopy, walkTables, openSqlModel, completionNames, modelFile,
+    fetchModel, upgradeCopy, walkTables, openSqlModel, completionNames, modelFile, semanticViewOf,
     forgetNames: () => { namesKept = null; },
   };
 }

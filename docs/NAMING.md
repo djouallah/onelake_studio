@@ -25,7 +25,7 @@ catalog.
 | A table by GUIDs | `"<workspace id>"."<item id>".<schema>.<table>` | `"0f3c1a2b-…"."9a1b2c3d-…".dbo.dim_duid` |
 | A semantic model | `<workspace>.<model>_semanticmodel` | `aemo.nem_semanticmodel` |
 | A file | `'<workspace>.<lakehouse>/Files/<path>'` | `'aemo.data/Files/x.parquet'` |
-| A semantic view's file | `'<workspace>.<lakehouse>/Context/<path>'` | `'aemo.data/Context/Semantic Views/sales/schema.yaml'` |
+| A semantic view's file | `'<workspace>.<lakehouse>/Context/<path>'` | `'aemo.data/Context/Semantic Views/sales/sales_semantic_view.yaml'` |
 | What Fabric made of it | `'<workspace>.<lakehouse>/SystemContext/<path>'` | `'aemo.data/SystemContext/Semantic Views/sales/sales.tmdl'` |
 
 `<kind>` is `warehouse`, `sqldatabase` or `mirroreddatabase`. A lakehouse needs none, and `_lakehouse` after its
@@ -196,7 +196,7 @@ the same way. OneLake makes each folder when its first file lands, so a lakehous
 
 | Written | Means |
 | --- | --- |
-| `'aemo.data/Context/Semantic Views/sales/schema.yaml'` | A file in `Context/`. The space is not quoted: a path never is. |
+| `'aemo.data/Context/Semantic Views/sales/sales_semantic_view.yaml'` | A file in `Context/`. The space is not quoted: a path never is. |
 | `'aemo.data/SystemContext/Semantic Views/sales/sales.tmdl'` | A file in `SystemContext/`. |
 | `'aemo.data/context/x.yaml'` | Refused: a folder's name is exact, as OneLake's are. |
 
@@ -246,7 +246,7 @@ workspace's tables can still be named.
 | `CREATE SCHEMA aemo.data.raw` | The schema `raw` in that lakehouse. |
 | `COPY (…) TO 'aemo.data/Files/out/x.parquet'` | A file in that lakehouse's `Files/`. |
 | `COPY (…) TO 'aemo.data/SystemContext/x.csv'` | Refused: only Fabric writes `SystemContext/`. |
-| `COPY (…) TO 'aemo.data/Context/x.csv'` | Refused: OneLake Studio writes only to `Files/`. |
+| `COPY (…) TO 'aemo.data/Context/x.csv'` | Refused: `COPY` writes only to `Files/`. A semantic model's Export YAML is what writes to `Context/`. |
 | `INSERT INTO aemo.data_warehouse.dbo.t …` | Refused: only a lakehouse is written. |
 | `INSERT INTO aemo.data.monthly …` | Refused: a target is a table's whole name. |
 
