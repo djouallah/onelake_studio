@@ -117,7 +117,7 @@ function viewOf(bim, name, semantic) {
     }
     kept.set(lc(t.name), { table: t.name, columns });
     const d = { name: t.name, source: `${at.t.schema || 'dbo'}.${at.t.table}` };
-    if (t.description) d.description = String(t.description);
+    if (t.description) d.description = textOf(t.description);
     datasets.push(d);
     if (t.isHidden) tally('hidden tables');
     (t.hierarchies ?? []).forEach(() => tally('hierarchies'));
@@ -197,7 +197,7 @@ function viewOf(bim, name, semantic) {
   for (const m of measures) {
     if (why.has(lc(m.name))) { drop(`measure [${m.name}]: ${why.get(lc(m.name))}`); continue; }
     const x = { name: m.name };
-    if (m.description) x.description = String(m.description);
+    if (m.description) x.description = textOf(m.description);
     x.expression = { dialects: [{ dialect: 'DAX', expression: rewritten.get(lc(m.name)) }] };
     metrics.push(x);
   }
@@ -208,7 +208,7 @@ function viewOf(bim, name, semantic) {
   for (const [what, n] of count) dropped.push(`${n} ${n === 1 ? what.replace(/s$/, '').replace(/ie$/, 'y') : what}`);
 
   const doc = { version: VERSION, name };
-  if (bim?.model?.description) doc.description = String(bim.model.description);
+  if (bim?.model?.description) doc.description = textOf(bim.model.description);
   doc.datasets = datasets;
   if (relationships.length) doc.relationships = relationships;
   if (metrics.length) doc.metrics = metrics;

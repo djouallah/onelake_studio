@@ -525,8 +525,12 @@ once and counts, though the answer still comes through the host.
     and OneLake's own refusal is shown when the lakehouse is read-only to you.
   - **A folder of `Context/` or `SystemContext/`** (`dirReadOnly`): Copy SQL Name and Refresh. A lakehouse shows
     both after Files, closed, and drawing them asks nothing. `Context/` holds a semantic view's YAML, and
-    `SystemContext/` the TMDL Fabric makes of it, marked read-only. Their files open as Files/'s do, a `.yaml`,
-    `.bim` or `.sql` as a document. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
+    `SystemContext/` the TMDL Fabric makes of it, marked read-only. Their files open as Files/'s do, a `.bim` or
+    `.sql` as a document. A `.yaml` in `Context/Semantic Views/<view>/` opens the view as a model, as Fabric's
+    Publish makes it (`fabricViewBim` in [`page/semantic.js`](../page/semantic.js)). Every `.yaml` in the folder
+    is merged, and each dataset is a Direct Lake table with the columns its lake table has, from the table's
+    metadata. The DAX metrics go in a table named `Metrics`. Only Microsoft's version (0.2.0.dev0) opens. It is
+    read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric reads those files. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
     [`core/names.js`](../core/names.js)). The only thing Studio writes to `Context/` is a semantic model's Export YAML.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.

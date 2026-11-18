@@ -164,6 +164,26 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!openModel) throw new Error('semantic models are not available here');
       return openModel({ workspace: String(x.workspace), model: String(x.model) });
     },
+    // A Fabric semantic view's files: every .yaml in <lakehouse>/Context/Semantic Views/<view>/ and its folders,
+    // which Fabric merges into one view (page/semantic.js fabricViewBim). Listed and read as the tree does.
+    'onelake.semanticView': async x => {
+      const lh = { ...lhOf(x), area: 'Context' };
+      const view = String((x && x.view) ?? '');
+      if (!view || /[/\\]/.test(view) || view === '.' || view === '..') throw new Error(`${view || 'that'} is not a semantic view's name`);
+      const found = [];
+      const walk = async dir => {
+        for (const e of await onelake.files(lh, dir)) {
+          if (e.isDir) await walk(`${dir}/${e.name}`);
+          else if (/\.yaml$/.test(e.name)) found.push(e);
+        }
+      };
+      await walk(`Semantic Views/${view}`);
+      const files = await Promise.all(found.map(async e => ({
+        path: e.path,
+        text: Buffer.from(await onelake.readBytes(lh.workspace, e.path, { maxBytes: PAGE_MAX_BYTES })).toString('utf8'),
+      })));
+      return { files };
+    },
     // A table's metadata, and its SQL name (ws.lakehouse.schema.table) for the editor.
     'onelake.table': async x => {
       const lh = lhOf(x), t = tableOf(x);

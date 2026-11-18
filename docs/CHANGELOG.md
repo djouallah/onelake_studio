@@ -6,6 +6,9 @@
   `Context/` holds a view's YAML, and `SystemContext/` the TMDL Fabric writes when the view is published. Their files
   open, and SQL reads them by name, `'aemo.data/Context/Semantic Views/sales/schema.yaml'`. Both are read-only here.
   The command line's `files <ws> <item> Context/…` lists them.
+- **A Fabric semantic view opens as a model.** Click any `.yaml` in `Context/Semantic Views/<view>/`. Its files are
+  merged, as Fabric merges them. Its tables take the lake's columns, and its metrics go in a `Metrics` table. It is
+  read-only, and the Model page shows its YAML.
 - **Export YAML on a semantic model, in place of Download File….** It writes the model as a Fabric semantic view,
   in Fabric's own format, to `<lakehouse>/Context/Semantic Views/<model>/<model>_semantic_view.yaml` in the lakehouse
   its tables are in. Fabric has no way yet to make a view from a model. A folder of that name already there asks

@@ -682,6 +682,11 @@ export function createEngine({
   // and one just opened kept — `schema` is its workspace: ws.name_semanticmodel.
   const semanticViews = () => callHost("semantic.views", [{}]);
   const semanticKeep = (name, path, schema) => callHost("semantic.keep", [{ name, path, schema }]);
+  // A Fabric semantic view's .yaml files, from its lakehouse's Context/Semantic Views/<view>/: { files: [{ path, text }] }.
+  const semanticViewFiles = (lh, view) => callHost("onelake.semanticView", [{ workspace: lh.workspace, item: lh.item, view }]);
+  // A lakehouse table's columns as its metadata lists them, [{ name, type }], with no rows read.
+  const tableFields = async (lh, t) => (await callHost("onelake.table", [{
+    workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table }])).schemaFields || [];
   // A semantic model a query names that no view has yet: the host opens it (its local copy,
   // read from Fabric the first time) and keeps it — { name, schema, path, text }.
   const semanticOpen = ref => callHost("semantic.open", [ref]);
@@ -722,5 +727,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, upgradeCopy, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticViewFiles, tableFields, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, upgradeCopy, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

@@ -239,8 +239,11 @@ async function openFile(m) {
 }
 
 async function selectFile(file) {
-  // A file in Context/ or SystemContext/ (a semantic view's YAML, its TMDL) is read as a document: only
-  // Files/ holds the model files and queries OneLake Studio opens as its own, and saves back.
+  // A .yaml of a Fabric semantic view (Context/Semantic Views/<view>/) opens the view, all its files merged.
+  const view = semantic.FABRIC_VIEW_PATH.exec(String(file.path));
+  if (view && /\.yaml$/.test(file.name)) return openFabricView(file, view[2]);
+  // Any other file in Context/ or SystemContext/ (a view's TMDL) is read as a document: only Files/ holds the
+  // model files and queries OneLake Studio opens as its own, and saves back.
   const inFiles = /^[^/]+\/Files\//.test(String(file.path));
   if (inFiles && fileExt(file.name) === 'bim') return openModelView(file);
   // A .sql file opens in the SQL box, its text not run, as a saved query does.
@@ -303,6 +306,32 @@ async function selectFile(file) {
     }
   } finally {
     if (my === selSeq) setBusy(false);
+  }
+}
+
+// A Fabric semantic view, as the model Fabric's Publish makes of it (semantic.js fabricViewBim): read here, never
+// written, since Fabric reads those files. Its tables' columns are the lake's, from their metadata. The Model
+// page's text is the view's own YAML.
+async function openFabricView(file, view) {
+  const my = ++selSeq;
+  setStatus(`Reading the semantic view ${view}…`);
+  try {
+    await engineReady;
+    const { files } = await engine.semanticViewFiles(lakehouse, view);
+    const bim = await semantic.fabricViewBim(view, files, {
+      lakehouse: String(lakehouse.item).replace(/\.[^.]+$/, ''),
+      columnsOf: (schema, table) => engine.tableFields(lakehouse, { schema, table }),
+    });
+    if (my !== selSeq) return;
+    const lead = `${lakehouse.item}/Context/Semantic Views/${view}/`;
+    const viewText = files.length === 1 ? files[0].text
+      : files.map(f => `# ${String(f.path).slice(lead.length)}\n${f.text}`).join('\n');
+    await openModelView({ name: `${view}.bim`, path: file.path, localWorkspace: lakehouse.workspace, modelName: view,
+                          fabricView: true, viewText }, JSON.stringify(bim), { fromOneLake: false });
+  } catch (e) {
+    if (my !== selSeq) return;
+    setStatus(`${view} does not open as a semantic model: ${e.message}`, 'error');
+    console.error(e);
   }
 }
 
@@ -379,7 +408,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
     // An app's file holds its model in a zip, which no view can read: not kept.
-    if (!file.appFile) {
+    if (!file.appFile && !file.fabricView) {
       engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema)
         .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
     }
@@ -389,7 +418,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     modelView = mountExplore($('modelView'), {
       // The tab and the header already say the file: the bar says only the model's name.
       name: m.name, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
-      text: bim, ext: (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
+      text: file.viewText ?? bim, ext: file.viewText != null ? 'yaml' : (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
       run: runModelSql,
       cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,
@@ -454,7 +483,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
           await openModelView(file, next, { fromOneLake: false, openOnText: true });
           setStatus(`${file.modelName}'s local copy is Ossie ${specNow} now.`, 'ok');
         }
-        : !file.appFile && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+        : !file.appFile && !file.fabricView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
         ? async () => {
           const next = await semantic.upgradeOssie(bim);
           // A text that doesn't open as a model is not written: the file stays one that opens.
@@ -467,7 +496,8 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
         : undefined,
       // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's
       // local copy (Fabric's is the model, and Refresh reads it again) nor an app's file (its model is in a zip).
-      saveFileText: !file.appFile && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+      // A Fabric semantic view is read only: Fabric reads its files.
+      saveFileText: !file.appFile && !file.fabricView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
         ? async edited => {
           // A text that doesn't open as a model is not written: the file stays one that opens.
           await semantic.checkModel(file.name, edited);

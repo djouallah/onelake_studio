@@ -285,6 +285,84 @@ export async function checkModel(fileName, text, modules = null) {
 export const registerModel = (fileName, text, modules = null, schema = null, name = null) =>
   defineView(name || modelName(fileName), fileName, text, "replace", modules, schema);
 
+// A Fabric semantic view: <lakehouse>/Context/Semantic Views/<view>/, its .yaml in Microsoft's format
+// (https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-yaml-reference). [, item, view] of a path in one.
+export const FABRIC_VIEW_PATH = /^([^/]+)\/Context\/Semantic Views\/([^/]+)\//;
+export const FABRIC_VIEW_VERSION = "0.2.0.dev0";
+
+/**
+ * A Fabric semantic view as TMSL, the model Fabric's Publish makes of it: its files (`files`, [{ path, text }]) merged
+ * as Fabric merges them, each dataset a Direct Lake table of the view's lakehouse (`lakehouse`, its name) with the
+ * columns its table has (`columnsOf(schema, table)`, [{ name, type }]: Fabric's YAML names none), each relationship
+ * active, and the DAX metrics in a table of their own, Metrics, as Fabric's model has them. A metric with no DAX is
+ * left out, as Fabric leaves it out. What Fabric would refuse is said, by file.
+ */
+export async function fabricViewBim(view, files, { lakehouse, columnsOf }, modules = null) {
+  const mods = await ready(modules);
+  if (!files.length) throw new Error(`${view} has no .yaml file in its folder`);
+  const docs = files.map(f => {
+    let doc;
+    try { doc = mods.parseYaml(stripBom(f.text)); } catch (e) { throw new Error(`${basename(f.path)} is not YAML: ${e.message}`); }
+    if (!doc || typeof doc !== "object") throw new Error(`${basename(f.path)} is empty: a view's file says its version and name at least`);
+    if (String(doc.version) !== FABRIC_VIEW_VERSION) {
+      throw new Error(`${basename(f.path)} is version ${doc.version ?? "(none)"}: a Fabric semantic view is ${FABRIC_VIEW_VERSION}`);
+    }
+    return { file: basename(f.path), doc };
+  });
+  const all = key => docs.flatMap(({ file, doc }) => (Array.isArray(doc[key]) ? doc[key] : []).map(x => ({ file, x })));
+  const once = (list, what) => {
+    const seen = new Map();
+    for (const { file, x } of list) {
+      const k = lc(x?.name);
+      if (seen.has(k)) throw new Error(`${what} ${x.name} is in ${seen.get(k)} and ${file}: a name is given once`);
+      seen.set(k, file);
+    }
+    return list.map(({ x }) => x);
+  };
+  const datasets = once(all("datasets"), "the dataset");
+  const metrics = once(all("metrics"), "the metric");
+  const relationships = once(all("relationships"), "the relationship");
+  const description = docs.map(({ doc }) => doc.description).find(d => d != null);
+
+  const tables = await Promise.all(datasets.map(async d => {
+    const parts = String(d?.source ?? "").split(".");
+    if (!d?.name || parts.length !== 2 || parts.some(p => !p)) {
+      throw new Error(`the dataset ${d?.name ?? "(no name)"}: its source is schema.table, such as dbo.sales`);
+    }
+    const [schema, table] = parts;
+    const columns = (await columnsOf(schema, table))
+      .map(c => ({ name: c.name, dataType: tmslType(c.type), sourceColumn: c.name }))
+      .filter(c => c.dataType);
+    if (!columns.length) throw new Error(`the dataset ${d.name}: ${lakehouse} has no table ${schema}.${table}, or it has no columns`);
+    const quote = s => `"${String(s).replace(/"/g, '""')}"`;
+    return {
+      name: d.name, ...(d.description != null ? { description: String(d.description) } : {}), columns,
+      partitions: [{ name: d.name, mode: "directLake",
+                     source: { type: "entity", entityName: table, schemaName: `${quote(lakehouse)}.${quote(schema)}` } }],
+    };
+  }));
+  const measures = metrics.flatMap(m => {
+    const dax = (m?.expression?.dialects ?? []).find(x => lc(x?.dialect) === "dax" && String(x?.expression ?? "").trim());
+    return dax ? [{ name: m.name, expression: String(dax.expression), ...(m.description != null ? { description: String(m.description) } : {}) }] : [];
+  });
+  if (measures.length) tables.push({ name: "Metrics", columns: [], measures });
+  return {
+    name: view,
+    model: {
+      ...(description != null ? { description: String(description) } : {}),
+      tables,
+      relationships: relationships.map(r => {
+        const one = (cols, end) => {
+          if (!Array.isArray(cols) || cols.length !== 1) throw new Error(`the relationship ${r.name}: its ${end} is one column`);
+          return String(cols[0]);
+        };
+        return { name: r.name, fromTable: r.from, fromColumn: one(r.from_columns, "from_columns"),
+                 toTable: r.to, toColumn: one(r.to_columns, "to_columns") };
+      }),
+    },
+  };
+}
+
 // A column's type in TMSL's words, from the Iceberg schema (long, decimal(18,2), timestamp)
 // or DuckDB's DESCRIBE (BIGINT, DECIMAL(18,2), TIMESTAMP WITH TIME ZONE), whichever the
 // table's info holds. null: a type the pivot has no use for (nested, binary), left out.

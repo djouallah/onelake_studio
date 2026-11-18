@@ -137,3 +137,56 @@ test("a DAX expression's references skip its strings and comments", () => {
   const refs = daxRefs("SUM('a b'[c]) + \"[x]\" /* T[y] */ + T[z] -- [w]\n+ [m]");
   assert.deepEqual(refs.filter(r => r.column || r.name).map(r => r.column ?? r.name), ["c", "z", "m"]);
 });
+
+test("a description of several lines is written on several lines", () => {
+  const bim = { model: { description: ["one", "two"], tables: [{ name: "t", description: ["a", "b"], partitions: part("t"), columns: [col("x", "int64")],
+    measures: [{ name: "m", description: ["c", "d"], expression: "SUM('t'[x])" }] }], expressions: [lake()] } };
+  const v = viewOf(bim, "v", semantic);
+  assert.equal(v.doc.description, "one\ntwo");
+  assert.equal(v.doc.datasets[0].description, "a\nb");
+  assert.equal(v.doc.metrics[0].description, "c\nd");
+});
+
+// page/semantic.js fabricViewBim: a Fabric semantic view read back as the model Fabric's Publish makes of it. Its YAML
+// is given here as JSON, which is YAML too: the unit tests have no YAML library.
+const asModules = { parseYaml: JSON.parse, createViews: () => ({}) };
+const lakeColumns = {
+  "mart.fct_summary": [{ name: "DUID", type: "string" }, { name: "MW", type: "double" }, { name: "DateKey", type: "long" },
+                       { name: "geo", type: { type: "struct", fields: [] } }],
+  "mart.dim_duid": [{ name: "DUID", type: "string" }, { name: "Fuel", type: "string" }],
+};
+const columnsOf = async (schema, table) => lakeColumns[`${schema}.${table}`] || [];
+const fileOf = (name, doc) => ({ path: `data.Lakehouse/Context/Semantic Views/v/${name}`, text: JSON.stringify(doc) });
+
+test("a view's files are merged, its tables take the lake's columns, and its metrics are a table of their own", async () => {
+  const bim = await semantic.fabricViewBim("v", [
+    fileOf("schema.yaml", { version: "0.2.0.dev0", name: "v", description: "d", datasets: [
+      { name: "fct", source: "mart.fct_summary" }, { name: "duid", source: "mart.dim_duid", description: "units" }],
+      relationships: [{ name: "r", from: "fct", to: "duid", from_columns: ["DUID"], to_columns: ["DUID"] }] }),
+    fileOf("metrics.yaml", { version: "0.2.0.dev0", name: "v", metrics: [
+      { name: "Total", expression: { dialects: [{ dialect: "DAX", expression: "SUM('fct'[MW])" }] } },
+      { name: "Sql only", expression: { dialects: [{ dialect: "ANSI_SQL", expression: "SUM(MW)" }] } }] }),
+  ], { lakehouse: "data", columnsOf }, asModules);
+  assert.equal(bim.model.description, "d");
+  assert.deepEqual(bim.model.tables.map(t => t.name), ["fct", "duid", "Metrics"]);
+  assert.deepEqual(bim.model.tables[0].columns.map(c => [c.name, c.dataType]), [["DUID", "string"], ["MW", "double"], ["DateKey", "int64"]],
+    "a nested column has no TMSL type, and is left out");
+  assert.deepEqual(bim.model.tables[0].partitions[0].source, { type: "entity", entityName: "fct_summary", schemaName: '"data"."mart"' });
+  assert.deepEqual(semantic.lakehousesOf(bim, "ws"), [{ workspaceName: "ws", itemName: "data" }], "named in its workspace, as a model's tables are");
+  assert.deepEqual(bim.model.tables[2].measures, [{ name: "Total", expression: "SUM('fct'[MW])" }], "a metric with no DAX is left out, as Fabric leaves it");
+  assert.deepEqual(bim.model.relationships, [{ name: "r", fromTable: "fct", fromColumn: "DUID", toTable: "duid", toColumn: "DUID" }]);
+});
+
+test("what Fabric would refuse in a view is said, by its file", async () => {
+  const open = files => semantic.fabricViewBim("v", files, { lakehouse: "data", columnsOf }, asModules);
+  await assert.rejects(open([]), /v has no \.yaml file/);
+  await assert.rejects(open([fileOf("a.yaml", { version: "0.3.0.dev0", name: "v" })]), /a\.yaml is version 0\.3\.0\.dev0: a Fabric semantic view is 0\.2\.0\.dev0/);
+  await assert.rejects(open([fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "nope" }] })]), /source is schema\.table/);
+  await assert.rejects(open([fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "mart.gone" }] })]),
+    /data has no table mart\.gone/);
+  await assert.rejects(open([
+    fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "mart.dim_duid" }] }),
+    fileOf("b.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "X", source: "mart.dim_duid" }] }),
+  ]), /the dataset X is in a\.yaml and b\.yaml/);
+  assert.match("data.Lakehouse/Context/Semantic Views/sales/sub/a.yaml".match(semantic.FABRIC_VIEW_PATH)[2], /^sales$/);
+});
