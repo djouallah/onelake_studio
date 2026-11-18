@@ -239,9 +239,12 @@ async function openFile(m) {
 }
 
 async function selectFile(file) {
-  if (fileExt(file.name) === 'bim') return openModelView(file);
+  // A file in Context/ or SystemContext/ (a semantic view's YAML, its TMDL) is read as a document: only
+  // Files/ holds the model files and queries OneLake Studio opens as its own, and saves back.
+  const inFiles = /^[^/]+\/Files\//.test(String(file.path));
+  if (inFiles && fileExt(file.name) === 'bim') return openModelView(file);
   // A .sql file opens in the SQL box, its text not run, as a saved query does.
-  if (fileExt(file.name) === 'sql') {
+  if (inFiles && fileExt(file.name) === 'sql') {
     const my = ++selSeq;
     try {
       await engineReady;
@@ -256,7 +259,7 @@ async function selectFile(file) {
     return;
   }
   // A .yaml is an Apache Ossie model when its text says so; any other is a document.
-  if (['yaml', 'yml'].includes(fileExt(file.name))) {
+  if (inFiles && ['yaml', 'yml'].includes(fileExt(file.name))) {
     const my = ++selSeq;
     const text = await ossieText(file);
     if (my !== selSeq) return;

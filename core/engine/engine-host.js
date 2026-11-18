@@ -1140,9 +1140,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const written = [];
     for (const ref of refs) {
       const { workspace, item } = await resolveFile(ref, { fresh });
-      const url = abfssUrl(workspace, `${item}/Files`);
+      // Files/, Context/ or SystemContext/: the area the name was written with.
+      const area = ref.area || 'Files';
+      const url = abfssUrl(workspace, `${item}/${area}`);
       const inQuotes = s => s.split(ref.quote).join(ref.quote + ref.quote);
-      statement += `${sql.slice(at, ref.start)}${ref.quote}${inQuotes(ref.zip + url + ref.path.slice('/Files'.length))}${ref.quote}`;
+      statement += `${sql.slice(at, ref.start)}${ref.quote}${inQuotes(ref.zip + url + ref.path.slice(`/${area}`.length))}${ref.quote}`;
       at = ref.end;
       written.push({ url: inQuotes(url), name: inQuotes(ref.written) });
     }

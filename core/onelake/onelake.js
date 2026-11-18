@@ -155,12 +155,20 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   }
   usePrefixStore();
 
+  // A listing's directory in its key: Files/'s as it always was, relative to Files/; another area's
+  // after a '/' and its name ("/Context/Semantic Views"), which no path relative to Files/ starts with.
+  const areaDir = (area, dir) => (!area || area === 'Files' ? dir || ''
+    : `/${area}${dir ? `/${names.strip(dir)}` : ''}`);
+  const dirOfKey = c => {
+    const m = /^\/([^/]+)(?:\/(.*))?$/.exec(c || '');
+    return m ? { area: m[1], dir: m[2] || '' } : { dir: c || '' };
+  };
   const keys = {
     workspaces: () => 'workspaces',
     items: ws => `items\u0000${ws}`,
     tables: lh => `tables\u0000${lh.workspace}\u0000${lh.item}`,
     schemas: lh => `schemas\u0000${lh.workspace}\u0000${lh.item}`,
-    files: (lh, dir) => `files\u0000${lh.workspace}\u0000${lh.item}\u0000${dir || ''}`,
+    files: (lh, dir) => `files\u0000${lh.workspace}\u0000${lh.item}\u0000${areaDir(lh.area, dir)}`,
     table: (lh, t) => `table\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
     peek: loc => `peek\u0000${loc}`,
     rows: loc => `rows\u0000${loc}`,
@@ -182,7 +190,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (kind === 'items') return { kind, workspace: a };
     // An item's schemas are drawn with its tables.
     if (kind === 'tables' || kind === 'schemas') return { kind: 'tables', workspace: a, item: b };
-    if (kind === 'files') return { kind, workspace: a, item: b, dir: c };
+    if (kind === 'files') return { kind, workspace: a, item: b, ...dirOfKey(c) };
     if (kind === 'table') return { kind, workspace: a, item: b, schema: c, table: d };
     if (kind === 'models' || kind === 'apps') return { kind, workspace: a };
     return { kind };
@@ -271,12 +279,14 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     return out;
   }
 
-  // `item/Files/a/b.png` -> the version of b.png in the cached listing of Files/a.
+  // `item/Files/a/b.png` -> the version of b.png in the cached listing of Files/a; the same in a
+  // lakehouse's other areas (Context/, SystemContext/).
   async function versionOf(ws, path) {
     const p = names.strip(path);
-    const m = /^([^/]+)\/Files\/(?:(.*)\/)?[^/]+$/.exec(p);
-    if (!m) return '';
-    const listing = await store.peek(keys.files({ workspace: ws, item: m[1] }, m[2] || ''));
+    const at = names.areaOf(p);
+    if (!at || !at.rest) return '';
+    const dir = at.rest.split('/').slice(0, -1).join('/');
+    const listing = await store.peek(keys.files({ workspace: ws, item: at.item, area: at.area }, dir));
     const entry = (Array.isArray(listing) ? listing : []).find(e => !e.isDir && names.strip(e.path) === p);
     return (entry && entry.version) || '';
   }

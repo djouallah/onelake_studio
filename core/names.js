@@ -94,6 +94,30 @@ const isMirrored = name => /^(MountedRelationalDatabase|Mirrored)/i.test(itemKin
 // storage directories — GUIDs nobody asked to see.
 const hasFilesArea = name => /^lakehouse$/i.test(itemKind(name));
 
+// A lakehouse's folders of files, beside Tables/: Files/, and the two that semantic views brought.
+// Context/ is the person's (a semantic view's YAML, under Context/Semantic Views/<view>/); SystemContext/
+// is what Fabric makes of it (the view's TMDL), and nobody else writes it. OneLake makes each one when its
+// first file lands, so a lakehouse can have none. Exact case, as OneLake's paths are.
+// `writes`: the error a write there gets, or nothing where one is allowed.
+const AREAS = {
+  Files: {},
+  Context: { writes: "only a lakehouse's Files/ is written here; Context/ is read-only in OneLake Studio" },
+  SystemContext: { writes: "SystemContext/ is read-only: Fabric writes it when a semantic view is published" },
+};
+const AREA_NAMES = Object.keys(AREAS);
+const isArea = a => Object.prototype.hasOwnProperty.call(AREAS, a);
+const AREA_ALT = AREA_NAMES.join("|");
+// An item's path ("data.Lakehouse/Context/a/b.yaml") -> { item, area, rest }, rest being what follows
+// the area. null for a path in none.
+const AREA_PATH = new RegExp(`^([^/]+)/(${AREA_ALT})(?:/(.*))?$`);
+function areaOf(path) {
+  const m = AREA_PATH.exec(strip(path));
+  return m ? { item: m[1], area: m[2], rest: m[3] || "" } : null;
+}
+// The error a write to `area` gets, or null where one is allowed.
+const areaWriteError = area => (isArea(area) ? (AREAS[area].writes ? new Error(AREAS[area].writes) : null)
+  : new Error(`${area}/ is not one of a lakehouse's folders`));
+
 // The kind as the picker should say it: what the person sees in Fabric, not the internal
 // type. Anything unlisted names itself, which is still better than being invisible.
 const KIND_LABELS = {
@@ -189,19 +213,20 @@ function sqlNameOf(lh, t) {
   if (!kind) throw new Error(`${lh.item} holds no tables SQL can name`);
   return sqlName({ kind, workspace: lh.workspace, item: displayName(lh.item), schema: t.schema, table: t.table });
 }
-// A lakehouse's file or folder in SQL: <workspace>.<lakehouse>/Files/<path>, the item spelled as
-// in its tables' names. `path` is what follows Files/. Quoted as a string where a statement uses it,
-// since DuckDB reads a file only from one.
-function fileSqlName(lh, path = "") {
+// A lakehouse's file or folder in SQL: <workspace>.<lakehouse>/<Area>/<path>, the item spelled as
+// in its tables' names and the area one of AREAS (Files/ when none is said). `path` is what follows the
+// area. Quoted as a string where a statement uses it, since DuckDB reads a file only from one.
+function fileSqlName(lh, path = "", area = "Files") {
   if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area: only a lakehouse does`);
+  if (!isArea(area)) throw new Error(`${area}/ is not one of a lakehouse's folders`);
   const rest = strip(path);
-  return `${[lh.workspace, displayName(lh.item)].map(sqlPart).join(".")}/Files${rest ? `/${rest}` : ""}`;
+  return `${[lh.workspace, displayName(lh.item)].map(sqlPart).join(".")}/${area}${rest ? `/${rest}` : ""}`;
 }
-// The abfss:// URLs of a lakehouse's Files/ in what DuckDB ran, under those names. One by GUIDs names
+// The abfss:// URLs of a lakehouse's areas in what DuckDB ran, under those names. One by GUIDs names
 // no item, and stays as it is.
-const FILE_URL = /abfss:\/\/([^@'"/]+)@onelake\.dfs\.fabric\.microsoft\.com\/([^/'"]+)\.Lakehouse\/Files(?=[/'"\s]|$)/gi;
-const fileNamesIn = text => String(text).replace(FILE_URL, (_, ws, item) =>
-  `${[ws, item].map(sqlPart).join(".")}/Files`);
+const FILE_URL = new RegExp(String.raw`abfss:\/\/([^@'"/]+)@onelake\.dfs\.fabric\.microsoft\.com\/([^/'"]+)\.Lakehouse\/(${AREA_ALT})(?=[/'"\s]|$)`, "gi");
+const fileNamesIn = text => String(text).replace(FILE_URL, (_, ws, item, area) =>
+  `${[ws, item].map(sqlPart).join(".")}/${AREA_NAMES.find(a => a.toLowerCase() === area.toLowerCase())}`);
 
 function icebergTypeName(t) {
   if (t == null) return "";
@@ -330,7 +355,7 @@ function fmtBytes(n) {
 
 module.exports = {
   strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl, ONELAKE_FILE_URL,
-  itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel,
+  itemKind, holdsTables, isMirrored, hasFilesArea, AREAS, AREA_NAMES, isArea, areaOf, areaWriteError, kindLabel,
   SQL_KINDS, SUFFIXED_KINDS, ENGINE_DB, sqlKind, displayName, MODEL_KIND, itemPart, splitItem, isGuid, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf,
   fileSqlName, fileNamesIn, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,

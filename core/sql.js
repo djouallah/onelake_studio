@@ -14,7 +14,7 @@ const sqlStr = s => `'${String(s).replace(/'/g, "''")}'`;
 // A double-quoted identifier, for names that came from data rather than from this code.
 const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 
-const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart, itemPart, ENGINE_DB } = require('./names');
+const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart, itemPart, ENGINE_DB, AREA_NAMES, areaWriteError } = require('./names');
 // The engine's own catalogs, other than its database: a name starting with one is DuckDB's, never a workspace's.
 const OWN_CATALOGS = new Set(['temp', 'system', 'lake', 'system_internal', 'studio_logs']);
 // A write's own catalog (engine-host.js runWrite): ice_ or delta_ and 16 hex digits, attached for one statement.
@@ -388,6 +388,8 @@ const notRun = refuse;
 const TABLE_SHAPE = 'a write goes to a lakehouse table: <workspace>.<lakehouse>.<schema>.<table>';
 const SCHEMA_SHAPE = 'a schema is made in a lakehouse: <workspace>.<lakehouse>.<schema>';
 const FILE_SHAPE = "COPY writes to a lakehouse's Files/: TO '<workspace>.<lakehouse>/Files/<path>'";
+// The start of a path that is meant as one of a lakehouse's areas (names.js AREAS), or its Tables/.
+const AREA_OR_TABLES = new RegExp(`^[^/]*/(?:${[...AREA_NAMES, 'Tables'].join('|')})(?:/|$)`, 'i');
 
 /**
  * What one statement writes, and where, by its text: { what, plan, target: 'table' | 'schema' | 'file', ref, start,
@@ -503,6 +505,8 @@ function writeOf(sql) {
   try { file = fileName(to.v); }
   catch (e) { notRun(e.message); }
   if (!file || file.zip) notRun(FILE_SHAPE);
+  const refused = areaWriteError(file.area);
+  if (refused) notRun(`${refused.message}. ${FILE_SHAPE}`);
   return as('copy', { target: 'file', ref: file, start: to.start, end: to.end });
 }
 
@@ -907,14 +911,14 @@ function fileName(value, kinds = SQL_KINDS) {
     if (text[i] !== '.') break;
     i++;
   }
-  // Meant as a OneLake file: a name with a dot in it, then /Files or /Tables, however wrong the name is;
-  // or two parts, ws.lh, then any path. Any other string is DuckDB's to read.
+  // Meant as a OneLake file: a name with a dot in it, then /Files, /Context, /SystemContext or /Tables,
+  // however wrong the name is; or two parts, ws.lh, then any path. Any other string is DuckDB's to read.
   const rest = text.slice(i);
-  const meant = (parts.length && /^[^/]*\/(?:Files|Tables)(?:\/|$)/i.test(rest) && (parts.length >= 2 || `${text.slice(0, i)}${rest.split('/')[0]}`.includes('.')))
+  const meant = (parts.length && AREA_OR_TABLES.test(rest) && (parts.length >= 2 || `${text.slice(0, i)}${rest.split('/')[0]}`.includes('.')))
     || (parts.length === 2 && text[i] === '/' && !isOwnCatalog(parts[0]));
   if (!meant) return null;
   const wrong = why => new Error(`'${value}': ${why}`);
-  const shape = "a file's name is <workspace>.<lakehouse>/Files/<path>, with a part that isn't a plain name in double quotes";
+  const shape = "a file's name is <workspace>.<lakehouse>/Files/<path> (or /Context/, /SystemContext/), with a part that isn't a plain name in double quotes";
   const oldKind = parts.length === 3 && text[i] === '/' && kinds.find(k => k.toLowerCase() === parts[0].toLowerCase());
   if (oldKind && oldKind !== 'lakehouse') throw wrong('only a lakehouse has Files/');
   if (oldKind) throw wrong(`this is the old way to name a file: it is '${[parts[1], parts[2]].map(sqlPart).join('.')}${rest}' now`);
@@ -922,9 +926,10 @@ function fileName(value, kinds = SQL_KINDS) {
   if (splitItem(parts[1])) throw wrong('only a lakehouse has Files/');
   const path = rest;
   if (/^\/Tables(\/|$)/.test(path)) throw wrong(`a table's name is ${text.slice(0, i)}.<schema>.<table>`);
-  if (!/^\/Files(\/|$)/.test(path)) throw wrong(shape);
+  const area = AREA_NAMES.find(a => path === `/${a}` || path.startsWith(`/${a}/`));
+  if (!area) throw wrong(shape);
   if (path.split('/').some(s => s === '.' || s === '..')) throw wrong("a file's path can't hold . or ..");
-  return { zip, workspace: parts[0], item: parts[1], path, written: `${text.slice(0, i)}/Files` };
+  return { zip, workspace: parts[0], item: parts[1], area, path, written: `${text.slice(0, i)}/${area}` };
 }
 
 /**

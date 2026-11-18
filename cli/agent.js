@@ -12,7 +12,7 @@
 //   ls [<ws> [<item>]]               workspaces / items + semantic models / tables
 //   models [<ws>]                    semantic models in every workspace (or one), counted
 //   items [<ws>]                     lakehouses and warehouses in every workspace (or one), counted
-//   files <ws> <item> [<dir>]        a lakehouse's Files/ listing
+//   files <ws> <item> [<dir>]        a lakehouse's Files/ listing; Context/… or SystemContext/… for those
 //   find <text>                      every cached name that contains it: items, tables, columns,
 //                                    semantic models, and a downloaded model's tables and measures;
 //                                    --fresh reads every listing first
@@ -37,7 +37,7 @@
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, fileSqlName } = require('../core/names');
+const { fmtBytes, hasFilesArea, AREA_NAMES, isStaging, kindLabel, sqlNameOf, fileSqlName } = require('../core/names');
 const { mapPool, offlineError } = require('../core/onelake/http');
 const { walkCached } = require('../core/onelake/onelake');
 const { readJob } = require('../core/onelake/syncworker');
@@ -155,7 +155,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     models: ws => [`${ws}'s semantic models`, `expand "Semantic models" under ${ws}`],
     tables: lh => [`${lh.workspace}/${lh.item}'s tables`, `expand ${lh.item}`],
     table: (lh, t) => [`${lh.workspace}/${lh.item} ${t.schema}.${t.table}'s metadata`, 'open the table'],
-    files: (lh, dir) => [`${lh.workspace}/${lh.item} Files/${dir}`, `expand Files/${dir} under ${lh.item}`],
+    files: (lh, dir) => [`${lh.workspace}/${lh.item} ${lh.area || 'Files'}/${dir}`, `expand ${lh.area || 'Files'}/${dir} under ${lh.item}`],
   };
   const size = v => (v > 0 ? fmtBytes(v) : '—');
   const when = ms => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : '—');
@@ -193,7 +193,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     items: workspace => ({ kind: 'items', workspace }),
     models: workspace => ({ kind: 'models', workspace }),
     tables: lh => ({ kind: 'tables', workspace: lh.workspace, item: lh.item }),
-    files: (lh, dir) => ({ kind: 'files', workspace: lh.workspace, item: lh.item, dir }),
+    files: (lh, dir) => ({ kind: 'files', workspace: lh.workspace, item: lh.item, ...(lh.area ? { area: lh.area } : {}), dir }),
   };
   async function look(kind, args, { fresh, seen, signal }) {
     if (fresh) return readNow(JOBS[kind](...args), { signal });
@@ -415,19 +415,24 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         (known < tables.length ? ' — open the rest in the tree for their sizes' : ''));
     },
 
-    // A lakehouse's Files/ — the listing the tree read when that folder was expanded.
+    // A lakehouse's Files/ — the listing the tree read when that folder was expanded. A `dir` that starts
+    // with Context/ or SystemContext/ is in that area instead: a semantic view's YAML, Fabric's TMDL of it.
     async files([ws, item, dir = ''], opts, io) {
-      const lh = await itemOf(ws, item, await look('items', [ws], opts));
-      if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
-      const d = String(dir).replace(/^\/?Files\/?/i, '').replace(/\/+$/, '');
+      const found = await itemOf(ws, item, await look('items', [ws], opts));
+      if (!hasFilesArea(found.item)) throw new Error(`${found.item} has no Files area — only a lakehouse does`);
+      const raw = String(dir).replace(/^\/+|\/+$/g, '');
+      const area = AREA_NAMES.find(a => raw.toLowerCase() === a.toLowerCase() || raw.toLowerCase().startsWith(`${a.toLowerCase()}/`)) || 'Files';
+      const d = raw.toLowerCase() === area.toLowerCase() ? '' : raw.toLowerCase().startsWith(`${area.toLowerCase()}/`) ? raw.slice(area.length + 1) : raw;
+      const lh = area === 'Files' ? found : { ...found, area };
       const entries = await look('files', [lh, d], opts);
+      const where = `${area}/${d}`;
       io.table([col('name'), col('sql_name', 'text', 'in sql'), col('type', 'text', ''), col('bytes', 'integer', 'size', v => (v == null ? '' : size(v)))],
-               entries.map(e => [e.name, sqlStr(fileSqlName(lh, d ? `${d}/${e.name}` : e.name)), e.isDir ? 'folder' : 'file',
+               entries.map(e => [e.name, sqlStr(fileSqlName(lh, d ? `${d}/${e.name}` : e.name, area)), e.isDir ? 'folder' : 'file',
                                  e.isDir || e.bytes == null ? null : Number(e.bytes)]),
-               { sort: 2, empty: `Files/${d} is empty.` });
+               { sort: 2, empty: `${where} is empty.` });
       const n = entries.filter(e => !e.isDir);
       io.out(`\n${n.length} file(s), ${entries.length - n.length} folder(s), ${size(n.reduce((a, e) => a + (e.bytes || 0), 0))}` +
-             ` in Files/${d}`);
+             ` in ${where}`);
     },
 
     // Every name the cache knows that contains `text`. Without --fresh nothing is fetched, so

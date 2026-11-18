@@ -25,6 +25,8 @@ catalog.
 | A table by GUIDs | `"<workspace id>"."<item id>".<schema>.<table>` | `"0f3c1a2b-…"."9a1b2c3d-…".dbo.dim_duid` |
 | A semantic model | `<workspace>.<model>_semanticmodel` | `aemo.nem_semanticmodel` |
 | A file | `'<workspace>.<lakehouse>/Files/<path>'` | `'aemo.data/Files/x.parquet'` |
+| A semantic view's file | `'<workspace>.<lakehouse>/Context/<path>'` | `'aemo.data/Context/Semantic Views/sales/schema.yaml'` |
+| What Fabric made of it | `'<workspace>.<lakehouse>/SystemContext/<path>'` | `'aemo.data/SystemContext/Semantic Views/sales/sales.tmdl'` |
 
 `<kind>` is `warehouse`, `sqldatabase` or `mirroreddatabase`. A lakehouse needs none, and `_lakehouse` after its
 name reads too.
@@ -185,6 +187,19 @@ before DuckDB sees the statement.
 | `'lakehouse.aemo.data/Files/x.parquet'` | Refused: the old way. The error gives the name it has now. |
 | `'Files/x.parquet'` | Not a OneLake file: no workspace or lakehouse. |
 
+**A lakehouse has two more folders of files: `Context/` and `SystemContext/`.** They came with Fabric's
+[semantic views](https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-overview). `Context/` holds
+what people write there, such as a semantic view's YAML in `Context/Semantic Views/<view>/`. `SystemContext/` is
+what Fabric writes when a view is published, such as its TMDL in `SystemContext/Semantic Views/<view>/`, and it is
+read-only. A file in either is named as one in `Files/` is, with the folder's name in place of `Files`, and is read
+the same way. OneLake makes each folder when its first file lands, so a lakehouse can have neither.
+
+| Written | Means |
+| --- | --- |
+| `'aemo.data/Context/Semantic Views/sales/schema.yaml'` | A file in `Context/`. The space is not quoted: a path never is. |
+| `'aemo.data/SystemContext/Semantic Views/sales/sales.tmdl'` | A file in `SystemContext/`. |
+| `'aemo.data/context/x.yaml'` | Refused: a folder's name is exact, as OneLake's are. |
+
 ```sql
 SELECT * FROM 'aemo.data/Files/x.parquet';
 SELECT * FROM read_csv('aemo.data/Files/raw/*.csv', header = true);
@@ -230,6 +245,8 @@ workspace's tables can still be named.
 | `INSERT INTO aemo.data.dbo.monthly …` | The table `monthly` in `dbo` of lakehouse `data`, in workspace `aemo`. |
 | `CREATE SCHEMA aemo.data.raw` | The schema `raw` in that lakehouse. |
 | `COPY (…) TO 'aemo.data/Files/out/x.parquet'` | A file in that lakehouse's `Files/`. |
+| `COPY (…) TO 'aemo.data/SystemContext/x.csv'` | Refused: only Fabric writes `SystemContext/`. |
+| `COPY (…) TO 'aemo.data/Context/x.csv'` | Refused: OneLake Studio writes only to `Files/`. |
 | `INSERT INTO aemo.data_warehouse.dbo.t …` | Refused: only a lakehouse is written. |
 | `INSERT INTO aemo.data.monthly …` | Refused: a target is a table's whole name. |
 

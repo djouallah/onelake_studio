@@ -29,7 +29,7 @@ SHOW ALL TABLES;
 
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
-| **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
+| **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`, or `/Context/` or `/SystemContext/` in place of `/Files/`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
 | **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
@@ -510,6 +510,11 @@ once and counts, though the answer still comes through the host.
     there asks Replace or Skip, each file is written beside the target in 32 MB pieces and renamed into place, so a
     cancel or a failure leaves what was there, and the folder is listed again. It needs a connection, as Export does,
     and OneLake's own refusal is shown when the lakehouse is read-only to you.
+  - **A folder of `Context/` or `SystemContext/`** (`dirReadOnly`): Copy SQL Name and Refresh. A lakehouse shows
+    both after Files, closed, and drawing them asks nothing. `Context/` holds a semantic view's YAML, and
+    `SystemContext/` the TMDL Fabric makes of it, marked read-only. Their files open as Files/'s do, a `.yaml`,
+    `.bim` or `.sql` as a document. Nothing is written to either: Upload, Save and `COPY … TO` are refused
+    (`AREAS` in [`core/names.js`](../core/names.js)).
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
 

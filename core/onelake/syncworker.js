@@ -47,7 +47,8 @@ const LEASE_RENEW_MS = 30_000;       // how often a window keeping a table renew
 const KEEP_MAX_FILES = 2000;         // each file's open asks OneLake for its version
 const DAY_MS = 24 * 3600 * 1000;
 
-const lhOf = t => ({ workspace: t.workspace, item: t.item });
+// A Files/ listing has no area; another of a lakehouse's areas (Context/, SystemContext/) is named.
+const lhOf = t => (t.area ? { workspace: t.workspace, item: t.item, area: t.area } : { workspace: t.workspace, item: t.item });
 
 /**
  * One job: a listing, or a table's metadata, read from OneLake or Fabric and written to the catalog.
@@ -99,7 +100,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   const failures = [];               // the latest, for `status`
   let lakeRows = [], lakeSyncing = null, lastSynced = null;
 
-  const idOf = t => [t.kind, t.workspace, t.item, t.dir, t.schema, t.table].join('\u0000');
+  const idOf = t => [t.kind, t.workspace, t.item, t.area, t.dir, t.schema, t.table].join('\u0000');
   const kept = t => (t.kind === 'workspaces' ? onelake.cached.workspaces()
     : t.kind === 'items' ? onelake.cached.items(t.workspace)
     : t.kind === 'tables' ? onelake.cached.tables(lhOf(t))
@@ -127,7 +128,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   // metadata can fail with no status for reasons of its own, which say nothing about OneLake.
   function failed(t, e) {
     retryAt.set(idOf(t), now() + RETRY_MS);
-    const where = `${t.kind} ${[t.workspace, t.item, t.dir, t.schema, t.table].filter(Boolean).join('/')}`.trim();
+    const where = `${t.kind} ${[t.workspace, t.item, t.area, t.dir, t.schema, t.table].filter(Boolean).join('/')}`.trim();
     const error = String((e && e.message) || e);
     log(`sync: ${where} failed — ${error}`);
     failures.push({ at: now(), where, error });

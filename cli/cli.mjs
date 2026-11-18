@@ -27,7 +27,9 @@ const USAGE = {
   models: `  models [<ws>]                       semantic models in every workspace (or one), counted
     --downloaded                      only those on this machine: readable with no download`,
   items: "  items [<ws>]                        lakehouses and warehouses in every workspace (or one)",
-  files: "  files <ws> <item> [<dir>]           a lakehouse's Files/ listing, with sizes and SQL names",
+  files: `  files <ws> <item> [<dir>]           a lakehouse's Files/ listing, with sizes and SQL names;
+                                        a <dir> of Context/… or SystemContext/… lists those
+                                        (semantic views, read-only)`,
   find: `  find <text>                         every cached name containing it: items, tables, columns,
                                         semantic models, a downloaded model's tables/measures;
                                         --fresh reads every listing first`,

@@ -8,7 +8,7 @@
 // hold tables, what a kind is called) is names.js; caching the answers is onelake.js.
 // =============================================================================
 
-const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl, fmtBytes } = require('../names');
+const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl, fmtBytes, isArea } = require('../names');
 const { authedFetch: send, discard, limiter, mapPool, oneLakeMessage, okJson } = require('./http');
 
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
@@ -360,11 +360,14 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       'Conversion runs after a commit to the table, so writing to it once usually starts it.';
   }
 
-  // One level of Files/. `dir` is relative to Files/. Unlike the panel's version this
+  // One level of one of a lakehouse's areas (names.js AREAS): Files/ unless `area` says another.
+  // `dir` is relative to the area. One with nothing in it yet is not there at all (OneLake makes it
+  // with its first file), and that 404 is an empty listing. Unlike the panel's version this
   // carries no `queryable` flag: whether a file can be opened depends on which DuckDB
   // extensions loaded, which is the webview's business and not knowable from here.
-  async function listFiles({ workspace, item }, dir = '') {
-    const entries = await listPaths(workspace, `${item}/Files${dir ? '/' + strip(dir) : ''}`);
+  async function listFiles({ workspace, item, area = 'Files' }, dir = '') {
+    if (!isArea(area)) throw new Error(`${area}/ is not one of a lakehouse's folders`);
+    const entries = await listPaths(workspace, `${item}/${area}${dir ? '/' + strip(dir) : ''}`);
     return entries.map(e => ({
       name: basename(e.name),
       path: e.name,           // workspace-relative, the form the panel expects

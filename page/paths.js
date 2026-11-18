@@ -146,12 +146,21 @@ export const sqlPart = v => {
   const s = String(v);
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !RESERVED.has(s.toLowerCase()) ? s : quoteIdent(s);
 };
+// A lakehouse's folders of files (core/names.js AREAS): Files/, and Context/ and SystemContext/.
+export const AREA_NAMES = ["Files", "Context", "SystemContext"];
+const AREA_PATH = new RegExp(String.raw`^([^/]+)\.Lakehouse\/(${AREA_NAMES.join("|")})(?:\/(.*))?$`, "i");
 // A file's SQL name (core/names.js fileSqlName; a test holds them equal), from its workspace and its
 // path from the item, "data.Lakehouse/Files/x.parquet". null for a path no lakehouse holds.
 export const fileSqlName = (ws, path) => {
-  const m = /^([^/]+)\.Lakehouse\/Files(?:\/(.*))?$/i.exec(strip(path));
+  const m = AREA_PATH.exec(strip(path));
   if (!m) return null;
-  return `${[ws, m[1]].map(sqlPart).join(".")}/Files${m[2] ? `/${m[2]}` : ""}`;
+  const area = AREA_NAMES.find(a => a.toLowerCase() === m[2].toLowerCase());
+  return `${[ws, m[1]].map(sqlPart).join(".")}/${area}${m[3] ? `/${m[3]}` : ""}`;
+};
+// A file's path from its lakehouse's area: "data.Lakehouse/Context/a/b.yaml" -> "a/b.yaml".
+export const pathInArea = path => {
+  const m = AREA_PATH.exec(strip(path));
+  return m ? m[3] || "" : strip(path);
 };
 
 // CSV: a cell is quoted when it holds a quote, a comma or a line break of either kind.

@@ -19,7 +19,7 @@
 // host (its cache-first store, its signed reads); DuckDB, also in the host, reads tables
 // and Files/ objects by their abfss:// names with the host's own credential.
 import {
-  basename, abfssUrl, fileSqlName, fileSource,
+  basename, abfssUrl, fileSqlName, pathInArea, fileSource,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   dbCatalogSql, dbCountSql, dbCatalog,
   sqlStr, quoteIdent,
@@ -262,7 +262,7 @@ export function createEngine({
     // host's credential. Nothing to register, nothing to drop.
     const url = abfssUrl(lh.workspace, file.path);
 
-    const name = uniqueView(key, file.path.replace(/^.*?\/Files\//, ""));
+    const name = uniqueView(key, pathInArea(file.path));
     const ident = quoteIdent(name);
     try {
       await fileView(name, `SELECT * FROM ${reader(sqlStr(url))}`);

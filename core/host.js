@@ -22,7 +22,7 @@
 
 const { relative, resolve, isAbsolute } = require('node:path');
 // A target from the page, reduced to the strings it may carry.
-const { sqlNameOf, strip, ONELAKE_FILE_URL } = require('./names');
+const { sqlNameOf, strip, ONELAKE_FILE_URL, areaOf, areaWriteError } = require('./names');
 const { deltaTableOf } = require('./sqltables');
 const { tableFacts, findings, lakehouseHealth } = require('./lake/health');
 
@@ -286,6 +286,9 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         return saveFileText({ disk, text });
       }
       const path = strip((x && x.path) ?? '');
+      const at = areaOf(path);
+      const refused = at && areaWriteError(at.area);
+      if (refused) throw new Error(`${path}: ${refused.message}`);
       if (!x || !x.workspace || !SAVABLE.test(path) || !/^[^/]+\/Files\/./.test(path) || path.split('/').some(s => s === '.' || s === '..')) {
         throw new Error(`${path || 'that file'}: only a .sql, .bim or .yaml file in a lakehouse's Files/ is saved to OneLake`);
       }

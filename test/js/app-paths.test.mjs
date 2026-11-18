@@ -12,10 +12,14 @@ test("a never-written table gets an empty view typed from its Iceberg schema", a
 });
 
 test("a SQL box says a file by its name, with its reader only where DuckDB needs one", async () => {
-  const { fileSqlName, fileSource } = await import("../../page/paths.js");
+  const { fileSqlName, fileSource, pathInArea } = await import("../../page/paths.js");
+  assert.equal(pathInArea("lh.Lakehouse/Context/Semantic Views/a.yaml"), "Semantic Views/a.yaml");
   assert.equal(fileSqlName("aemo", "data.Lakehouse/Files/a/x.parquet"), "aemo.data/Files/a/x.parquet");
   assert.equal(fileSqlName("ANZ Retail", "select.Lakehouse/Files/a b.csv"), '"ANZ Retail"."select"/Files/a b.csv');
   assert.equal(fileSqlName("ws", "dw.Warehouse/Tables/x"), null);
+  assert.equal(fileSqlName("ws", "lh.Lakehouse/Context/Semantic Views/s/a.yaml"), "ws.lh/Context/Semantic Views/s/a.yaml");
+  assert.equal(fileSqlName("ws", "lh.Lakehouse/SystemContext/Semantic Views/s/s.tmdl"), "ws.lh/SystemContext/Semantic Views/s/s.tmdl");
+  assert.equal(fileSqlName("ws", "lh.Lakehouse/Contexts/x"), null);
   const name = "aemo.data/Files/x";
   for (const ext of ["parquet", "csv", "tsv", "json", "jsonl", "csv.gz"]) assert.equal(fileSource(ext, name), `'${name}'`, ext);
   assert.equal(fileSource("pq", name), `read_parquet(['${name}'])`);

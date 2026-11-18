@@ -21,7 +21,7 @@ node --no-warnings "{{cli}}" <command>
 | `ls <ws>` | its lakehouses/warehouses, and its semantic models (marked *downloaded* if local) |
 | `models [<ws>]` | every semantic model in every workspace (or one), with description, *downloaded* and *staging*, and how many — for "how many models", "which workspace has X". `--downloaded`: only those on this machine, readable with no download |
 | `find <text>` | every cached name containing it — items, tables, columns, semantic models, and a downloaded model's tables, columns and measures — for "which table has customer_id", "where is the Sales model". `--fresh` reads every listing first, which is slow on a large tenant; what it read stays cached if `--timeout` stops it |
-| `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes and SQL names |
+| `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes and SQL names; a `<dir>` of `Context/…` or `SystemContext/…` lists those (semantic views' YAML, and the TMDL Fabric makes of it; read-only) |
 | `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind, with *staging* |
 | `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`<ws>.<lakehouse>.<schema>.<table>`, another item's `<ws>.<item>_<kind>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |

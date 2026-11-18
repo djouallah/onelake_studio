@@ -234,7 +234,7 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
   const refs = sql => fileRefs(sql);
   const F = "'aemo.data/Files/x.parquet'";
   assert.deepEqual(refs(`SELECT * FROM ${F}`),
-    [{ zip: "", workspace: "aemo", item: "data", path: "/Files/x.parquet", written: "aemo.data/Files", start: 14, end: 14 + F.length, quote: "'" }]);
+    [{ zip: "", workspace: "aemo", item: "data", area: "Files", path: "/Files/x.parquet", written: "aemo.data/Files", start: 14, end: 14 + F.length, quote: "'" }]);
   // Every place DuckDB reads one, each as DuckDB's own CLI was seen to read it.
   for (const sql of [`FROM ${F}`, `from (${F})`, `SELECT 1 FROM ${F} a, ${F} b`, `SELECT 1 FROM t JOIN ${F} ON true`, `DESCRIBE ${F}`, `SUMMARIZE ${F}`,
     `PIVOT ${F} ON a`, `DESCRIBE FROM ${F}`, `EXPLAIN SELECT * FROM ${F}`, `SELECT 1 FROM read_parquet(${F}, filename = true)`,
@@ -280,6 +280,23 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
     ["a.b/Files/../Tables/dbo/t", /can't hold/], ["a.b/Files/./x", /can't hold/]]) {
     assert.throws(() => refs(`SELECT * FROM glob('${v}')`), why, v);
   }
+});
+
+// A lakehouse's Context/ (a semantic view's YAML) and SystemContext/ (Fabric's TMDL of it) are read as Files/ is.
+test("a file in Context/ or SystemContext/ is named as one in Files/ is, and is never written", () => {
+  const { fileRefs, writeOf } = require("../../core/sql.js");
+  const [ctx] = fileRefs("SELECT * FROM read_text('aemo.data/Context/Semantic Views/sales/*.yaml')");
+  assert.deepEqual([ctx.area, ctx.path, ctx.written], ["Context", "/Context/Semantic Views/sales/*.yaml", "aemo.data/Context"]);
+  const [sys] = fileRefs(`SELECT * FROM read_text('"ANZ Retail".data/SystemContext/Semantic Views/sales/sales.tmdl')`);
+  assert.deepEqual([sys.workspace, sys.area, sys.written], ["ANZ Retail", "SystemContext", '"ANZ Retail".data/SystemContext']);
+  assert.equal(fileRefs("SELECT * FROM glob('a.b/Context')")[0].path, "/Context");
+  // OneLake's names are exact: a different case, or a name that only starts like one, is no area.
+  for (const v of ["a.b/context/x", "a.b/Contexts/x", "a.b/SystemContexts/x"]) {
+    assert.throws(() => fileRefs(`SELECT * FROM glob('${v}')`), /a file's name is/, v);
+  }
+  assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/SystemContext/x.csv'"), /SystemContext\/ is read-only: Fabric writes it/);
+  assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/Context/x.csv'"), /Context\/ is read-only in OneLake Studio/);
+  assert.equal(writeOf("COPY (SELECT 1) TO 'a.b/Files/x.csv'").ref.area, "Files");
 });
 
 test("DuckDB's error says a file as it was written, with its caret still on what it points at", () => {

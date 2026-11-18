@@ -142,6 +142,27 @@ test("what DuckDB ran says a file by its name: a lakehouse's Files/ only, and ne
     assert.equal(n.fileNamesIn(same), same);
 });
 
+// Context/ (a semantic view's YAML) and SystemContext/ (Fabric's TMDL of it) are a lakehouse's too.
+test("a lakehouse's Context/ and SystemContext/ are named as Files/ is, and only Files/ is written", () => {
+  const lh = { workspace: "ANZ Retail", item: "data.Lakehouse" };
+  assert.equal(n.fileSqlName(lh, "Semantic Views/sales/a.yaml", "Context"), '"ANZ Retail".data/Context/Semantic Views/sales/a.yaml');
+  assert.equal(n.fileSqlName(lh, "", "SystemContext"), '"ANZ Retail".data/SystemContext');
+  assert.throws(() => n.fileSqlName(lh, "x", "context"), /not one of a lakehouse's folders/);
+  assert.deepEqual(n.areaOf("data.Lakehouse/Context/Semantic Views/sales/a.yaml"),
+    { item: "data.Lakehouse", area: "Context", rest: "Semantic Views/sales/a.yaml" });
+  assert.deepEqual(n.areaOf("/data.Lakehouse/SystemContext/"), { item: "data.Lakehouse", area: "SystemContext", rest: "" });
+  for (const p of ["data.Lakehouse/Tables/dbo/t", "data.Lakehouse/Contexts/x", "data.Lakehouse/context/x", "data.Lakehouse"]) assert.equal(n.areaOf(p), null, p);
+  assert.equal(n.areaWriteError("Files"), null);
+  assert.match(n.areaWriteError("SystemContext").message, /read-only: Fabric writes it/);
+  assert.match(n.areaWriteError("Context").message, /read-only in OneLake Studio/);
+  const host = "onelake.dfs.fabric.microsoft.com";
+  assert.equal(n.fileNamesIn(`FROM 'abfss://ws@${host}/lh.Lakehouse/SystemContext/Semantic Views/s/s.tmdl'`),
+    "FROM 'ws.lh/SystemContext/Semantic Views/s/s.tmdl'");
+  assert.equal(n.fileNamesIn(`FROM 'abfss://ws@${host}/lh.Lakehouse/Context'`), "FROM 'ws.lh/Context'");
+  const same = `abfss://ws@${host}/lh.Lakehouse/Contexts/x`;
+  assert.equal(n.fileNamesIn(same), same);
+});
+
 test("the host and the panel quote a name the same way (core/names.js and page/paths.js sqlPart)", async () => {
   const p = await import("../../page/paths.js");
   assert.deepEqual([...n.RESERVED].sort(), [...p.RESERVED].sort());
@@ -149,6 +170,10 @@ test("the host and the panel quote a name the same way (core/names.js and page/p
     assert.equal(p.sqlPart(s), n.sqlPart(s), String(s));
   for (const [ws, item, rest] of [["aemo", "data", "a/x.parquet"], ["ANZ Retail", "gold_1", "a b.csv"], ["ws", "select", "x"], ["ws", "lh", ""]])
     assert.equal(p.fileSqlName(ws, `${item}.Lakehouse/Files${rest ? `/${rest}` : ""}`), n.fileSqlName({ workspace: ws, item: `${item}.Lakehouse` }, rest));
+  for (const area of n.AREA_NAMES) {
+    assert.equal(p.fileSqlName("ANZ Retail", `gold_1.Lakehouse/${area}/a b/x.yaml`), n.fileSqlName({ workspace: "ANZ Retail", item: "gold_1.Lakehouse" }, "a b/x.yaml", area), area);
+  }
+  assert.deepEqual(p.AREA_NAMES, n.AREA_NAMES);
   // The model views are named alike on both sides, quoted where the name with its kind must be.
   const semantic = await import("../../page/semantic.js");
   for (const [ws, model] of [["ws", "order"], ["ANZ Retail", "Sales Model"], ["select", "x"]])

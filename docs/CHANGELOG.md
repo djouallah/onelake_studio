@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **A lakehouse's `Context/` and `SystemContext/` folders are in the tree.** Fabric made them for semantic views:
+  `Context/` holds a view's YAML, and `SystemContext/` the TMDL Fabric writes when the view is published. Their files
+  open, and SQL reads them by name, `'aemo.data/Context/Semantic Views/sales/schema.yaml'`. Both are read-only here.
+  The command line's `files <ws> <item> Context/…` lists them.
+
 ## 0.2.26
 
 - **Fixed: deleting or moving an exported `.fabricator` lost the model's Report.** The Report was kept only in that

@@ -38,7 +38,7 @@ const { modelFileName, modelAccountDir } = require('../core/models/fabric');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { firstClicks } = require('../core/doubleclick');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlName, sqlNameOf, fileSqlName, sqlPart, modelSqlName, DFS_ORIGIN } = require('../core/names');
+const { fmtBytes, sqlName, sqlNameOf, fileSqlName, areaOf, areaWriteError, sqlPart, modelSqlName, DFS_ORIGIN } = require('../core/names');
 const { NAME, placeOf, tabTitle } = require('../core/title');
 const bundleLoaded = upMs();
 
@@ -805,8 +805,12 @@ async function activateInner(context) {
   }
 
   // A file or folder of the tree as SQL writes it, in the string DuckDB reads a file from. A file's
-  // `path` runs from its item, and a folder's `dir` from Files/.
-  const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
+  // `path` runs from its item, and a folder's `dir` from its area (Files/ when it names none).
+  const fileNameOf = n => {
+    if (n.kind === 'dir') return sqlStr(fileSqlName(n, n.dir, n.area || 'Files'));
+    const at = areaOf(String(n.path)) || { area: 'Files', rest: '' };
+    return sqlStr(fileSqlName(n, at.rest, at.area));
+  };
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
 
   // A .fabricator or .fabricapp, or a model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code, opens
@@ -1153,6 +1157,8 @@ async function activateInner(context) {
     }),
     vscode.commands.registerCommand('onelakeStudio.uploadFiles', async n => {
       if (!n || n.kind !== 'dir') return;
+      const refused = areaWriteError(n.area || 'Files');
+      if (refused) { vscode.window.showInformationMessage(`Upload: ${refused.message}.`); return; }
       const where = `${basename(String(n.item)).replace(/\.[^.]+$/, '')}/Files${n.dir ? `/${n.dir}` : ''}`;
       if (connectivity.offline()) { vscode.window.showInformationMessage('Upload needs a connection.'); return; }
       const picked = await vscode.window.showOpenDialog({

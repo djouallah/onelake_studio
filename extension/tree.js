@@ -18,7 +18,9 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { fmtBytes, hasFilesArea, isMirrored, kindLabel, strip, sqlNameOf } = require('../core/names');
+const { fmtBytes, hasFilesArea, AREA_NAMES, areaOf, isMirrored, kindLabel, sqlNameOf } = require('../core/names');
+// A folder node's area, when it is not Files/: { area }, or nothing.
+const areaOfNode = n => (n.area && n.area !== 'Files' ? { area: n.area } : {});
 const { mapPool } = require('../core/onelake/http');
 
 // What the explorer's filter offers: an item type as kindLabel says it, or a Fabric listing.
@@ -164,7 +166,7 @@ class LakehouseTree {
     if (this.filter() && ['items', 'models', 'apps'].includes(c.kind)) return this._emitter.fire(undefined);
     const id = c.kind === 'items' ? `workspace|${c.workspace}`
              : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
-             : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.dir || ''}`
+             : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.area || 'Files'}|${c.dir || ''}`
              : c.kind === 'models' ? `models|${c.workspace}`
              : c.kind === 'apps' ? `apps|${c.workspace}`
              : null;
@@ -196,7 +198,7 @@ class LakehouseTree {
   _idOf(n) {
     return n.kind === 'workspace' ? `workspace|${n.workspace}`
          : n.kind === 'tables' ? `tables|${n.workspace}|${n.item}`
-         : n.kind === 'dir' ? `dir|${n.workspace}|${n.item}|${n.dir || ''}`
+         : n.kind === 'dir' ? `dir|${n.workspace}|${n.item}|${n.area || 'Files'}|${n.dir || ''}`
          : n.kind === 'models' ? `models|${n.workspace}`
          : n.kind === 'semanticModel' ? `model|${n.workspace}|${n.modelId}`
          : n.kind === 'apps' ? `apps|${n.workspace}`
@@ -245,7 +247,9 @@ class LakehouseTree {
     item.contextValue = n.kind === 'workspace' && n.pinned ? 'workspacePinned'
       : n.kind === 'fabricApp' && n.url ? 'fabricAppUrl'
       // A .bim or .yaml in Files/: a file, that Create Semantic Model takes too.
-      : n.kind === 'file' && /\.(bim|ya?ml)$/i.test(String(n.path)) ? 'modelFile'
+      : n.kind === 'file' && !n.area && /\.(bim|ya?ml)$/i.test(String(n.path)) ? 'modelFile'
+      // A folder of Context/ or SystemContext/: nothing is uploaded to it from here.
+      : n.kind === 'dir' && n.area ? 'dirReadOnly'
       : n.kind;
     // A stable identity, so expansion state survives a refresh keyed on WHAT the node is
     // rather than on its label — labels repeat freely across workspaces. Only the domain
@@ -254,6 +258,8 @@ class LakehouseTree {
     if (n.kind !== 'error' && n.kind !== 'empty') {
       item.id = [n.kind, n.group, n.workspace, n.item, n.schema, n.table, n.dir, n.path]
         .map(v => (v == null ? '' : String(v))).join('|') + (n.modelId ? `|${n.modelId}` : '')
+        // Context/ and SystemContext/ beside Files/: the same folder path, a different node.
+        + (n.area ? `|${n.area}` : '')
         + (n.appId ? `|${n.appId}` : '')
         // A filter opens its groups and workspaces without touching what was open before it.
         + (n.filter ? `|${n.filter}` : '');
@@ -326,6 +332,8 @@ class LakehouseTree {
         break;
       case 'dir':
         item.iconPath = new vscode.ThemeIcon('folder');
+        // Fabric writes SystemContext/ (a semantic view's TMDL, when it is published), and only Fabric.
+        if (n.area === 'SystemContext' && !n.dir) item.description = 'read-only';
         break;
       // A workspace's Power BI semantic models — from the Fabric API, not OneLake.
       case 'models':
@@ -427,7 +435,7 @@ class LakehouseTree {
       if (!n.opened) continue;
       if (n.kind === 'workspace') out.push({ kind: 'items', workspace: n.workspace });
       else if (n.kind === 'tables') out.push({ kind: 'tables', workspace: n.workspace, item: n.item });
-      else if (n.kind === 'dir') out.push({ kind: 'files', workspace: n.workspace, item: n.item, dir: n.dir || '' });
+      else if (n.kind === 'dir') out.push({ kind: 'files', workspace: n.workspace, item: n.item, ...areaOfNode(n), dir: n.dir || '' });
       else if (n.kind === 'models' || n.kind === 'apps') out.push({ kind: n.kind, workspace: n.workspace });
     }
     return out;
@@ -555,15 +563,19 @@ class LakehouseTree {
         : [node('empty', 'No semantic models', { leaf: true })];
     }
 
-    // An item's two halves, named the way OneLake names them. Tables comes first and opens
+    // An item's parts, named the way OneLake names them. Tables comes first and opens
     // expanded, so the grouping costs no extra click on the way to the thing people
-    // actually came for; Files stays shut, because listing it is a request.
+    // actually came for; the rest stay shut, because listing one is a request.
     if (n.kind === 'item') {
       const lh = { workspace: n.workspace, item: n.item };
       const kids = [this._track(node('tables', 'Tables', { ...lh, expanded: true }))];
-      // Only a lakehouse has a Files/ area, and the item's suffix already says which — no
-      // request is needed to find that out.
-      if (hasFilesArea(n.item)) kids.push(this._track(node('dir', 'Files', { ...lh, dir: '' })));
+      // Only a lakehouse has Files/, Context/ and SystemContext/, and the item's suffix already says
+      // which — no request is needed to find that out. A Files/ node has no `area`, as it always had none.
+      if (hasFilesArea(n.item)) {
+        for (const area of AREA_NAMES) {
+          kids.push(this._track(node('dir', area, { ...lh, ...(area === 'Files' ? {} : { area }), dir: '' })));
+        }
+      }
       return kids;
     }
 
@@ -594,16 +606,17 @@ class LakehouseTree {
     }
 
     if (n.kind === 'dir') {
-      const lh = { workspace: n.workspace, item: n.item };
+      const lh = { workspace: n.workspace, item: n.item, ...areaOfNode(n) };
+      const area = n.area || 'Files';
       const entries = await this.onelake.files(lh, n.dir,
-        { fresh: this._isFresh(`files|${n.workspace}|${n.item}|${n.dir || ''}`, n.workspace, n.item) });
+        { fresh: this._isFresh(`files|${n.workspace}|${n.item}|${area}|${n.dir || ''}`, n.workspace, n.item) });
       if (!entries.length) return [node('empty', 'Empty', { leaf: true })];
       // Each with whether it is cached, as a table is: read from the store, never from OneLake.
       const cached = await Promise.all(entries.map(e => (e.isDir ? false : this.onelake.cached.file(n.workspace, e).catch(() => false))));
       return entries.map((e, i) => this._track(e.isDir
         // `path` is workspace-relative (…/Files/a/b); the child directory is what follows
-        // Files/, which is what listFiles takes.
-        ? node('dir', e.name, { ...lh, dir: strip(e.path.replace(/^.*?\/Files\/?/, '')) })
+        // the area (Files/, Context/, …), which is what listFiles takes.
+        ? node('dir', e.name, { ...lh, dir: (areaOf(e.path) || { rest: '' }).rest })
         // bytes travels with it so the panel can open the file without re-listing the
         // directory it already knows everything about.
         : node('file', e.name, { ...lh, leaf: true, path: e.path, bytes: e.bytes, size: fmtBytes(e.bytes), version: e.version, cached: cached[i] })));
