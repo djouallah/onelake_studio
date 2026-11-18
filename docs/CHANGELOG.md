@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.27
 
 - **A lakehouse's `Context/` and `SystemContext/` folders are in the tree.** Fabric made them for semantic views:
   `Context/` holds a view's YAML, and `SystemContext/` the TMDL Fabric writes when the view is published. Their files
@@ -9,13 +9,17 @@
 - **A Fabric semantic view opens as a model.** Click any `.yaml` in `Context/Semantic Views/<view>/`. Its files are
   merged, as Fabric merges them. Its tables take the lake's columns, and its metrics go in a `Metrics` table. It is
   read-only, and the Model page shows its YAML.
-- **Publish beside a semantic view's folder and its `.yaml`.** It runs in the background, and
+- **Publish beside a semantic view's folder and its `.yaml`, and on its Model tab.** It runs in the background, and
   Fabric's errors are shown as Fabric gives them, by file and line.
 - **Export YAML on a semantic model, in place of Download File….** It writes the model as a Fabric semantic view,
   in Fabric's own format, to `<lakehouse>/Context/Semantic Views/<model>/<model>_semantic_view.yaml` in the lakehouse
   its tables are in. Fabric has no way yet to make a view from a model. A folder of that name already there asks
   **Replace** or **Keep Both**. What a view has no place for, such as calculated columns, formats and hierarchies, is
   dropped, and the message says what. A model that isn't Direct Lake on one lakehouse is refused, with why.
+- **No more Upgrade to Ossie 0.3.** A model's YAML is no longer offered another version: Fabric's semantic views are
+  Microsoft's 0.2.0.dev0.
+- **DAX is no longer marked amber** in a model's YAML. Only Power BI extensions are.
+- **Fixed: on Windows, two windows opening at the same moment could fail with `EPERM`.**
 
 ## 0.2.26
 
