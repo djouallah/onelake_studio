@@ -92,11 +92,14 @@ test("a listing of Context/ is kept apart from Files/'s, and its files are kept 
   assert.equal(reads(), 1, "the second read is the kept copy");
 });
 
-test("a folder directly in Context/Semantic Views is a view, with Publish; no other folder is", () => {
+test("a .yaml of a semantic view has Publish beside it; no other file or folder has", () => {
   const { tree } = setup({});
-  const ctx = dir => tree.getTreeItem({ kind: "dir", workspace: WS, item: ITEM, area: "Context", dir, label: "x" }).contextValue;
-  assert.equal(ctx("Semantic Views/sales"), "semanticViewDir");
-  for (const dir of ["", "Semantic Views", "Semantic Views/sales/sub", "Other/sales"]) assert.equal(ctx(dir), "dirReadOnly", dir);
-  assert.equal(tree.getTreeItem({ kind: "dir", workspace: WS, item: ITEM, area: "SystemContext", dir: "Semantic Views/sales", label: "x" }).contextValue,
-    "dirReadOnly", "SystemContext/ has no Publish");
+  const file = (area, path) => tree.getTreeItem({ kind: "file", workspace: WS, item: ITEM, area, path: `${ITEM}/${area}/${path}`, label: "x" }).contextValue;
+  assert.equal(file("Context", "Semantic Views/sales/sales_semantic_view.yaml"), "semanticViewFile");
+  assert.equal(file("Context", "Semantic Views/sales/sub/metrics.yaml"), "semanticViewFile", "a view's files are merged from its folders too");
+  for (const path of ["Semantic Views/sales/notes.yml", "Semantic Views/sales/readme.md", "Semantic Views/x.yaml", "other/sales/a.yaml"]) {
+    assert.equal(file("Context", path), "file", path);
+  }
+  assert.equal(file("SystemContext", "Semantic Views/sales/sales.yaml"), "file", "SystemContext/ has no Publish");
+  assert.equal(tree.getTreeItem({ kind: "dir", workspace: WS, item: ITEM, area: "Context", dir: "Semantic Views/sales", label: "x" }).contextValue, "dirReadOnly");
 });

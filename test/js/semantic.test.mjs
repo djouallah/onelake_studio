@@ -139,19 +139,19 @@ test("Model's YAML sets an extensions block apart, line by line, and nothing aft
   assert.deepEqual(extensionVendors("datasets: []\n"), []);
 });
 
-test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, its whole item", async () => {
-  const { prettyModelText, foreignDialects } = await import("../../page/explore/pretty.js");
+test("Model's YAML sets apart extensions only: an expression in DAX, or any dialect, is not", async () => {
+  const { prettyModelText } = await import("../../page/explore/pretty.js");
   const yaml = [
     "metrics:",                              // 0
     "  - name: ytd",                         // 1
     "    expression:",                       // 2
     "      dialects:",                       // 3
-    "        - dialect: DAX",                // 4  amber
-    "          expression: |",               // 5  amber
-    "            TOTALYTD([mw],",            // 6  amber
-    "              'date'[date])",           // 7  amber
-    "        - expression: SUM(mw)",         // 8  amber: its dialect comes after
-    "          dialect: ANSI_SQL",           // 9  amber
+    "        - dialect: DAX",                // 4
+    "          expression: |",               // 5
+    "            TOTALYTD([mw],",            // 6
+    "              'date'[date])",           // 7
+    "        - expression: SUM(mw)",         // 8
+    "          dialect: ANSI_SQL",           // 9
     "        - dialect: OSSIE_SQL_2026",     // 10
     "          expression: SUM(mw)",         // 11
     "    datatype: Double",                  // 12
@@ -163,9 +163,7 @@ test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, i
     "version: 0.3.0.dev0",                   // 18
   ].join("\n");
   const amber = prettyModelText(yaml, "yaml").split("\n").map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
-  assert.deepEqual(amber, [4, 5, 6, 7, 8, 9, 16, 17]);
-  assert.deepEqual(foreignDialects(yaml), ["DAX", "ANSI_SQL"]);
-  assert.deepEqual(foreignDialects("metrics:\n  - expression:\n      dialects:\n        - dialect: OSSIE_SQL_2026\n"), []);
+  assert.deepEqual(amber, [16, 17]);
 });
 
 test("a profile shows no planning or rows scanned it doesn't carry", async () => {

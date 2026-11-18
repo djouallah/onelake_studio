@@ -401,7 +401,7 @@
       "view/item/context": [
         {
           "command": "onelakeStudio.refresh",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|workspacePinned|item|dir|dirReadOnly|semanticViewDir|tables|models|apps|error)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|workspacePinned|item|dir|dirReadOnly|tables|models|apps|error)$/",
           "group": "inline@3"
         },
         {
@@ -421,7 +421,7 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|modelFile|dir|dirReadOnly|semanticViewDir|semanticModel)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|modelFile|semanticViewFile|dir|dirReadOnly|semanticModel)$/",
           "group": "inline@2"
         },
         {
@@ -456,7 +456,7 @@
         },
         {
           "command": "onelakeStudio.downloadFile",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(file|modelFile)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(file|modelFile|semanticViewFile)$/",
           "group": "inline@1"
         },
         {
@@ -466,7 +466,7 @@
         },
         {
           "command": "onelakeStudio.publishSemanticView",
-          "when": "view == onelakeStudio.explorer && viewItem == semanticViewDir",
+          "when": "view == onelakeStudio.explorer && viewItem == semanticViewFile",
           "group": "inline@0"
         },
         {

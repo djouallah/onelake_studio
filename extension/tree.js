@@ -248,9 +248,9 @@ class LakehouseTree {
       : n.kind === 'fabricApp' && n.url ? 'fabricAppUrl'
       // A .bim or .yaml in Files/: a file, that Create Semantic Model takes too.
       : n.kind === 'file' && !n.area && /\.(bim|ya?ml)$/i.test(String(n.path)) ? 'modelFile'
+      // A .yaml of a Fabric semantic view (Context/Semantic Views/<view>/…): a file, with Publish beside it.
+      : n.kind === 'file' && n.area === 'Context' && /\/Context\/Semantic Views\/[^/]+\/.+\.yaml$/.test(String(n.path)) ? 'semanticViewFile'
       // A folder of Context/ or SystemContext/: nothing is uploaded to it from here.
-      // A Fabric semantic view's folder (Context/Semantic Views/<view>): Publish, as Fabric's own right-click has it.
-      : n.kind === 'dir' && n.area === 'Context' && /^Semantic Views\/[^/]+$/.test(String(n.dir)) ? 'semanticViewDir'
       : n.kind === 'dir' && n.area ? 'dirReadOnly'
       : n.kind;
     // A stable identity, so expansion state survives a refresh keyed on WHAT the node is

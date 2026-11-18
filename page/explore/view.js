@@ -31,7 +31,7 @@ import { createExplorer, pivotTitle, modelFields, valuesSql, setRowCap, fieldPat
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, PALETTES, STYLES, registerChartTheme } from './theme.js';
-import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
+import { prettyModelText, extensionVendors } from './pretty.js';
 import { drawReport, reportPages, withPages, newPageName, pickWhere } from './report.js';
 import { cleanFormat, paneRow, paneSelect, paneCheck, paneColour, SIZES } from './format.js';
 
@@ -240,16 +240,12 @@ export function mountExplore(root, ctx) {
   if (editable) { textPre.hidden = false; textPre.setAttribute('aria-hidden', 'true'); }
   const saveBtn = editable ? btn('Save', () => saveFile(), true) : null;
   if (saveBtn) { saveBtn.title = 'Write this text back to the file (Ctrl+S)'; saveBtn.disabled = true; saveBtn.hidden = true; }
-  // Over the file, when it has nonportable_extensions or a dialect other than Ossie SQL: what its amber
-  // lines are (pretty.js tk-ext).
+  // Over the file, when it has nonportable_extensions: what its amber lines are (pretty.js tk-ext).
   const ossie = ctx.text != null && !/^bim$/i.test(ctx.ext || '');
   const vendors = ossie ? extensionVendors(ctx.text) : [];
-  const dialects = ossie ? foreignDialects(ctx.text) : [];
   const extName = `${vendors.length && vendors.every(v => v.toUpperCase() === 'POWER_BI') ? 'Power BI' : 'vendor'} extension`;
   const textNote = el('p', { class: 'text-file-note', hidden: true }, el('span', { class: 'swatch' }),
-    !dialects.length ? `Amber: ${extName}, what Ossie has no field for`
-      : !vendors.length ? `Amber: expressions in ${dialects.join(', ')}, not Ossie SQL`
-      : `Amber: not plain Ossie SQL — the ${extName}, and expressions in ${dialects.join(', ')}`);
+    `Amber: ${extName}, what Ossie has no field for`);
   // Over that: an Ossie model written as an earlier spec had it says so, with Upgrade, which writes it as the spec
   // is now (ctx.upgradeCopy): a semantic model's local copy (ctx.specOf 'copy'), or a model file. Never unasked.
   const specWas = ossie && ctx.upgradeCopy && ctx.specNow ? (/^version:\s*["']?([^\s"'#]+)/m.exec(ctx.text) || [])[1] : null;
@@ -1066,7 +1062,7 @@ export function mountExplore(root, ctx) {
     }
     modelPage.hidden = on;
     if (editable) { textEdit.hidden = !on; saveBtn.hidden = !on; } else textPre.hidden = !on;
-    textNote.hidden = !on || !(vendors.length || dialects.length) || !textPre.querySelector('.tk-ext');
+    textNote.hidden = !on || !vendors.length || !textPre.querySelector('.tk-ext');
     if (specNote) specNote.hidden = !on;
   }
 

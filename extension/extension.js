@@ -1110,15 +1110,11 @@ async function activateInner(context) {
         showError(`Could not download ${name}: ${(e && e.message) || e}`);
       }
     }),
-    // A semantic model as a Fabric semantic view: one YAML file, as Fabric's New semantic view writes one, in
-    // <lakehouse>/Context/Semantic Views/<model>/ of the lakehouse its tables are in (core/models/semanticview.js).
-    // A folder of that name already there is asked
-    // about, as a copy asks: Replace takes it whole, Keep Both writes this one beside it as <model> (2).
-    // Fabric's Publish on a semantic view's folder (Context/Semantic Views/<view>): one request to Fabric, which makes
-    // the view's TMDL and model (core/models/fabric.js publishView). In the status bar while it runs, blocking nothing;
-    // what Fabric said after, its diagnostics by file and line in the log too.
+    // Fabric's Publish of a semantic view, from a .yaml of it (Context/Semantic Views/<view>/…): one request to Fabric,
+    // which makes the view's TMDL and model (fabric_app/export/publishview.js). In the status bar while it runs,
+    // blocking nothing; what Fabric said after, its diagnostics by file and line in the log too.
     vscode.commands.registerCommand('onelakeStudio.publishSemanticView', n => {
-      const view = n && n.kind === 'dir' && n.area === 'Context' && (/^Semantic Views\/([^/]+)$/.exec(String(n.dir)) || [])[1];
+      const view = n && n.kind === 'file' && n.area === 'Context' && (/^[^/]+\/Context\/Semantic Views\/([^/]+)\/.+\.yaml$/.exec(String(n.path)) || [])[1];
       if (!view) return;
       if (connectivity.offline()) { vscode.window.showInformationMessage('Publish needs a connection.'); return; }
       const lakehouse = basename(String(n.item)).replace(/\.[^.]+$/, '');
@@ -1139,6 +1135,10 @@ async function activateInner(context) {
           showError(`Publish ${view}: ${(e && e.message) || e}`);
         });
     }),
+    // A semantic model as a Fabric semantic view: one YAML file, as Fabric's New semantic view writes one, in
+    // <lakehouse>/Context/Semantic Views/<model>/ of the lakehouse its tables are in (core/models/semanticview.js).
+    // A folder of that name already there is asked about, as a copy asks: Replace takes it whole, Keep Both writes
+    // this one beside it as <model> (2).
     vscode.commands.registerCommand('onelakeStudio.exportSemanticView', async n => {
       if (!n || n.kind !== 'semanticModel' || !n.model) return;
       if (connectivity.offline()) { vscode.window.showInformationMessage('Export YAML needs a connection.'); return; }

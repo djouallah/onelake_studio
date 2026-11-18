@@ -531,8 +531,8 @@ once and counts, though the answer still comes through the host.
     is merged, and each dataset is a Direct Lake table with the columns its lake table has, from the table's
     metadata. The DAX metrics go in a table named `Metrics`. Only Microsoft's version (0.2.0.dev0) opens. It is
     read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric reads those files.
-  - **A view's folder** (`Context/Semantic Views/<view>`, `semanticViewDir`): **Publish**, as Fabric's own
-    right-click has it. It is one request to Fabric's beta API, made in the background with the status bar saying
+  - **A view's `.yaml`** (in `Context/Semantic Views/<view>/`, `semanticViewFile`): **Publish** beside it, as well as
+    a file's own icons. It is one request to Fabric's beta API, made in the background with the status bar saying
     so ([`fabric_app/export/publishview.js`](../fabric_app/export/publishview.js)). Fabric compiles the view into
     its TMDL in `SystemContext/` and the model of the view's name. Studio says what Fabric answered: the model's
     name, or Fabric's diagnostics, each by file and line, also in the log. It then lists `SystemContext/` and the
