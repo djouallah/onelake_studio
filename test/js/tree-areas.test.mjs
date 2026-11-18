@@ -92,7 +92,7 @@ test("a listing of Context/ is kept apart from Files/'s, and its files are kept 
   assert.equal(reads(), 1, "the second read is the kept copy");
 });
 
-test("a .yaml of a semantic view has Publish beside it; no other file or folder has", () => {
+test("a semantic view's folder and its .yaml have Publish beside them; no other file or folder has", () => {
   const { tree } = setup({});
   const file = (area, path) => tree.getTreeItem({ kind: "file", workspace: WS, item: ITEM, area, path: `${ITEM}/${area}/${path}`, label: "x" }).contextValue;
   assert.equal(file("Context", "Semantic Views/sales/sales_semantic_view.yaml"), "semanticViewFile");
@@ -101,5 +101,8 @@ test("a .yaml of a semantic view has Publish beside it; no other file or folder 
     assert.equal(file("Context", path), "file", path);
   }
   assert.equal(file("SystemContext", "Semantic Views/sales/sales.yaml"), "file", "SystemContext/ has no Publish");
-  assert.equal(tree.getTreeItem({ kind: "dir", workspace: WS, item: ITEM, area: "Context", dir: "Semantic Views/sales", label: "x" }).contextValue, "dirReadOnly");
+  const dir = (area, d) => tree.getTreeItem({ kind: "dir", workspace: WS, item: ITEM, area, dir: d, label: "x" }).contextValue;
+  assert.equal(dir("Context", "Semantic Views/sales"), "semanticViewDir", "the view's folder has Publish too");
+  for (const d of ["", "Semantic Views", "Semantic Views/sales/sub", "Other/sales"]) assert.equal(dir("Context", d), "dirReadOnly", d);
+  assert.equal(dir("SystemContext", "Semantic Views/sales"), "dirReadOnly");
 });

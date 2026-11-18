@@ -250,6 +250,8 @@ class LakehouseTree {
       : n.kind === 'file' && !n.area && /\.(bim|ya?ml)$/i.test(String(n.path)) ? 'modelFile'
       // A .yaml of a Fabric semantic view (Context/Semantic Views/<view>/…): a file, with Publish beside it.
       : n.kind === 'file' && n.area === 'Context' && /\/Context\/Semantic Views\/[^/]+\/.+\.yaml$/.test(String(n.path)) ? 'semanticViewFile'
+      // A Fabric semantic view's folder (Context/Semantic Views/<view>): Publish too, as Fabric's own right-click has it.
+      : n.kind === 'dir' && n.area === 'Context' && /^Semantic Views\/[^/]+$/.test(String(n.dir)) ? 'semanticViewDir'
       // A folder of Context/ or SystemContext/: nothing is uploaded to it from here.
       : n.kind === 'dir' && n.area ? 'dirReadOnly'
       : n.kind;

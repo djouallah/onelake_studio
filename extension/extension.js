@@ -1110,7 +1110,9 @@ async function activateInner(context) {
     // which makes the view's TMDL and model (fabric_app/export/publishview.js). In the status bar while it runs,
     // blocking nothing; what Fabric said after, its diagnostics by file and line in the log too.
     vscode.commands.registerCommand('onelakeStudio.publishSemanticView', n => {
-      const view = n && n.kind === 'file' && n.area === 'Context' && (/^[^/]+\/Context\/Semantic Views\/([^/]+)\/.+\.yaml$/.exec(String(n.path)) || [])[1];
+      // From its folder, or from a .yaml in it.
+      const view = n && n.area === 'Context' && (n.kind === 'dir' ? (/^Semantic Views\/([^/]+)$/.exec(String(n.dir)) || [])[1]
+        : n.kind === 'file' ? (/^[^/]+\/Context\/Semantic Views\/([^/]+)\/.+\.yaml$/.exec(String(n.path)) || [])[1] : null);
       if (!view) return;
       if (connectivity.offline()) { vscode.window.showInformationMessage('Publish needs a connection.'); return; }
       const lakehouse = basename(String(n.item)).replace(/\.[^.]+$/, '');
