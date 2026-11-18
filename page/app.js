@@ -327,7 +327,7 @@ async function openFabricView(file, view) {
     const viewText = files.length === 1 ? files[0].text
       : files.map(f => `# ${String(f.path).slice(lead.length)}\n${f.text}`).join('\n');
     await openModelView({ name: `${view}.bim`, path: file.path, localWorkspace: lakehouse.workspace, modelName: view,
-                          fabricView: true, viewText }, JSON.stringify(bim), { fromOneLake: false });
+                          fabricView: true, viewText, label: `${view} (semantic view)` }, JSON.stringify(bim), { fromOneLake: false });
   } catch (e) {
     if (my !== selSeq) return;
     setStatus(`${view} does not open as a semantic model: ${e.message}`, 'error');
@@ -387,7 +387,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
   closeDb();
   const my = ++selSeq;
   engine.cancelLoad();
-  $('activeTable').textContent = file.name;
+  $('activeTable').textContent = file.label || file.name;
   activeFile = fromOneLake ? file : null;   // only a OneLake file can be saved as itself
   activeDocExt = 'bim'; activeDocEligible = false;
   setActiveStats(null);
@@ -451,6 +451,9 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
         ? () => engine.createSemanticModel({ file: file.name, text: bim, workspace: lakehouse.workspace, path: file.path })
         : undefined,
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
+      // A Fabric semantic view: Fabric's Publish of it, from its lakehouse.
+      publishView: file.fabricView && lakehouse
+        ? () => engine.publishView({ workspace: lakehouse.workspace, item: lakehouse.item, view: file.modelName }) : undefined,
       // The Model page's table: the OneLake table behind it, in a tab of its own. Only a Direct Lake table has one.
       openTable: table => {
         const sqlName = m.lakeTables && m.lakeTables[String(table).toLowerCase()];

@@ -58,6 +58,7 @@ const REPORT_POLL_MS = 2000;
 //   exportToFabric(state)  (optional) the Report's Export to Fabric button: the Report published as
 //                    a Fabric app (fabric_app/export/exportapp.js; `state`, the shelves, or null), on what the model
 //                    is, so nothing is asked here; answers what to say when it is done
+//   publishView()  (optional) a Fabric semantic view's Publish button, on the Model page: what to say after
 //   createSemanticModel()  (optional) a model file's Create Semantic Model button, on the Model page:
 //                    the tree's own (fabric_app/export/exportflow.js), its dialog the host's; answers what to say
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
@@ -183,6 +184,9 @@ export function mountExplore(root, ctx) {
   };
   const createBtn = ctx.createSemanticModel
     ? hostBtn('Create Semantic Model', 'Creating…', ctx.createSemanticModel, 'A Power BI semantic model of this file, in its workspace') : null;
+  // A Fabric semantic view's: Fabric's Publish of it (its TMDL and its model), as the tree's ▶ does it.
+  const publishBtn = ctx.publishView
+    ? hostBtn('Publish', 'Publishing…', ctx.publishView, "Fabric's Publish of this semantic view: its TMDL in SystemContext/, and its model") : null;
   const excelBtn = ctx.openInExcel
     ? hostBtn('Open in Excel', 'Opening…', ctx.openInExcel, 'This model in a new Excel workbook, as a live PivotTable') : null;
   const keepOffline = ctx.keepOffline ? offlineSwitch(ctx.keepOffline) : null;
@@ -249,8 +253,8 @@ export function mountExplore(root, ctx) {
   // At the right of the bar, before Create Semantic Model and Open in Excel. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
-  const modelActions = modelSwitch || createBtn || excelBtn
-    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, excelBtn) : null;
+  const modelActions = modelSwitch || createBtn || publishBtn || excelBtn
+    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, publishBtn, excelBtn) : null;
   const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textEdit || textPre);
 
   root.replaceChildren(

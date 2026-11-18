@@ -204,6 +204,7 @@ async function show(context, { newTab = false, key = null, signIn = true, ...opt
         save: x => (modelReport ? modelReport.save(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       },
       openInExcel: x => (openExcel ? openExcel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      publishView: x => (theCore ? theCore.publishView(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       setOffline: x => (keepOffline ? keepOffline.set(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -1117,15 +1118,11 @@ async function activateInner(context) {
       if (connectivity.offline()) { vscode.window.showInformationMessage('Publish needs a connection.'); return; }
       const lakehouse = basename(String(n.item)).replace(/\.[^.]+$/, '');
       vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Publishing ${view}` },
-        () => core.publishView(n.workspace, lakehouse, view))
+        () => core.publishView({ workspace: n.workspace, item: n.item, view }))
         .then(r => {
           if (out) for (const w of r.warnings) out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view}: ${w}`);
           vscode.window.showInformationMessage(`Published ${view}: Fabric made its model, ${view}` +
             (r.warnings.length ? `, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'} (in the log).` : '.'));
-          // What Fabric wrote: the view's TMDL in SystemContext/, and the model in the workspace's Semantic models.
-          const sys = { workspace: n.workspace, item: n.item, area: 'SystemContext' };
-          for (const d of ['', 'Semantic Views', `Semantic Views/${view}`]) onelake.files(sys, d, { fresh: true }).catch(() => {});
-          onelake.models(n.workspace, { fresh: true }).catch(() => {});
         }, e => {
           if (out) {
             out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view} failed — ${(e && e.message) || e}`);
