@@ -144,8 +144,6 @@ let modelReport = null;
 let openExcel = null;
 // Keep offline (modeldata.js), the page's model.offlineState and model.setOffline; set by activateInner, as above.
 let keepOffline = null;
-// Upgrade, over Model's YAML (models.js upgradeCopy), the page's model.upgradeCopy; set by activateInner, as above.
-let upgradeModelCopy = null;
 // A semantic model a query names (ws.model_semanticmodel), opened: its local copy kept, and
 // kept as a semantic view; and a Direct Lake model's tables (by GUID) -> their SQL names. Set by activateInner.
 let openSqlModel = null;
@@ -208,7 +206,6 @@ async function show(context, { newTab = false, key = null, signIn = true, ...opt
       openInExcel: x => (openExcel ? openExcel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       setOffline: x => (keepOffline ? keepOffline.set(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
-      upgradeCopy: x => (upgradeModelCopy ? upgradeModelCopy(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       copyText: text => vscode.env.clipboard.writeText(text),
       exportResult: x => exportResult(tabEngine, x),
@@ -462,7 +459,6 @@ async function activateInner(context) {
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
   const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
-  upgradeModelCopy = x => core.models.upgradeCopy(x);
 
   // The explorer's filter: one type only, until the picker says otherwise. Not remembered: left
   // on from last time it would look like missing workspaces, and read them all at startup.

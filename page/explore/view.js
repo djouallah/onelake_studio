@@ -246,22 +246,12 @@ export function mountExplore(root, ctx) {
   const extName = `${vendors.length && vendors.every(v => v.toUpperCase() === 'POWER_BI') ? 'Power BI' : 'vendor'} extension`;
   const textNote = el('p', { class: 'text-file-note', hidden: true }, el('span', { class: 'swatch' }),
     `Amber: ${extName}, what Ossie has no field for`);
-  // Over that: an Ossie model written as an earlier spec had it says so, with Upgrade, which writes it as the spec
-  // is now (ctx.upgradeCopy): a semantic model's local copy (ctx.specOf 'copy'), or a model file. Never unasked.
-  const specWas = ossie && ctx.upgradeCopy && ctx.specNow ? (/^version:\s*["']?([^\s"'#]+)/m.exec(ctx.text) || [])[1] : null;
-  const specWhat = ctx.specOf === 'copy' ? 'copy' : 'file';
-  const specNote = specWas && specWas !== ctx.specNow
-    ? el('p', { class: 'text-file-note spec-note', hidden: true }, `This ${specWhat} is Ossie ${specWas}. The spec is now ${ctx.specNow}.`,
-      hostBtn('Upgrade', 'Upgrading…', ctx.upgradeCopy, specWhat === 'copy'
-        ? `Write this copy as Ossie ${ctx.specNow}. Nothing is read from Fabric.`
-        : `Write this file as Ossie ${ctx.specNow}: its extensions and its version line. The rest stays as written.`))
-    : null;
   // At the right of the bar, before Create Semantic Model and Open in Excel. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
   const modelActions = modelSwitch || createBtn || excelBtn
     ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, excelBtn) : null;
-  const modelArea = el('div', { class: 'model-area' }, modelPage, specNote, textNote, textEdit || textPre);
+  const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textEdit || textPre);
 
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
@@ -1063,7 +1053,6 @@ export function mountExplore(root, ctx) {
     modelPage.hidden = on;
     if (editable) { textEdit.hidden = !on; saveBtn.hidden = !on; } else textPre.hidden = !on;
     textNote.hidden = !on || !vendors.length || !textPre.querySelector('.tk-ext');
-    if (specNote) specNote.hidden = !on;
   }
 
   // --- The file, written in (editable) ---

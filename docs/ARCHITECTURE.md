@@ -570,11 +570,8 @@ workspace has one model of a name.
   `POWER_BI` extension (`nonportable_extensions`, plain YAML) holds only what Ossie has no field for and something
   needs: what changes an answer (a relationship's filter direction, a date table, ...) and what a user sees (format
   strings, hidden, ...). A file of the spec before (`custom_extensions`, a JSON string) reads the same. A copy is
-  never changed by being read: over the YAML of one written as an earlier spec had it, a line says which spec it is
-  and which is the spec now, with **Upgrade** (`models.js` `upgradeCopy`, the page's `model.upgradeCopy`), which
-  writes the copy as the spec is now from the copy itself, offline too. Refresh, which reads Fabric, writes it so as well. A model file
-  of an earlier spec has the same line: its Upgrade changes, in the page (`semantic.js` `upgradeOssie`), only what the spec changed, on the text as it is
-  written (the extensions' key and their `data`, the version line: comments, order and fields dax-sql has no use for stay), and saves it back as Save does.
+  never changed by being read, and nothing offers to rewrite it in another Ossie version: Refresh, which reads
+  Fabric, writes it again.
 - **From a query:** a statement that names a model not open yet opens it first, in the same way.
 - **Nothing is written to OneLake**, so someone who may only read the workspace can open and query it.
 - **Only Direct Lake.** Any other model is refused, and nothing is kept.

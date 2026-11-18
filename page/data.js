@@ -704,8 +704,6 @@ export function createEngine({
   // Keep offline: a semantic model's tables on this machine (core/models/modeldata.js); both answer what to show.
   const offlineState = x => callHost("model.offlineState", [x]);
   const setOffline = x => callHost("model.setOffline", [x]);
-  // Upgrade (models.js upgradeCopy): a semantic model's local copy, written as Ossie's spec is now. Its new text.
-  const upgradeCopy = x => callHost("model.upgradeCopy", [x]);
   // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).
   const nameTables = list => callHost("onelake.nameTables", [list]);
   // A OneLake table, by its SQL name, in a tab of its own (the Model page's double-click).
@@ -727,5 +725,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticViewFiles, tableFields, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, upgradeCopy, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticViewFiles, tableFields, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

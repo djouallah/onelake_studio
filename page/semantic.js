@@ -48,38 +48,10 @@ function compilerModules() {
   ]).then(([c, t, o, y]) => ({
     createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
     ossieToTmsl: o.ossieToTmsl, parseYaml: y.parse,
-    // The Ossie spec dax-sql writes: what a model's copy is written as now.
-    ossieVersion: o.tmslToOssie({ model: { tables: [] } }).version,
-    // A model file's text, of the Ossie spec before (0.2.0.dev0), as the spec is now: what changed between the
-    // two and nothing else, on the file as it is written, so its comments, its order and what dax-sql has no use
-    // for (ai_context, say) all stay. custom_extensions is nonportable_extensions, its data an object where it was
-    // a JSON string, and the version is the one of now. A spec after this one adds its own step here.
-    upgradeOssie: text => {
-      const doc = y.parseDocument(text);
-      if (doc.errors.length) throw new Error(doc.errors[0].message);
-      y.visit(doc, {
-        Pair(_, pair) {
-          if (!y.isScalar(pair.key) || pair.key.value !== 'custom_extensions') return;
-          pair.key.value = 'nonportable_extensions';
-          for (const item of (y.isSeq(pair.value) ? pair.value.items : [])) {
-            const data = y.isMap(item) ? item.get('data', true) : null;
-            if (!y.isScalar(data) || typeof data.value !== 'string') continue;
-            let object = null;
-            try { object = JSON.parse(data.value); } catch { /* not JSON: left as it is, and the check that follows says so */ }
-            if (object && typeof object === 'object' && !Array.isArray(object)) item.set('data', doc.createNode(object));
-          }
-        },
-      });
-      doc.set('version', o.tmslToOssie({ model: { tables: [] } }).version);
-      return doc.toString({ lineWidth: 0 });
-    },
   }))
     .catch(e => { modulesP = null; throw new Error(`Could not load the DAX compiler: ${e.message}`); });
   return modulesP;
 }
-
-export const ossieVersion = async () => (await compilerModules()).ossieVersion;
-export const upgradeOssie = async text => (await compilerModules()).upgradeOssie(text);
 
 // The views (dax-sql's registry) and, per view, its Direct Lake tables.
 let mods = null, views = null;

@@ -107,23 +107,6 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     await fetchModel(n, { fresh: true, say });
     return fsp.readFile(modelBimPath(n));
   }
-  // Upgrade, over Model's YAML: a copy written as an earlier Ossie spec had it, written as the spec is
-  // now. Only when asked: a copy is never changed by being read. From itself (dax-sql reads the spec
-  // before), so nothing is asked of Fabric, offline too, and a change made in Fabric still waits for
-  // Refresh. A copy that cannot be read so is kept as it is, and the error says why. Its new text.
-  async function upgradeCopy(n) {
-    await modelsAdopted;
-    const path = modelPath(n);
-    const text = await fsp.readFile(path, 'utf8').catch(() => null);
-    if (text == null) throw new Error(`${n.model} has no local copy`);
-    const { compiler } = await modules();
-    const doc = compiler.parseYaml(text);
-    const next = compiler.stringifyYaml(compiler.tmslToOssie(compiler.ossieToTmsl(doc), doc.name), { lineWidth: 0 });
-    await writeWhole(path, next);
-    log(`${n.workspace}/${n.model}: its local copy was Ossie ${doc.version}, and is written as the spec is now`);
-    onModelChanged(n);
-    return next;
-  }
   function fetchModel(n, { fresh = false, say = () => {} } = {}) {
     const path = modelPath(n);
     const key = `${path}|${!!fresh}`.toLowerCase();
@@ -344,7 +327,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   return {
     adoptModels, adopted: () => modelsAdopted,
     modelPath, modelBimPath, fetchModelBim, modelKey, cachedModel, unsupportedModels, unsupportedNote,
-    fetchModel, upgradeCopy, walkTables, openSqlModel, completionNames, modelFile, semanticViewOf,
+    fetchModel, walkTables, openSqlModel, completionNames, modelFile, semanticViewOf,
     forgetNames: () => { namesKept = null; },
   };
 }

@@ -111,7 +111,7 @@ test("a semantic model's TMSL is Fabric's model.bim kept beside its Ossie copy, 
   await done();
 });
 
-test("a local copy of an earlier Ossie spec is read as it is, and written as the spec is now only by Upgrade, with no request", async () => {
+test("a local copy of an earlier Ossie spec is read as it is, never rewritten, with no request", async () => {
   // dax-sql's part, stood in for: it reads either spec and writes the one of now.
   let written = 0;
   const compiler = {
@@ -133,16 +133,5 @@ test("a local copy of an earlier Ossie spec is read as it is, and written as the
   assert.equal((await models.fetchModel(n)).text, before);
   assert.equal(await readFile(path, "utf8"), before);
   assert.equal(written, 0);
-  // Upgrade: written as the spec is now, and read so after.
-  assert.equal(await models.upgradeCopy(n), "version: 0.3.0.dev0\nname: NEM Sales\n");
-  assert.equal(await readFile(path, "utf8"), "version: 0.3.0.dev0\nname: NEM Sales\n", "the file too");
-  assert.equal((await models.fetchModel(n)).text, "version: 0.3.0.dev0\nname: NEM Sales\n");
-  // One that cannot be read so is kept, and says why.
-  const old = "version: 0.2.0.dev0\nname: broken\n";
-  await writeFile(path, old);
-  await assert.rejects(models.upgradeCopy(n), /not read/);
-  assert.equal(await readFile(path, "utf8"), old);
-  // No copy: nothing to upgrade.
-  await assert.rejects(models.upgradeCopy({ ...n, model: "Other" }), /has no local copy/);
   await done();
 });

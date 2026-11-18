@@ -75,7 +75,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, openInExcel = null, offlineState = null, setOffline = null, upgradeCopy = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, openInExcel = null, offlineState = null, setOffline = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveFileText = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -138,12 +138,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!x || !x.workspace || !x.model) throw new Error('Keep offline needs a semantic model');
       return setOffline({ workspace: String(x.workspace), model: String(x.model), on: x.on === true });
     },
-    // Upgrade (models.js upgradeCopy): a semantic model's local copy, written as Ossie's spec is now. Its new text.
-    'model.upgradeCopy': async x => {
-      if (!upgradeCopy) throw new Error('Upgrade is not available here');
-      if (!x || !x.workspace || !x.model) throw new Error('Upgrade needs a semantic model');
-      return upgradeCopy({ workspace: String(x.workspace), model: String(x.model) });
-    },
+
     // Semantic models (semviews.js): the ones this machine keeps, with their text, and one the
     // page just opened kept — its name in its schema, the model's workspace, so SQL names it
     // ws.model_semanticmodel. The path is a local file or an abfss:// URL.
