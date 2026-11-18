@@ -124,9 +124,6 @@ function viewOf(bim, name, semantic) {
     if (t.calculationGroup) drop(`calculation group ${t.name}`);
   }
   if (!datasets.length) return { refused: `${name} has no table of a lakehouse` };
-  if (kept.has('metrics')) {
-    return { refused: `${name} has a table named Metrics, the name Fabric gives the table of a view's metrics` };
-  }
 
   // A reference to a column the view has, as the lake names it; null for one it has not.
   const columnOf = (table, column) => {

@@ -513,8 +513,8 @@ once and counts, though the answer still comes through the host.
     - **What a view has no place for is dropped and said:** calculated tables and columns, inactive relationships,
       formats, hierarchies, roles, and a measure that names one of those. The message lists the first three, and the
       log lists them all.
-    - **Refused, with why:** a model that isn't Direct Lake on one lakehouse, one whose lakehouse is another kind of
-      item, and one with a table named `Metrics` (Fabric's table for a view's metrics).
+    - **Refused, with why:** a model that isn't Direct Lake on one lakehouse, and one whose lakehouse is another
+      kind of item. Anything else is Fabric's to judge: its Publish says what it refuses, by file and line.
     - **A folder of that name already there is asked about**, as a copy asks. **Replace** deletes it and everything
       in it. **Keep Both** writes this one beside it as `<model> (2)`. Studio writes the file and stops: Publish is
       Fabric's ([`core/models/semanticview.js`](../core/models/semanticview.js)).

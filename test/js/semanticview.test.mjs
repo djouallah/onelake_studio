@@ -121,8 +121,9 @@ test("a model that is not Direct Lake on one lakehouse has no view, and says why
     expressions: [{ ...lake(), name: "one" }, { ...lake(WS, "11111111-2222-3333-4444-555555555555"), name: "two" }],
   } };
   assert.match(viewOf(two, "m", semantic).refused, /reads 2 lakehouses: a semantic view reads one lakehouse/);
+  // A table named Metrics is a dataset like any other: whether it clashes with Fabric's Metrics is Publish's to say.
   const metrics = { model: { tables: [{ name: "Metrics", partitions: part("metrics"), columns: [col("x", "int64")] }], expressions: [lake()] } };
-  assert.match(viewOf(metrics, "m", semantic).refused, /a table named Metrics/);
+  assert.deepEqual(viewOf(metrics, "m", semantic).doc.datasets, [{ name: "Metrics", source: "mart.metrics" }]);
 });
 
 test("a view's folder and file are named as Fabric's New semantic view names them, and Keep Both finds a free name", () => {
