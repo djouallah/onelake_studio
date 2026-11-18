@@ -478,7 +478,18 @@ async function claimLake({ stateDir, lakeKey, key, version }) {
   // A name of its own: two windows of one process (a window and its background reader) claim at once.
   const file = holderFileOf(stateDir, lakeKey), partial = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   await fsp.writeFile(partial, JSON.stringify({ key, version }));
-  await fsp.rename(partial, file).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
+  // On Windows a rename onto a file another window is renaming or reading at that moment fails (EPERM,
+  // EACCES, EBUSY) and goes through a moment later. Past the tries, a claim another window made the same is
+  // this one's too.
+  for (let i = 0; ; i++) {
+    try { await fsp.rename(partial, file); return; } catch (e) {
+      if (i < 8 && ['EPERM', 'EACCES', 'EBUSY'].includes(e && e.code)) { await new Promise(r => setTimeout(r, 25 * (i + 1))); continue; }
+      await fsp.rm(partial, { force: true }).catch(() => {});
+      const now = serverHolder({ stateDir, lakeKey });
+      if (now && now.key === key && now.version === String(version)) return;
+      throw e;
+    }
+  }
 }
 // 0.2.10 is newer than 0.2.9. A version that can't be read is newer than nothing.
 function newerVersion(a, b) {
