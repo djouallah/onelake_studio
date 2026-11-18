@@ -1114,6 +1114,31 @@ async function activateInner(context) {
     // <lakehouse>/Context/Semantic Views/<model>/ of the lakehouse its tables are in (core/models/semanticview.js).
     // A folder of that name already there is asked
     // about, as a copy asks: Replace takes it whole, Keep Both writes this one beside it as <model> (2).
+    // Fabric's Publish on a semantic view's folder (Context/Semantic Views/<view>): one request to Fabric, which makes
+    // the view's TMDL and model (core/models/fabric.js publishView). In the status bar while it runs, blocking nothing;
+    // what Fabric said after, its diagnostics by file and line in the log too.
+    vscode.commands.registerCommand('onelakeStudio.publishSemanticView', n => {
+      const view = n && n.kind === 'dir' && n.area === 'Context' && (/^Semantic Views\/([^/]+)$/.exec(String(n.dir)) || [])[1];
+      if (!view) return;
+      if (connectivity.offline()) { vscode.window.showInformationMessage('Publish needs a connection.'); return; }
+      const lakehouse = basename(String(n.item)).replace(/\.[^.]+$/, '');
+      vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Publishing ${view}` },
+        () => core.publishView(n.workspace, lakehouse, view))
+        .then(r => {
+          if (out) for (const w of r.warnings) out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view}: ${w}`);
+          vscode.window.showInformationMessage(`Published ${view}: Fabric made its model, ${view}` +
+            (r.warnings.length ? `, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'} (in the log).` : '.'));
+          // What Fabric wrote: the view's TMDL in SystemContext/, and the model in the workspace's Semantic models.
+          const sys = { workspace: n.workspace, item: n.item, area: 'SystemContext' };
+          for (const d of ['', 'Semantic Views', `Semantic Views/${view}`]) onelake.files(sys, d, { fresh: true }).catch(() => {});
+          onelake.models(n.workspace, { fresh: true }).catch(() => {});
+        }, e => {
+          if (out) {
+            out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view} failed — ${(e && e.message) || e}`);
+          }
+          showError(`Publish ${view}: ${(e && e.message) || e}`);
+        });
+    }),
     vscode.commands.registerCommand('onelakeStudio.exportSemanticView', async n => {
       if (!n || n.kind !== 'semanticModel' || !n.model) return;
       if (connectivity.offline()) { vscode.window.showInformationMessage('Export YAML needs a connection.'); return; }

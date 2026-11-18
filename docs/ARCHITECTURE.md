@@ -530,7 +530,13 @@ once and counts, though the answer still comes through the host.
     Publish makes it (`fabricViewBim` in [`page/semantic.js`](../page/semantic.js)). Every `.yaml` in the folder
     is merged, and each dataset is a Direct Lake table with the columns its lake table has, from the table's
     metadata. The DAX metrics go in a table named `Metrics`. Only Microsoft's version (0.2.0.dev0) opens. It is
-    read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric reads those files. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
+    read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric reads those files.
+  - **A view's folder** (`Context/Semantic Views/<view>`, `semanticViewDir`): **Publish**, as Fabric's own
+    right-click has it. It is one request to Fabric's beta API, made in the background with the status bar saying
+    so ([`fabric_app/export/publishview.js`](../fabric_app/export/publishview.js)). Fabric compiles the view into
+    its TMDL in `SystemContext/` and the model of the view's name. Studio says what Fabric answered: the model's
+    name, or Fabric's diagnostics, each by file and line, also in the log. It then lists `SystemContext/` and the
+    workspace's semantic models again. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
     [`core/names.js`](../core/names.js)). The only thing Studio writes to `Context/` is a semantic model's Export YAML.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.

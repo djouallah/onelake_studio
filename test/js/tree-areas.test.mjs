@@ -91,3 +91,12 @@ test("a listing of Context/ is kept apart from Files/'s, and its files are kept 
   await onelake.readBytes(WS, `${ITEM}/Context/a.yaml`);
   assert.equal(reads(), 1, "the second read is the kept copy");
 });
+
+test("a folder directly in Context/Semantic Views is a view, with Publish; no other folder is", () => {
+  const { tree } = setup({});
+  const ctx = dir => tree.getTreeItem({ kind: "dir", workspace: WS, item: ITEM, area: "Context", dir, label: "x" }).contextValue;
+  assert.equal(ctx("Semantic Views/sales"), "semanticViewDir");
+  for (const dir of ["", "Semantic Views", "Semantic Views/sales/sub", "Other/sales"]) assert.equal(ctx(dir), "dirReadOnly", dir);
+  assert.equal(tree.getTreeItem({ kind: "dir", workspace: WS, item: ITEM, area: "SystemContext", dir: "Semantic Views/sales", label: "x" }).contextValue,
+    "dirReadOnly", "SystemContext/ has no Publish");
+});

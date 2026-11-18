@@ -34,6 +34,7 @@ const { PINS } = require('./vendored');
 const { createQueries } = require('./queries');
 const { createModels } = require('./models/models');
 const { createOneLakeWriter } = require('../fabric_app/export/onelakewrite');
+const { createViewPublisher } = require('../fabric_app/export/publishview');
 const { createExport } = require('../fabric_app/export/exportflow');
 const { createEngines } = require('./engine/engines');
 
@@ -603,6 +604,8 @@ function createCore({
 
   // The one OneLake writer (onelakewrite.js): Upload's files.
   const writer = createOneLakeWriter({ getToken: hostToken });
+  // Fabric's Publish of a semantic view (publishview.js): the tree's ▶ on a view's folder.
+  const viewPublisher = createViewPublisher({ fabric, getToken: fabricToken });
   const exporter = createExport({
     connectivity, modules: () => agent.modules(), appToken, powerBiToken: fabricToken, fabric,
     memento, extensionDir, pageDir, reportDir: join(storageDir, 'reports'),
@@ -662,6 +665,7 @@ function createCore({
       return adoptModels(join(old, 'models')).then(moved => { if (moved) view.redraw(); });
     },
     fabric, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla, writer,
+    publishView: (workspace, lakehouse, view) => viewPublisher.publish(workspace, lakehouse, view),
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,
     storeAccount: () => storeAccount, queryAccount: () => queryAccount,
