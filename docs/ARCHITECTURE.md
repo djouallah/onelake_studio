@@ -538,7 +538,9 @@ once and counts, though the answer still comes through the host.
     it: a version other than 0.2.0.dev0, 0.3's `nonportable_extensions`, a dialect Fabric has no name for (`OSSIE_SQL_2026`
     fails the whole Publish, even beside DAX; `ANSI_SQL` is only left out), an empty `dialects` or `datasets`, a source
     that isn't schema.table, a relationship's description or second column, a name given twice
-    (`publishRefusals` in [`pretty.js`](../page/explore/pretty.js)). As in any model's YAML, an expression in a
+    (`publishRefusals` in [`pretty.js`](../page/explore/pretty.js)). What of that a model can do without is left out
+    of the model the view opens as, so the view still opens: a query source, a name given again, a relationship of
+    more columns or to a dataset left out, a metric named as a dataset. As in any model's YAML, an expression in a
     dialect other than Ossie SQL (DAX, say) and an extensions block are amber.
   - **A view's folder** (`Context/Semantic Views/<view>`, `semanticViewDir`) **and its `.yaml`** (`semanticViewFile`):
     **Publish** beside them, as Fabric's own right-click has it. It is one request to Fabric's beta API, made in the background with the status bar saying

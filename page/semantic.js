@@ -281,7 +281,10 @@ export const FABRIC_VIEW_OPENS = [FABRIC_VIEW_VERSION, "0.3.0.dev0"];
  * as Fabric merges them, each dataset a Direct Lake table of the view's lakehouse (`lakehouse`, its name) with the
  * columns its table has (`columnsOf(schema, table)`, [{ name, type }]: Fabric's YAML names none), each relationship
  * active, and the DAX metrics in a table of their own, Metrics, as Fabric's model has them. A metric with no DAX is
- * left out, as Fabric leaves it out. What Fabric would refuse is said, by file.
+ * left out, as Fabric leaves it out. What Fabric's Publish refuses but a model can do without opens without it, its
+ * YAML showing it in red (explore/pretty.js publishRefusals): a dataset whose source isn't schema.table, a name given
+ * a second time, a relationship of more than one column a side or to a dataset left out, a metric named as a dataset.
+ * What leaves nothing to open (no file, not YAML, another version, a table the lake doesn't have) is said, by file.
  */
 export async function fabricViewBim(view, files, { lakehouse, columnsOf }, modules = null) {
   const mods = await ready(modules);
@@ -296,26 +299,30 @@ export async function fabricViewBim(view, files, { lakehouse, columnsOf }, modul
     return { file: basename(f.path), doc };
   });
   const all = key => docs.flatMap(({ file, doc }) => (Array.isArray(doc[key]) ? doc[key] : []).map(x => ({ file, x })));
-  const once = (list, what) => {
-    const seen = new Map();
-    for (const { file, x } of list) {
+  // Each name once, whatever its case: the first kept, as the YAML's red says of the others.
+  const once = list => {
+    const seen = new Set();
+    return list.map(({ x }) => x).filter(x => {
       const k = lc(x?.name);
-      if (seen.has(k)) throw new Error(`${what} ${x.name} is in ${seen.get(k)} and ${file}: a name is given once`);
-      seen.set(k, file);
-    }
-    return list.map(({ x }) => x);
+      if (!x?.name || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
   };
-  const datasets = once(all("datasets"), "the dataset");
-  const metrics = once(all("metrics"), "the metric");
-  const relationships = once(all("relationships"), "the relationship");
+  const sourceOf = d => {
+    const parts = String(d?.source ?? "").split(".");
+    return parts.length === 2 && parts.every(p => p) ? parts : null;
+  };
+  const datasets = once(all("datasets")).filter(sourceOf);
+  const kept = new Set(datasets.map(d => lc(d.name)));
+  const metrics = once(all("metrics")).filter(m => !kept.has(lc(m.name)));
+  const oneColumn = cols => Array.isArray(cols) && cols.length === 1;
+  const relationships = once(all("relationships")).filter(r =>
+    oneColumn(r.from_columns) && oneColumn(r.to_columns) && kept.has(lc(r.from)) && kept.has(lc(r.to)));
   const description = docs.map(({ doc }) => doc.description).find(d => d != null);
 
   const tables = await Promise.all(datasets.map(async d => {
-    const parts = String(d?.source ?? "").split(".");
-    if (!d?.name || parts.length !== 2 || parts.some(p => !p)) {
-      throw new Error(`the dataset ${d?.name ?? "(no name)"}: its source is schema.table, such as dbo.sales`);
-    }
-    const [schema, table] = parts;
+    const [schema, table] = sourceOf(d);
     const columns = (await columnsOf(schema, table))
       .map(c => ({ name: c.name, dataType: tmslType(c.type), sourceColumn: c.name }))
       .filter(c => c.dataType);
@@ -337,14 +344,8 @@ export async function fabricViewBim(view, files, { lakehouse, columnsOf }, modul
     model: {
       ...(description != null ? { description: String(description) } : {}),
       tables,
-      relationships: relationships.map(r => {
-        const one = (cols, end) => {
-          if (!Array.isArray(cols) || cols.length !== 1) throw new Error(`the relationship ${r.name}: its ${end} is one column`);
-          return String(cols[0]);
-        };
-        return { name: r.name, fromTable: r.from, fromColumn: one(r.from_columns, "from_columns"),
-                 toTable: r.to, toColumn: one(r.to_columns, "to_columns") };
-      }),
+      relationships: relationships.map(r => ({ name: r.name, fromTable: r.from, fromColumn: String(r.from_columns[0]),
+                                               toTable: r.to, toColumn: String(r.to_columns[0]) })),
     },
   };
 }

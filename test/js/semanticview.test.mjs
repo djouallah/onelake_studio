@@ -184,17 +184,31 @@ test("a view written in Ossie 0.3 opens: what Publish refuses of it is its YAML'
   assert.deepEqual(bim.model.tables.map(t => t.name), ["duid"]);
 });
 
-test("what Fabric would refuse in a view is said, by its file", async () => {
+test("what leaves nothing to open in a view is said, by its file", async () => {
   const open = files => semantic.fabricViewBim("v", files, { lakehouse: "data", columnsOf }, asModules);
   await assert.rejects(open([]), /v has no \.yaml file/);
   await assert.rejects(open([fileOf("a.yaml", { version: "0.4.0.dev0", name: "v" })]),
     /a\.yaml is version 0\.4\.0\.dev0: a Fabric semantic view is 0\.2\.0\.dev0 or 0\.3\.0\.dev0/);
-  await assert.rejects(open([fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "nope" }] })]), /source is schema\.table/);
   await assert.rejects(open([fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "mart.gone" }] })]),
     /data has no table mart\.gone/);
-  await assert.rejects(open([
-    fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "mart.dim_duid" }] }),
-    fileOf("b.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "X", source: "mart.dim_duid" }] }),
-  ]), /the dataset X is in a\.yaml and b\.yaml/);
   assert.match("data.Lakehouse/Context/Semantic Views/sales/sub/a.yaml".match(semantic.FABRIC_VIEW_PATH)[2], /^sales$/);
+});
+
+test("what Publish refuses but a model can do without, a view opens without: its YAML shows it in red", async () => {
+  const bim = await semantic.fabricViewBim("v", [
+    fileOf("a.yaml", { version: "0.2.0.dev0", name: "v",
+      datasets: [{ name: "duid", source: "mart.dim_duid" }, { name: "q", source: "SELECT 1" }, { name: "fct", source: "mart.fct_summary" }],
+      relationships: [
+        { name: "r", from: "fct", to: "duid", from_columns: ["DUID"], to_columns: ["DUID"] },
+        { name: "two", from: "fct", to: "duid", from_columns: ["DUID", "MW"], to_columns: ["DUID", "Fuel"] },
+        { name: "to q", from: "fct", to: "q", from_columns: ["DUID"], to_columns: ["x"] }],
+      metrics: [{ name: "Total", expression: { dialects: [{ dialect: "DAX", expression: "SUM('fct'[MW])" }] } },
+                { name: "FCT", expression: { dialects: [{ dialect: "DAX", expression: "1" }] } }] }),
+    fileOf("b.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "DUID", source: "mart.fct_summary" }],
+      metrics: [{ name: "total", expression: { dialects: [{ dialect: "DAX", expression: "2" }] } }] }),
+  ], { lakehouse: "data", columnsOf }, asModules);
+  assert.deepEqual(bim.model.tables.map(t => t.name), ["duid", "fct", "Metrics"], "a query source and a name given again are left out");
+  assert.deepEqual(bim.model.relationships.map(r => r.name), ["r"], "so are a relationship of two columns and one to a dataset left out");
+  assert.deepEqual(bim.model.tables[2].measures.map(m => [m.name, m.expression]), [["Total", "SUM('fct'[MW])"]],
+    "the first of a name is kept; a metric named as a dataset is left out");
 });
