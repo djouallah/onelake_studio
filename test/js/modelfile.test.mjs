@@ -27,7 +27,7 @@ const ITEMS = {
   empty: [{ name: "nb.Notebook", kind: "Notebook" }],
 };
 
-async function setup({ bim = named, views = [], items = ITEMS, compiler = { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bim }, fabric = {} } = {}) {
+async function setup({ bim = named, views = [], items = ITEMS, compiler = { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bim }, fabric = {}, onelake = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "modelfile-"));
   const models = createModels({
     onelake: {
@@ -36,6 +36,7 @@ async function setup({ bim = named, views = [], items = ITEMS, compiler = { pars
         items: async ws => (items[ws] ? { value: items[ws], at: 0 } : null),
       },
       itemNamed: async () => ({ workspace: "aemo", item: "lake.Lakehouse" }),
+      ...onelake,
     },
     fabric, semviews: { list: async () => views },
     modules: async () => ({ semantic, compiler }),
@@ -138,7 +139,7 @@ test("a local copy of an earlier Ossie spec is read as it is, never rewritten, w
 
 test("a semantic view's model, whose definition Fabric refuses to everyone, is said so, and asked of Fabric once", async () => {
   let asked = 0;
-  const { models, done } = await setup({ fabric: { getBim: async () => {
+  const { models, done } = await setup({ fabric: { listItems: async () => [], getBim: async () => {
     asked++;
     throw new Error("Exporting the model definition failed — Dataset Workload failed to export the dataset with dataset id 2611abb8. " +
       "Cannot export artifact. Semantic model is configured by service apps and has denied access to read the model.");
@@ -151,5 +152,42 @@ test("a semantic view's model, whose definition Fabric refuses to everyone, is s
   });
   assert.equal(models.unsupportedModels.get(models.modelKey(n)), "a semantic view's model");
   assert.equal(asked, 1);
+  await done();
+});
+
+test("a semantic view's model is read from the TMDL Fabric wrote of the view, the one whose metadata.json names it", async () => {
+  const WS = "8c945c1a-f25e-4f19-a7ad-c3a7bfbd0fc9", LH = "8775fcab-f8f0-497a-b1d8-7a0cd3133d09";
+  const tmdl = ["createOrReplace", "\tdatabase v", "\t\tmodel Model", "\t\t\ttable t",
+    "\t\t\t\tcolumn a", "\t\t\t\t\tdataType: int64", "\t\t\t\t\tsourceColumn: a",
+    "\t\t\t\tpartition t = entity", "\t\t\t\t\tmode: directLake", "\t\t\t\t\tsource",
+    "\t\t\t\t\t\tentityName: t", "\t\t\t\t\t\tschemaName: dbo", "\t\t\t\t\t\texpressionSource: E",
+    "\t\t\texpression E =", `\t\t\t\t\tAzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/${WS}/${LH}")`, ""].join("\n");
+  const stored = {
+    "other.Lakehouse/SystemContext/Semantic Views/v/metadata.json": '{"modelObjectId":"another-model"}',
+    "lake.Lakehouse/SystemContext/Semantic Views/v/metadata.json": `{"workspaceId":"${WS}","modelObjectId":"M1"}`,
+    "lake.Lakehouse/SystemContext/Semantic Views/v/v.tmdl": tmdl,
+  };
+  const { models, done } = await setup({
+    fabric: {
+      getBim: async () => { throw new Error("Cannot export artifact. Semantic model is configured by service apps and has denied access to read the model."); },
+      listItems: async () => [{ name: "bare", type: "Lakehouse" }, { name: "other", type: "Lakehouse" }, { name: "wh", type: "Warehouse" }, { name: "lake", type: "Lakehouse" }],
+    },
+    onelake: {
+      readBytes: async (ws, p) => {
+        if (!(p in stored)) throw Object.assign(new Error(`Reading ${p} failed (HTTP 404)`), { status: 404 });
+        return Buffer.from(stored[p]);
+      },
+      files: async (lh, dir) => Object.keys(stored).filter(p => p.startsWith(`${lh.item}/${lh.area}/${dir}/`))
+        .map(p => ({ name: p.split("/").pop(), path: p, isDir: false })),
+    },
+    compiler: { tmslToOssie: doc => ({ name: doc.name, tables: doc.model.tables.map(t => t.name) }), stringifyYaml: o => JSON.stringify(o) },
+  });
+  const n = { kind: "semanticModel", workspace: "tmp", model: "v", modelId: "m1" };
+  const { text } = await models.fetchModel(n);
+  assert.deepEqual(JSON.parse(text), { name: "v", tables: ["t"] });
+  assert.equal(models.unsupportedModels.has(models.modelKey(n)), false);
+  const { readFile } = await import("node:fs/promises");
+  const kept = JSON.parse(await readFile(models.modelBimPath(n), "utf8"));
+  assert.equal(kept.model.tables[0].partitions[0].source.expressionSource, "E", "its TMSL kept beside the copy, as a model.bim is");
   await done();
 });

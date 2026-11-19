@@ -235,7 +235,7 @@ export function mountExplore(root, ctx) {
 
   // Model: the model drawn, or its file as written, by a switch named for the file's format.
   const viewTab = (label, asText) => el('button', { type: 'button', class: 'subtab', role: 'tab', onclick: () => showText(asText) }, label);
-  const diagramTab = viewTab('Diagram', false), fileTab = viewTab(/^bim$/i.test(ctx.ext || '') ? 'BIM' : 'YAML', true);
+  const diagramTab = viewTab('Diagram', false), fileTab = viewTab(/^bim$/i.test(ctx.ext || '') ? 'BIM' : /^tmdl$/i.test(ctx.ext || '') ? 'TMDL' : 'YAML', true);
   const textPre = el('pre', { class: 'text-file', hidden: true });
   // A file that can be saved (ctx.saveFileText) is written in: a box over the coloured <pre>, its own text clear, the
   // <pre> coloured again as it is typed. Save writes it back.

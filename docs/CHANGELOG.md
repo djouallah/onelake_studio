@@ -8,8 +8,8 @@
 - **DAX is amber again** in a model's YAML, without the note under it.
 - **A semantic view in Ossie 0.3.0.dev0 opens.** Its YAML shows in red what Fabric's Publish refuses, and why on hover:
   `OSSIE_SQL_2026`, for one, fails the whole Publish, even beside DAX, where `ANSI_SQL` is only left out.
-- **A semantic view's model says what it is.** Fabric lets no one read its definition: clicking it now says to open
-  the view, in place of Fabric's error.
+- **A semantic view's model opens.** Fabric lets no one read its definition, so it is read from the TMDL Fabric wrote
+  of the view in `SystemContext/`. Clicking that `.tmdl` opens the model too, read-only, with its TMDL as text.
 - **Show plan has a SQL tab** in Visual: the model's SQL the shelves make, and the SQL it compiles to.
 
 ## 0.2.27

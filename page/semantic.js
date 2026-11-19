@@ -20,6 +20,10 @@
 import { PINS, npmFile, npmEsm } from "./cdn.js";
 import { quoteIdent, sqlStr, sqlPart, stripBom, basename } from "./paths.js";
 import { EXPLORE_CASTS, withSource } from "./explore/query.js";
+import { tmdlToTmsl } from "./tmdl.js";
+
+// A model written as TMDL (Fabric's SystemContext/Semantic Views/<view>/<view>.tmdl), as TMSL.
+export { tmdlToTmsl };
 
 const lc = s => String(s).toLowerCase();
 
@@ -197,6 +201,10 @@ export function bimOf(path, text, mods) {
       throw new Error(`${basename(path)} is not an Ossie model: it has no datasets`);
     return mods.ossieToTmsl(doc);
   }
+  if (/\.tmdl$/i.test(String(path))) {
+    try { return tmdlToTmsl(body); }
+    catch (e) { throw new Error(`${basename(path)} is not a TMDL model: ${e.message}`); }
+  }
   try { return JSON.parse(body); }
   catch (e) { throw new Error(`${basename(path)} is not a TMSL model: ${e.message}`); }
 }
@@ -260,6 +268,9 @@ export const registerModel = (fileName, text, modules = null, schema = null, nam
 // A Fabric semantic view: <lakehouse>/Context/Semantic Views/<view>/, its .yaml in Microsoft's format
 // (https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-yaml-reference). [, item, view] of a path in one.
 export const FABRIC_VIEW_PATH = /^([^/]+)\/Context\/Semantic Views\/([^/]+)\//;
+// The TMDL Fabric's Publish writes of a view (<lakehouse>/SystemContext/Semantic Views/<view>/<view>.tmdl): the
+// model Fabric made, whole. [, item, view] of a path to one.
+export const SYSTEM_VIEW_TMDL = /^([^/]+)\/SystemContext\/Semantic Views\/([^/]+)\/[^/]+\.tmdl$/i;
 // What Fabric's Publish reads (0.2.0.dev0, Microsoft's format), and the versions a view opens in: Ossie 0.3 too, its
 // YAML showing in red what Publish refuses of it (explore/pretty.js publishRefusals).
 export const FABRIC_VIEW_VERSION = "0.2.0.dev0";

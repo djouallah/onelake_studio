@@ -114,6 +114,27 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     await fetchModel(n, { fresh: true, say });
     return fsp.readFile(modelBimPath(n));
   }
+  // The model Fabric's Publish made of a semantic view, from the TMDL it wrote: <lakehouse>/SystemContext/Semantic
+  // Views/<model>/, in the lakehouse whose metadata.json there names this model (modelObjectId). As TMSL bytes, as
+  // getBim answers; null when no lakehouse of the workspace has it.
+  async function publishedTmsl(n) {
+    const dir = `Semantic Views/${n.model}`;
+    for (const l of (await fabric.listItems(n.workspace)).filter(i => i.type === 'Lakehouse')) {
+      const item = `${l.name}.Lakehouse`;
+      let meta;
+      try {
+        meta = JSON.parse(stripBom(Buffer.from(await onelake.readBytes(n.workspace, `${item}/SystemContext/${dir}/metadata.json`)).toString('utf8')));
+      } catch (_) { continue; }   // not this lakehouse's view
+      if (String(meta && meta.modelObjectId).toLowerCase() !== String(n.modelId).toLowerCase()) continue;
+      const tmdl = (await onelake.files({ workspace: n.workspace, item, area: 'SystemContext' }, dir, { fresh: true }))
+        .find(e => !e.isDir && /\.tmdl$/i.test(e.name));
+      if (!tmdl) return null;
+      const text = stripBom(Buffer.from(await onelake.readBytes(n.workspace, tmdl.path)).toString('utf8'));
+      const { semantic } = await modules();
+      return Buffer.from(JSON.stringify(semantic.tmdlToTmsl(text)));
+    }
+    return null;
+  }
   function fetchModel(n, { fresh = false, say = () => {} } = {}) {
     const path = modelPath(n);
     const key = `${path}|${!!fresh}`.toLowerCase();
@@ -127,11 +148,17 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       let bim;
       try { bim = await fabric.getBim(n.workspace, n.modelId); }
       catch (e) {
-        // A semantic view's model (Fabric's Publish made it): Fabric refuses its definition to everyone.
+        // A semantic view's model (Fabric's Publish made it): Fabric refuses its definition to everyone, but
+        // wrote it whole as TMDL beside the view. Read from there; with none found, it is said what it is.
         if (!VIEW_MODEL_REFUSED.test(String((e && e.message) || ''))) throw e;
-        unsupportedModels.set(modelKey(n), VIEW_MODEL);
-        onModelChanged(n);
-        throw Object.assign(new Error(unsupportedNote(n, VIEW_MODEL)), { unsupported: true });
+        say("reading it from its semantic view's TMDL…");
+        bim = await publishedTmsl(n).catch(err => { log(`${n.workspace}/${n.model}: its TMDL could not be read — ${err.message}`); return null; });
+        if (!bim) {
+          unsupportedModels.set(modelKey(n), VIEW_MODEL);
+          onModelChanged(n);
+          throw Object.assign(new Error(unsupportedNote(n, VIEW_MODEL)), { unsupported: true });
+        }
+        log(`${n.workspace}/${n.model}: a semantic view's model, read from its TMDL in SystemContext/`);
       }
       const bimBytes = Buffer.from(bim);
       let doc;

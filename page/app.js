@@ -242,7 +242,11 @@ async function selectFile(file) {
   // A .yaml of a Fabric semantic view (Context/Semantic Views/<view>/) opens the view, all its files merged.
   const view = semantic.FABRIC_VIEW_PATH.exec(String(file.path));
   if (view && /\.yaml$/.test(file.name)) return openFabricView(file, view[2]);
-  // Any other file in Context/ or SystemContext/ (a view's TMDL) is read as a document: only Files/ holds the
+  // The TMDL Fabric's Publish wrote of a view (SystemContext/Semantic Views/<view>/): the model Fabric made, opened as
+  // one, read only. Fabric refuses that model's definition to everyone, so this is the way to it.
+  const published = semantic.SYSTEM_VIEW_TMDL.exec(String(file.path));
+  if (published) return openModelView({ ...file, systemView: true, modelName: published[2], label: `${published[2]} (published model)` });
+  // Any other file in Context/ or SystemContext/ (metadata.json) is read as a document: only Files/ holds the
   // model files and queries OneLake Studio opens as its own, and saves back.
   const inFiles = /^[^/]+\/Files\//.test(String(file.path));
   if (inFiles && fileExt(file.name) === 'bim') return openModelView(file);
@@ -448,7 +452,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
         : undefined,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
       // A model file in OneLake, made a Power BI semantic model as the tree's ⛁ does it. A semantic model is one already.
-      createSemanticModel: fromOneLake
+      createSemanticModel: fromOneLake && !file.systemView
         ? () => engine.createSemanticModel({ file: file.name, text: bim, workspace: lakehouse.workspace, path: file.path })
         : undefined,
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
@@ -477,8 +481,8 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       openOnText,
       // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's
       // local copy (Fabric's is the model, and Refresh reads it again) nor an app's file (its model is in a zip).
-      // A Fabric semantic view is read only: Fabric reads its files.
-      saveFileText: !file.appFile && !file.fabricView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+      // A Fabric semantic view is read only: Fabric reads its files. So is the TMDL Fabric made of one (SystemContext/).
+      saveFileText: !file.appFile && !file.fabricView && !file.systemView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
         ? async edited => {
           // A text that doesn't open as a model is not written: the file stays one that opens.
           await semantic.checkModel(file.name, edited);

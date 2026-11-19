@@ -526,7 +526,10 @@ once and counts, though the answer still comes through the host.
   - **A folder of `Context/` or `SystemContext/`** (`dirReadOnly`): Copy SQL Name and Refresh. A lakehouse shows
     both after Files, closed, and drawing them asks nothing. `Context/` holds a semantic view's YAML, and
     `SystemContext/` the TMDL Fabric makes of it, marked read-only. Their files open as Files/'s do, a `.bim` or
-    `.sql` as a document. A `.yaml` in `Context/Semantic Views/<view>/` opens the view as a model, as Fabric's
+    `.sql` as a document. The `.tmdl` in `SystemContext/Semantic Views/<view>/` opens as the model Fabric made, read
+    only, its text tab the TMDL ([`page/tmdl.js`](../page/tmdl.js) reads TMDL as TMSL: the script Fabric wraps it in,
+    tables, columns, measures, partitions, hierarchies, relationships and expressions; annotations and lineage left
+    out). A `.yaml` in `Context/Semantic Views/<view>/` opens the view as a model, as Fabric's
     Publish makes it (`fabricViewBim` in [`page/semantic.js`](../page/semantic.js)). Every `.yaml` in the folder
     is merged, and each dataset is a Direct Lake table with the columns its lake table has, from the table's
     metadata. The DAX metrics go in a table named `Metrics`. Microsoft's version (0.2.0.dev0) opens, and Ossie
@@ -545,9 +548,11 @@ once and counts, though the answer still comes through the host.
     in plain words). Fabric compiles the view into
     its TMDL in `SystemContext/` and the model of the view's name. Studio says what Fabric answered: the model's
     name, or Fabric's diagnostics, each by file and line, also in the log. It then lists `SystemContext/` and the
-    workspace's semantic models again. The model Publish makes can't be opened from the tree: Fabric refuses its
-    definition to everyone ("configured by service apps"), so the tree marks it a semantic view's model and says to
-    open the view (`VIEW_MODEL` in [`core/models/models.js`](../core/models/models.js)). Upload, Save and `COPY … TO` are refused for both (`AREAS` in
+    workspace's semantic models again. Fabric refuses the definition of the model Publish makes to everyone
+    ("configured by service apps"), so a click on it in the tree reads it from that TMDL: in the workspace's lakehouse
+    whose `SystemContext/Semantic Views/<model>/metadata.json` names it (`modelObjectId`), as if Fabric had given it
+    (`publishedTmsl` in [`core/models/models.js`](../core/models/models.js)). With no such TMDL, the tree marks it a
+    semantic view's model and says to open the view. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
     [`core/names.js`](../core/names.js)). The only thing Studio writes to `Context/` is a semantic model's Export YAML.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
