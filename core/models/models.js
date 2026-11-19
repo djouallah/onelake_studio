@@ -12,6 +12,11 @@ const { readFromOneLake } = require('./sqlendpoint');
 const { fmtBytes, sqlKind, displayName, MODEL_KIND, modelSqlName, stripBom, splitItem, sqlPart, hasFilesArea, itemKind } = require('../names');
 const { viewOf } = require('./semanticview');
 
+// What Fabric says when asked for the definition of a model its Publish made of a semantic view (seen on
+// every such model, 2026-11-19): such a model never opens, and the tree marks it as that.
+const VIEW_MODEL_REFUSED = /configured by service apps|denied access to read the model/i;
+const VIEW_MODEL = "a semantic view's model";
+
 /**
  * @param {object} o
  * @param {object} o.onelake  onelake.js
@@ -81,8 +86,10 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   // for this session: key -> what kind it is. The tree marks them,
   // and a second click says so again without reading the definition from Fabric again.
   const unsupportedModels = new Map();
-  const unsupportedNote = (n, mode) =>
-    `${n.model} is ${mode}. OneLake Studio opens Direct Lake models whose tables it can find in OneLake.`;
+  const unsupportedNote = (n, mode) => (mode === VIEW_MODEL
+    ? `${n.model} is the model Fabric's Publish made of a semantic view, and Fabric lets no one read its definition. ` +
+      `Open the view instead: Context/Semantic Views/${n.model} in its lakehouse.`
+    : `${n.model} is ${mode}. OneLake Studio opens Direct Lake models whose tables it can find in OneLake.`);
 
   // A semantic model, opened from the tree or named by a query: its definition (Fabric's
   // getDefinition, TMSL), kept as a local copy in Apache Ossie — modelPath(n), ~/OneLakeStudio/
@@ -117,7 +124,15 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         if (kept != null) return { path, text: kept };
       }
       say('reading its definition from Fabric…');
-      const bim = await fabric.getBim(n.workspace, n.modelId);
+      let bim;
+      try { bim = await fabric.getBim(n.workspace, n.modelId); }
+      catch (e) {
+        // A semantic view's model (Fabric's Publish made it): Fabric refuses its definition to everyone.
+        if (!VIEW_MODEL_REFUSED.test(String((e && e.message) || ''))) throw e;
+        unsupportedModels.set(modelKey(n), VIEW_MODEL);
+        onModelChanged(n);
+        throw Object.assign(new Error(unsupportedNote(n, VIEW_MODEL)), { unsupported: true });
+      }
       const bimBytes = Buffer.from(bim);
       let doc;
       try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }

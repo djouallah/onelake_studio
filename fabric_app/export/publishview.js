@@ -28,12 +28,22 @@ function diagnosticLine(d) {
  */
 function createViewPublisher({ fabric, getToken, apiBase = FABRIC_API, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
   const call = (url, init = {}) => authedFetch(url, { getToken, timeoutMs: TIMEOUT_MS, who: 'the Fabric API', ...init });
+  const underWay = new Map();   // lower-cased workspace|lakehouse|view -> its Publish
 
   /**
    * Publish the view `view` of `lakehouse` (its name) in `workspace` (its name): { modelId, warnings }. A failure
-   * throws, with Fabric's diagnostics (`diagnostics`, one line each, by file and line).
+   * throws, with Fabric's diagnostics (`diagnostics`, one line each, by file and line). Fabric finds the view's
+   * model by its name, and makes one when there is none: two Publishes of a view at once each found none and each
+   * made one, and every Publish after was refused (DuplicateDatasetNamesInWorkspace). So a Publish of a view while
+   * one of it is under way, from the tree or the Model tab, joins that one.
    */
-  async function publish(workspace, lakehouse, view) {
+  function publish(workspace, lakehouse, view) {
+    const key = `${workspace}|${lakehouse}|${view}`.toLowerCase();
+    if (!underWay.has(key)) underWay.set(key, publishNow(workspace, lakehouse, view).finally(() => underWay.delete(key)));
+    return underWay.get(key);
+  }
+
+  async function publishNow(workspace, lakehouse, view) {
     const wsId = await fabric.workspaceId(workspace);
     const lh = (await fabric.listItems(workspace))
       .find(i => i.type === 'Lakehouse' && i.name.toLowerCase() === String(lakehouse).toLowerCase());
@@ -52,7 +62,10 @@ function createViewPublisher({ fabric, getToken, apiBase = FABRIC_API, sleep = m
         try { diagnostics.push(...(JSON.parse(m.message).diagnostics || []).map(diagnosticLine)); }
         catch (_) { if (m && m.message) diagnostics.push(String(m.message)); }
       }
-      const why = diagnostics.length ? diagnostics.join('\n')
+      const why = body && body.errorCode === 'DuplicateDatasetNamesInWorkspace'
+        ? `${workspace} has more than one semantic model named ${view}, and Publish updates the one of that name. ` +
+          `Delete all but one in Fabric: the view's is the one SystemContext/Semantic Views/${view}/metadata.json names (modelObjectId)`
+        : diagnostics.length ? diagnostics.join('\n')
         : (body && (body.message || body.errorCode)) || (typeof body === 'string' && body) || `HTTP ${r.status}`;
       throw Object.assign(new Error(`Fabric did not publish ${view} (HTTP ${r.status}): ${why}`), { status: r.status, diagnostics });
     }

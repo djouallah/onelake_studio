@@ -529,14 +529,24 @@ once and counts, though the answer still comes through the host.
     `.sql` as a document. A `.yaml` in `Context/Semantic Views/<view>/` opens the view as a model, as Fabric's
     Publish makes it (`fabricViewBim` in [`page/semantic.js`](../page/semantic.js)). Every `.yaml` in the folder
     is merged, and each dataset is a Direct Lake table with the columns its lake table has, from the table's
-    metadata. The DAX metrics go in a table named `Metrics`. Only Microsoft's version (0.2.0.dev0) opens. It is
-    read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric reads those files.
+    metadata. The DAX metrics go in a table named `Metrics`. Microsoft's version (0.2.0.dev0) opens, and Ossie
+    0.3.0.dev0 too. It is read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric
+    reads those files. Its YAML shows in red, and why on hover, what Fabric's Publish refuses as far as a line shows
+    it: a version other than 0.2.0.dev0, 0.3's `nonportable_extensions`, an empty `dialects` or `datasets`, a source
+    that isn't schema.table, a relationship's description or second column, a name given twice
+    (`publishRefusals` in [`pretty.js`](../page/explore/pretty.js)). As in any model's YAML, an expression in a
+    dialect other than Ossie SQL (DAX, say) and an extensions block are amber.
   - **A view's folder** (`Context/Semantic Views/<view>`, `semanticViewDir`) **and its `.yaml`** (`semanticViewFile`):
     **Publish** beside them, as Fabric's own right-click has it. It is one request to Fabric's beta API, made in the background with the status bar saying
-    so ([`fabric_app/export/publishview.js`](../fabric_app/export/publishview.js)). Fabric compiles the view into
+    so ([`fabric_app/export/publishview.js`](../fabric_app/export/publishview.js)). A Publish of a view while one of
+    it is under way joins it: Fabric finds the view's model by its name and makes one when there is none, so two at
+    once made two models, and Fabric then refused every Publish of the view (`DuplicateDatasetNamesInWorkspace`, said
+    in plain words). Fabric compiles the view into
     its TMDL in `SystemContext/` and the model of the view's name. Studio says what Fabric answered: the model's
     name, or Fabric's diagnostics, each by file and line, also in the log. It then lists `SystemContext/` and the
-    workspace's semantic models again. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
+    workspace's semantic models again. The model Publish makes can't be opened from the tree: Fabric refuses its
+    definition to everyone ("configured by service apps"), so the tree marks it a semantic view's model and says to
+    open the view (`VIEW_MODEL` in [`core/models/models.js`](../core/models/models.js)). Upload, Save and `COPY … TO` are refused for both (`AREAS` in
     [`core/names.js`](../core/names.js)). The only thing Studio writes to `Context/` is a semantic model's Export YAML.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
@@ -676,8 +686,9 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
     chart's ECharts option, the rest through `formatLook` into Visual's own drawing); the total line runs the query
     again. A tile from before kept its format on the tile: it is read as its Visual's (`tileOf` in
     [`report.js`](../page/explore/report.js)), and the first save writes it there.
-  - **Show plan** puts, in place of the view, the profile of the shelves' query (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
-    costly operators) next to its plan tree.
+  - **Show plan** puts, in place of the view, the shelves' query: its SQL, shown and never written (the model's SQL
+    the shelves make, and the SQL it compiles to, each with Copy), its profile (`profile.js`: DuckDB's `EXPLAIN
+    ANALYZE` as totals, a timeline and the costly operators) and its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
 - **Report:** pages of tiles, each tile a Visual (`pivot`, its shelves) or text, drawn as Visual draws it or as
   Markdown ([`report.js`](../page/explore/report.js)). No tile holds SQL: a tile's query is Visual's, from its shelves.

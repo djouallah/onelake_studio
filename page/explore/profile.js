@@ -231,16 +231,20 @@ export function createPlanView(ctx) {
   return root;
 }
 
-// The SQL tab: the statement, and Copy. Runs nothing.
+// The SQL tab: the statement, and Copy. Runs nothing. `sql` is one statement, or several to show one after another,
+// [{ label, text }], each with its heading and its own Copy (Visual's: the model's SQL, and the SQL it compiles to).
 function sqlView(sql, copyText) {
-  const text = String(sql);
-  const copy = el('button', { type: 'button', class: 'btn-explore pf-copy' }, 'Copy');
-  copy.onclick = async () => {
-    try {
-      await (copyText ? copyText(text) : navigator.clipboard.writeText(text));
-      copy.textContent = 'Copied';
-    } catch (_) { copy.textContent = 'Could not copy'; }
-    setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+  const one = text => {
+    const copy = el('button', { type: 'button', class: 'btn-explore pf-copy' }, 'Copy');
+    copy.onclick = async () => {
+      try {
+        await (copyText ? copyText(text) : navigator.clipboard.writeText(text));
+        copy.textContent = 'Copied';
+      } catch (_) { copy.textContent = 'Could not copy'; }
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+    };
+    return el('div', { class: 'pf-sql' }, copy, el('pre', { class: 'sm-plan' }, text));
   };
-  return el('div', { class: 'pf-sql' }, copy, el('pre', { class: 'sm-plan' }, text));
+  if (!Array.isArray(sql)) return one(String(sql));
+  return el('div', { class: 'pf-sqls' }, sql.flatMap(s => [el('h4', { class: 'pf-sql-label' }, s.label), one(String(s.text))]));
 }

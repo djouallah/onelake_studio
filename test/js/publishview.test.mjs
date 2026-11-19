@@ -45,3 +45,31 @@ test("what Fabric refused is said as Fabric said it, by file and line", async ()
   await assert.rejects(publishWith(() => res(403, { errorCode: "Forbidden", message: "Not allowed" })), /HTTP 403\): Not allowed/);
   await assert.rejects(publishWith(() => res(200, {}), "nope"), /does not list a lakehouse named nope/);
 });
+
+test("a Publish of a view while one of it is under way joins it: one POST, so Fabric makes one model", async () => {
+  const saved = globalThis.fetch;
+  let posts = 0, answer;
+  globalThis.fetch = async () => { posts++; return new Promise(r => { answer = r; }); };
+  try {
+    const p = createViewPublisher({ fabric, getToken: async () => "t" });
+    const first = p.publish("analytics_as_code", "data", "nem");
+    const again = p.publish("Analytics_as_code", "Data", "NEM");
+    await new Promise(r => setTimeout(r, 10));
+    answer(res(200, { semanticModel: { id: "m" }, warnings: [] }));
+    assert.deepEqual(await Promise.all([first, again]), [{ modelId: "m", warnings: [] }, { modelId: "m", warnings: [] }]);
+    assert.equal(posts, 1);
+    // Once it is done, the next Publish is one of its own.
+    const next = p.publish("analytics_as_code", "data", "nem");
+    await new Promise(r => setTimeout(r, 10));
+    answer(res(200, { semanticModel: { id: "m" }, warnings: [] }));
+    await next;
+    assert.equal(posts, 2);
+  } finally { globalThis.fetch = saved; }
+});
+
+test("Fabric refusing a view whose name two models have says what to do", async () => {
+  await assert.rejects(publishWith(() => res(400, { errorCode: "DuplicateDatasetNamesInWorkspace",
+    moreDetails: [{ errorCode: "ModelingServiceError_Reason", message: "Expected exactly one model named nem in the workspace." }],
+    message: "PowerBI service client received error HTTP response." })),
+  /analytics_as_code has more than one semantic model named studio spike, .*Delete all but one in Fabric/);
+});

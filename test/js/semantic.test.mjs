@@ -139,31 +139,82 @@ test("Model's YAML sets an extensions block apart, line by line, and nothing aft
   assert.deepEqual(extensionVendors("datasets: []\n"), []);
 });
 
-test("Model's YAML sets apart extensions only: an expression in DAX, or any dialect, is not", async () => {
+test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, its whole item", async () => {
   const { prettyModelText } = await import("../../page/explore/pretty.js");
   const yaml = [
     "metrics:",                              // 0
     "  - name: ytd",                         // 1
     "    expression:",                       // 2
     "      dialects:",                       // 3
-    "        - dialect: DAX",                // 4
-    "          expression: |",               // 5
-    "            TOTALYTD([mw],",            // 6
-    "              'date'[date])",           // 7
-    "        - expression: SUM(mw)",         // 8
-    "          dialect: ANSI_SQL",           // 9
+    "        - dialect: DAX",                // 4  amber
+    "          expression: |",               // 5  amber
+    "            TOTALYTD([mw],",            // 6  amber
+    "              'date'[date])",           // 7  amber
+    "        - expression: SUM(mw)",         // 8  amber: its dialect comes after
+    "          dialect: ANSI_SQL",           // 9  amber
     "        - dialect: OSSIE_SQL_2026",     // 10
     "          expression: SUM(mw)",         // 11
     "    datatype: Double",                  // 12
     "  - name: total",                       // 13
     "    expression:",                       // 14
     "      sql: SUM(mw)",                    // 15
-    "    nonportable_extensions:",           // 16 amber, as before
+    "    nonportable_extensions:",           // 16 amber
     "      - vendor_name: POWER_BI",         // 17 amber
     "version: 0.3.0.dev0",                   // 18
   ].join("\n");
-  const amber = prettyModelText(yaml, "yaml").split("\n").map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
-  assert.deepEqual(amber, [16, 17]);
+  const html = prettyModelText(yaml, "yaml");
+  const amber = html.split("\n").map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
+  assert.deepEqual(amber, [4, 5, 6, 7, 8, 9, 16, 17]);
+  assert.doesNotMatch(html, /tk-bad/, "red only for a Fabric semantic view");
+});
+
+test("a Fabric semantic view's YAML shows in red what Fabric's Publish refuses, and why on hover", async () => {
+  const { prettyModelText } = await import("../../page/explore/pretty.js");
+  const yaml = [
+    "# a.yaml",                                   // 0
+    "version: 0.3.0.dev0",                        // 1  red: Publish reads 0.2.0.dev0
+    "name: v",                                    // 2
+    "datasets:",                                  // 3
+    "  - name: fct",                              // 4
+    "    source: mart.fct",                       // 5
+    "    nonportable_extensions:",                // 6  red: 0.3's key
+    "      - vendor_name: POWER_BI",              // 7  red
+    "        data: { x: 1 }",                     // 8  red
+    "    fields:",                                // 9
+    "      - name: fct",                          // 10 a field's name: not a dataset's
+    "  - name: q",                                // 11
+    "    source: SELECT 1",                       // 12 red: not schema.table
+    "relationships:",                             // 13
+    "  - name: r",                                // 14
+    "    description: d",                         // 15 red
+    "    from: fct",                              // 16
+    "    from_columns: [a, b]",                   // 17 red
+    "    to_columns:",                            // 18 red
+    "      - a",                                  // 19 red
+    "      - b",                                  // 20 red
+    "metrics:",                                   // 21
+    "  - name: Total",                            // 22
+    "    expression:",                            // 23
+    "      dialects:",                            // 24
+    "        - dialect: DAX",                     // 25 amber
+    "          expression: SUM(x)",               // 26 amber
+    "  - name: none",                             // 27
+    "    expression: { dialects: [] }",           // 28 red
+    "# b.yaml",                                   // 29
+    "version: 0.2.0.dev0",                        // 30
+    "name: v",                                    // 31
+    "metrics:",                                   // 32
+    "  - name: total",                            // 33 red: Total again, whatever its case
+    "  - name: FCT",                              // 34 red: a dataset's name
+  ].join("\n");
+  const lines = prettyModelText(yaml, "yaml", { publish: true }).split("\n");
+  const red = lines.map((l, i) => (l.startsWith('<span class="tk-bad"') ? i : -1)).filter(i => i >= 0);
+  assert.deepEqual(red, [1, 6, 7, 8, 12, 15, 17, 18, 19, 20, 28, 33, 34]);
+  assert.match(lines[1], /title="Fabric&#39;s Publish reads version 0\.2\.0\.dev0 only"/);
+  assert.match(lines[33], /title="A metric named total is in this view already/);
+  const amber = lines.map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
+  assert.deepEqual(amber, [25, 26], "red wins over amber; DAX stays amber");
+  assert.doesNotMatch(prettyModelText("version: 0.2.0.dev0\nname: v\ndatasets:\n  - name: a\n    source: dbo.a\n", "yaml", { publish: true }), /tk-bad/);
 });
 
 test("a profile shows no planning or rows scanned it doesn't carry", async () => {

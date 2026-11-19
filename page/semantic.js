@@ -260,7 +260,10 @@ export const registerModel = (fileName, text, modules = null, schema = null, nam
 // A Fabric semantic view: <lakehouse>/Context/Semantic Views/<view>/, its .yaml in Microsoft's format
 // (https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-yaml-reference). [, item, view] of a path in one.
 export const FABRIC_VIEW_PATH = /^([^/]+)\/Context\/Semantic Views\/([^/]+)\//;
+// What Fabric's Publish reads (0.2.0.dev0, Microsoft's format), and the versions a view opens in: Ossie 0.3 too, its
+// YAML showing in red what Publish refuses of it (explore/pretty.js publishRefusals).
 export const FABRIC_VIEW_VERSION = "0.2.0.dev0";
+export const FABRIC_VIEW_OPENS = [FABRIC_VIEW_VERSION, "0.3.0.dev0"];
 
 /**
  * A Fabric semantic view as TMSL, the model Fabric's Publish makes of it: its files (`files`, [{ path, text }]) merged
@@ -276,8 +279,8 @@ export async function fabricViewBim(view, files, { lakehouse, columnsOf }, modul
     let doc;
     try { doc = mods.parseYaml(stripBom(f.text)); } catch (e) { throw new Error(`${basename(f.path)} is not YAML: ${e.message}`); }
     if (!doc || typeof doc !== "object") throw new Error(`${basename(f.path)} is empty: a view's file says its version and name at least`);
-    if (String(doc.version) !== FABRIC_VIEW_VERSION) {
-      throw new Error(`${basename(f.path)} is version ${doc.version ?? "(none)"}: a Fabric semantic view is ${FABRIC_VIEW_VERSION}`);
+    if (!FABRIC_VIEW_OPENS.includes(String(doc.version))) {
+      throw new Error(`${basename(f.path)} is version ${doc.version ?? "(none)"}: a Fabric semantic view is ${FABRIC_VIEW_OPENS.join(" or ")}`);
     }
     return { file: basename(f.path), doc };
   });

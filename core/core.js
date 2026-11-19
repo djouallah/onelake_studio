@@ -609,11 +609,13 @@ function createCore({
   // SystemContext/, and its model in the workspace's semantic models. Answers { modelId, warnings }.
   const viewPublisher = createViewPublisher({ fabric, getToken: fabricToken });
   const publishView = async ({ workspace, item, view }) => {
-    const r = await viewPublisher.publish(workspace, String(item).replace(/.[^.]+$/, ''), view);
-    const sys = { workspace, item, area: 'SystemContext' };
-    for (const d of ['', 'Semantic Views', `Semantic Views/${view}`]) onelake.files(sys, d, { fresh: true }).catch(() => {});
-    onelake.models(workspace, { fresh: true }).catch(() => {});
-    return r;
+    try {
+      return await viewPublisher.publish(workspace, String(item).replace(/.[^.]+$/, ''), view);
+    } finally {
+      const sys = { workspace, item, area: 'SystemContext' };
+      for (const d of ['', 'Semantic Views', `Semantic Views/${view}`]) onelake.files(sys, d, { fresh: true }).catch(() => {});
+      onelake.models(workspace, { fresh: true }).catch(() => {});
+    }
   };
   const exporter = createExport({
     connectivity, modules: () => agent.modules(), appToken, powerBiToken: fabricToken, fabric,

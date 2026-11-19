@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: Publish could make several models of one semantic view.** Two Publishes of a view at once, from the tree
+  and the Model tab say, each made a model, and Fabric then refused every Publish after. A second Publish now joins
+  the one under way, and Fabric's refusal says which models to delete.
+- **DAX is amber again** in a model's YAML, without the note under it.
+- **A semantic view in Ossie 0.3.0.dev0 opens.** Its YAML shows in red what Fabric's Publish refuses, and why on hover.
+- **A semantic view's model says what it is.** Fabric lets no one read its definition: clicking it now says to open
+  the view, in place of Fabric's error.
+- **Show plan has a SQL tab** in Visual: the model's SQL the shelves make, and the SQL it compiles to.
+
 ## 0.2.27
 
 - **A lakehouse's `Context/` and `SystemContext/` folders are in the tree.** Fabric made them for semantic views:

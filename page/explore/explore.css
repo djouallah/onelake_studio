@@ -91,6 +91,9 @@ section.modelOpen #chartBtn { display: none; }
 /* A nonportable_extensions block: amber, with a bar down its left that moves no text. */
 .tk-ext, .tk-ext span { color: var(--vscode-editorWarning-foreground, #cca700); }
 .tk-ext { box-shadow: inset 2px 0 0 var(--vscode-editorWarning-foreground, #cca700); }
+/* What Fabric's Publish refuses in a semantic view's YAML: red, and why on hover (pretty.js publishRefusals). */
+.tk-bad, .tk-bad span { color: var(--vscode-editorError-foreground, #f14c4c); }
+.tk-bad { box-shadow: inset 2px 0 0 var(--vscode-editorError-foreground, #f14c4c); cursor: help; }
 .text-file-note { margin: var(--gap) var(--gutter) 0; font-size: 12px; color: var(--muted); }
 .text-file-note[hidden] { display: none; }
 .text-file-note .swatch { display: inline-block; width: 3px; height: 0.9em; margin-right: 0.45rem; vertical-align: -0.1em;
@@ -309,6 +312,9 @@ section.modelOpen #chartBtn { display: none; }
 .pf-sql { position: relative; align-self: flex-start; max-width: min(100%, 100ch); box-sizing: border-box; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.7rem 0.85rem; }
 .pf-sql .sm-plan { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 4.5rem; }
 .pf-copy { position: absolute; top: 0.5rem; right: 0.5rem; background: var(--card); }
+.pf-sqls { display: flex; flex-direction: column; gap: 0.4rem; }
+.pf-sql-label { margin: 0.5rem 0 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.pf-sql-label:first-child { margin-top: 0; }
 .pf-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .pf-wait { display: flex; align-items: center; gap: 0.7rem; padding: 2rem 0.5rem; font-size: 13px; font-weight: 600; color: var(--text); }
 .pf-wait-time { font-variant-numeric: tabular-nums; color: var(--muted); }

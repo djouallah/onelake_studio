@@ -27,7 +27,7 @@ const ITEMS = {
   empty: [{ name: "nb.Notebook", kind: "Notebook" }],
 };
 
-async function setup({ bim = named, views = [], items = ITEMS, compiler = { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bim } } = {}) {
+async function setup({ bim = named, views = [], items = ITEMS, compiler = { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bim }, fabric = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "modelfile-"));
   const models = createModels({
     onelake: {
@@ -37,7 +37,7 @@ async function setup({ bim = named, views = [], items = ITEMS, compiler = { pars
       },
       itemNamed: async () => ({ workspace: "aemo", item: "lake.Lakehouse" }),
     },
-    fabric: {}, semviews: { list: async () => views },
+    fabric, semviews: { list: async () => views },
     modules: async () => ({ semantic, compiler }),
     modelsFolder: () => dir, account: () => "a", oldModels: join(dir, "old"),
     nameTables: async () => [], notify() {}, onModelChanged() {}, log() {},
@@ -133,5 +133,23 @@ test("a local copy of an earlier Ossie spec is read as it is, never rewritten, w
   assert.equal((await models.fetchModel(n)).text, before);
   assert.equal(await readFile(path, "utf8"), before);
   assert.equal(written, 0);
+  await done();
+});
+
+test("a semantic view's model, whose definition Fabric refuses to everyone, is said so, and asked of Fabric once", async () => {
+  let asked = 0;
+  const { models, done } = await setup({ fabric: { getBim: async () => {
+    asked++;
+    throw new Error("Exporting the model definition failed — Dataset Workload failed to export the dataset with dataset id 2611abb8. " +
+      "Cannot export artifact. Semantic model is configured by service apps and has denied access to read the model.");
+  } } });
+  const n = { kind: "semanticModel", workspace: "tmp", model: "lakeci", modelId: "2611abb8" };
+  await assert.rejects(models.fetchModel(n), e => {
+    assert.equal(e.unsupported, true);
+    assert.match(e.message, /^lakeci is the model Fabric's Publish made of a semantic view, .*Context\/Semantic Views\/lakeci/);
+    return true;
+  });
+  assert.equal(models.unsupportedModels.get(models.modelKey(n)), "a semantic view's model");
+  assert.equal(asked, 1);
   await done();
 });

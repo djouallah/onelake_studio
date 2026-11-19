@@ -59,6 +59,7 @@ const REPORT_POLL_MS = 2000;
 //                    a Fabric app (fabric_app/export/exportapp.js; `state`, the shelves, or null), on what the model
 //                    is, so nothing is asked here; answers what to say when it is done
 //   publishView()  (optional) a Fabric semantic view's Publish button, on the Model page: what to say after
+//   fabricView       (optional) true for a Fabric semantic view: its YAML shows what Fabric's Publish refuses, in red
 //   createSemanticModel()  (optional) a model file's Create Semantic Model button, on the Model page:
 //                    the tree's own (fabric_app/export/exportflow.js), its dialog the host's; answers what to say
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
@@ -1050,7 +1051,7 @@ export function mountExplore(root, ctx) {
         textBox.value = ctx.text;
         colourBox();
       } else {
-        const html = prettyModelText(ctx.text, ctx.ext);
+        const html = prettyModelText(ctx.text, ctx.ext, { publish: !!ctx.fabricView });
         if (html == null) textPre.textContent = ctx.text; else textPre.innerHTML = html;
       }
     }
@@ -1072,7 +1073,7 @@ export function mountExplore(root, ctx) {
   function colourBox() {
     clearTimeout(colourTimer);
     const text = textBox.value;
-    const html = prettyModelText(text, ctx.ext, { asIs: true, max: LIVE_COLOUR_MAX });
+    const html = prettyModelText(text, ctx.ext, { asIs: true, max: LIVE_COLOUR_MAX, publish: !!ctx.fabricView });
     if (html == null) textPre.textContent = text + '\n'; else textPre.innerHTML = html + '\n';
   }
   if (editable) {
@@ -1197,9 +1198,10 @@ export function mountExplore(root, ctx) {
     });
   }
 
-  // --- Show plan: in place of the view, the plan of the query its shelves make: the profile
-  // (EXPLAIN ANALYZE, which runs the query once more) and the tree. Visual has no SQL box: its
-  // query is always the shelves' (a JSON visual query, the SQL made from it behind the scenes).
+  // --- Show plan: in place of the view, the plan of the query its shelves make: its SQL, the profile
+  // (EXPLAIN ANALYZE, which runs the query once more) and the tree. The SQL is shown, never written: the
+  // model's SQL the shelves make (SELECT … FROM the model), and the SQL it compiles to. Visual has no SQL box:
+  // its query is always the shelves' (a JSON visual query, the SQL made from it behind the scenes).
   let planMode = false;
   function openPlan() {
     const q = explorer?.query()?.sql;
@@ -1209,6 +1211,8 @@ export function mountExplore(root, ctx) {
     catch (e) { setStatus(`Plan: ${e.message}`, 'error'); return; }
     planMode = true;
     planView.replaceChildren(createPlanView({
+      sql: [{ label: 'Model SQL', text: q }, { label: 'Compiled SQL', text: sql }],
+      copy: ctx.copyText,
       profile: async () => (await run(profileSql(sql, { set: ctx.profileSet !== false }), { fresh: true })).rows[0]?.explain_value,
       tree: () => planTree(sql),
       colors: () => profileColors(css),

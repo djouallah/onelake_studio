@@ -177,10 +177,18 @@ test("a view's files are merged, its tables take the lake's columns, and its met
   assert.deepEqual(bim.model.relationships, [{ name: "r", fromTable: "fct", fromColumn: "DUID", toTable: "duid", toColumn: "DUID" }]);
 });
 
+test("a view written in Ossie 0.3 opens: what Publish refuses of it is its YAML's to show", async () => {
+  const bim = await semantic.fabricViewBim("v", [fileOf("a.yaml", { version: "0.3.0.dev0", name: "v",
+    datasets: [{ name: "duid", source: "mart.dim_duid", nonportable_extensions: [{ vendor_name: "POWER_BI", data: { x: 1 } }] }] })],
+  { lakehouse: "data", columnsOf }, asModules);
+  assert.deepEqual(bim.model.tables.map(t => t.name), ["duid"]);
+});
+
 test("what Fabric would refuse in a view is said, by its file", async () => {
   const open = files => semantic.fabricViewBim("v", files, { lakehouse: "data", columnsOf }, asModules);
   await assert.rejects(open([]), /v has no \.yaml file/);
-  await assert.rejects(open([fileOf("a.yaml", { version: "0.3.0.dev0", name: "v" })]), /a\.yaml is version 0\.3\.0\.dev0: a Fabric semantic view is 0\.2\.0\.dev0/);
+  await assert.rejects(open([fileOf("a.yaml", { version: "0.4.0.dev0", name: "v" })]),
+    /a\.yaml is version 0\.4\.0\.dev0: a Fabric semantic view is 0\.2\.0\.dev0 or 0\.3\.0\.dev0/);
   await assert.rejects(open([fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "nope" }] })]), /source is schema\.table/);
   await assert.rejects(open([fileOf("a.yaml", { version: "0.2.0.dev0", name: "v", datasets: [{ name: "x", source: "mart.gone" }] })]),
     /data has no table mart\.gone/);

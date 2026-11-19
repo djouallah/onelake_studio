@@ -418,6 +418,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       // The tab and the header already say the file: the bar says only the model's name.
       name: m.name, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
       text: file.viewText ?? bim, ext: file.viewText != null ? 'yaml' : (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
+      fabricView: !!file.fabricView,
       run: runModelSql,
       cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,
