@@ -168,7 +168,9 @@ const some = list => (list.length ? list : undefined);
 
 // 'Table name'.'column' or table.column: { table, column }.
 function columnRef(ref) {
-  const { name: table, rest } = nameAt(String(ref));
+  const s = String(ref).trim();
+  // A bare table name ends at the dot; a quoted one may hold dots.
+  const { name: table, rest } = s.startsWith("'") ? nameAt(s) : { name: s.split('.')[0], rest: s.slice(s.split('.')[0].length) };
   return { table, column: rest.startsWith('.') ? nameAt(rest.slice(1)).name : '' };
 }
 
