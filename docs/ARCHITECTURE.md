@@ -532,7 +532,8 @@ once and counts, though the answer still comes through the host.
     metadata. The DAX metrics go in a table named `Metrics`. Microsoft's version (0.2.0.dev0) opens, and Ossie
     0.3.0.dev0 too. It is read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric
     reads those files. Its YAML shows in red, and why on hover, what Fabric's Publish refuses as far as a line shows
-    it: a version other than 0.2.0.dev0, 0.3's `nonportable_extensions`, an empty `dialects` or `datasets`, a source
+    it: a version other than 0.2.0.dev0, 0.3's `nonportable_extensions`, a dialect Fabric has no name for (`OSSIE_SQL_2026`
+    fails the whole Publish, even beside DAX; `ANSI_SQL` is only left out), an empty `dialects` or `datasets`, a source
     that isn't schema.table, a relationship's description or second column, a name given twice
     (`publishRefusals` in [`pretty.js`](../page/explore/pretty.js)). As in any model's YAML, an expression in a
     dialect other than Ossie SQL (DAX, say) and an extensions block are amber.

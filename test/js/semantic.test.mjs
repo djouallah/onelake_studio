@@ -217,6 +217,27 @@ test("a Fabric semantic view's YAML shows in red what Fabric's Publish refuses, 
   assert.doesNotMatch(prettyModelText("version: 0.2.0.dev0\nname: v\ndatasets:\n  - name: a\n    source: dbo.a\n", "yaml", { publish: true }), /tk-bad/);
 });
 
+test("a dialect Publish knows no name for is red: Fabric refuses the view, even beside DAX", async () => {
+  const { prettyModelText } = await import("../../page/explore/pretty.js");
+  const yaml = [
+    "version: 0.2.0.dev0",                    // 0
+    "metrics:",                               // 1
+    "  - name: m",                            // 2
+    "    expression:",                        // 3
+    "      dialects:",                        // 4
+    "        - dialect: OSSIE_SQL_2026",      // 5 red
+    "          expression: SUM(x)",           // 6
+    "        - dialect: DAX",                 // 7 amber
+    "          expression: SUM('t'[x])",      // 8 amber
+    "        - dialect: ansi_sql",            // 9 amber: Publish leaves it out, with a warning
+    "          expression: SUM(x)",           // 10 amber
+  ].join("\n");
+  const lines = prettyModelText(yaml, "yaml", { publish: true }).split("\n");
+  const red = lines.map((l, i) => (l.startsWith('<span class="tk-bad"') ? i : -1)).filter(i => i >= 0);
+  assert.deepEqual(red, [5]);
+  assert.match(lines[5], /knows no dialect OSSIE_SQL_2026/);
+});
+
 test("a profile shows no planning or rows scanned it doesn't carry", async () => {
   const { parseProfile } = await import("../../page/explore/profile.js");
   // One timed run (the exported app's on a semantic model, modeldata.js): its time, and its operators' rows.

@@ -122,7 +122,11 @@ function foreignDialectLines(lines) {
 // Publish only leaves out with a warning (fields, ai_context, custom_extensions, a dialect other than DAX) is not.
 export const PUBLISH_VERSION = '0.2.0.dev0';
 const NONPORTABLE = /^(\s*(?:-\s+)*)nonportable_extensions\s*:/;
+// The dialect names Publish reads: DAX is published, the rest left out with a warning. Any other name fails the whole
+// Publish, even beside a DAX entry (OSSIE_SQL_2026 tried on 2026-11-19: OSSIE_MODEL_DESERIALIZATION_FAILED).
+const PUBLISH_DIALECTS = ['DAX', 'ANSI_SQL', 'SNOWFLAKE', 'MDX', 'TABLEAU', 'DATABRICKS', 'MAQL', 'BIGQUERY'];
 const WHY = {
+  dialect: name => `Fabric's Publish knows no dialect ${name}, and refuses the view: write it as ANSI_SQL, which Publish leaves out, or as DAX`,
   nonportable: "nonportable_extensions is Ossie 0.3's: Fabric's Publish reads 0.2.0.dev0, whose key is custom_extensions",
   columns: "Fabric's Publish takes one column a side: a relationship on more columns is refused",
   dialects: "Fabric's Publish refuses an empty dialects list",
@@ -155,6 +159,8 @@ function publishRefusals(lines) {
     if (cols && !(indent > cols.col || (indent === cols.col && item))) endCols();
     if (cols) { cols.lines.push(i); if (item) cols.items++; continue; }
     if (/dialects\s*:\s*\[\s*\]/.test(line)) bad(i, WHY.dialects);
+    const dialect = /^\s*(?:-\s+)?dialect\s*:\s*(.*)$/.exec(line);
+    if (dialect && !PUBLISH_DIALECTS.includes(valueOf(dialect[1]).toUpperCase())) bad(i, WHY.dialect(valueOf(dialect[1])));
     if (indent === 0 && !item) {
       const k = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
       top = k ? k[1] : null;
