@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.28
 
 - **Fixed: Publish could make several models of one semantic view.** Two Publishes of a view at once, from the tree
   and the Model tab say, each made a model, and Fabric then refused every Publish after. A second Publish now joins
