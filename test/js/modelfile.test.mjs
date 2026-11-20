@@ -38,7 +38,7 @@ async function setup({ bim = named, views = [], items = ITEMS, compiler = { pars
       itemNamed: async () => ({ workspace: "aemo", item: "lake.Lakehouse" }),
       ...onelake,
     },
-    fabric, semviews: { list: async () => views },
+    fabric, semviews: { list: async () => views, placement: async () => null },
     modules: async () => ({ semantic, compiler }),
     modelsFolder: () => dir, account: () => "a", oldModels: join(dir, "old"),
     nameTables: async () => [], notify() {}, onModelChanged() {}, log() {},
@@ -189,5 +189,71 @@ test("a semantic view's model is read from the TMDL Fabric wrote of the view, th
   const { readFile } = await import("node:fs/promises");
   const kept = JSON.parse(await readFile(models.modelBimPath(n), "utf8"));
   assert.equal(kept.model.tables[0].partitions[0].source.expressionSource, "E", "its TMSL kept beside the copy, as a model.bim is");
+  await done();
+});
+
+// A Fabric semantic view's YAML names its tables schema.table (`source: dbo.fct_sales`), in no lakehouse: Fabric reads
+// them in the one the YAML is in. From disk: the one picked for the file before, else every cached lakehouse holding them all.
+const bare = { model: { tables: [
+  { name: "fct_sales", partitions: [{ source: { type: "entity", schemaName: "dbo", entityName: "fct_sales" } }] },
+  { name: "dim_date", partitions: [{ source: { type: "entity", schemaName: "dbo", entityName: "dim_date" } }] },
+] } };
+const TABLES = {
+  "aemo/lake.Lakehouse": [{ schema: "dbo", table: "fct_sales" }, { schema: "dbo", table: "dim_date" }],
+  "sales-dev/lake.Lakehouse": [{ schema: "dbo", table: "fct_sales" }],
+  "sales-dev/other.Warehouse": [{ schema: "dbo", table: "fct_sales" }, { schema: "dbo", table: "dim_date" }],
+};
+const cachedWith = tables => ({
+  cached: {
+    workspaces: async () => ({ value: Object.keys(ITEMS), at: 0 }),
+    items: async ws => (ITEMS[ws] ? { value: ITEMS[ws], at: 0 } : null),
+    models: async () => ({ value: [] }),
+    allTables: async () => new Map(),
+    tables: async lh => (tables[`${lh.workspace}/${lh.item}`] ? { value: tables[`${lh.workspace}/${lh.item}`] } : null),
+  },
+});
+
+test("tables named schema.table: the lakehouses holding them all, and every lakehouse to pick from", async () => {
+  const { models, file, done } = await setup({ bim: bare, onelake: cachedWith(TABLES) });
+  const f = await models.modelFile(await file("dax_context.ossie.yaml"));
+  assert.equal(f.lakehouse, null);
+  assert.deepEqual(f.bare.map(b => `${b.schema}.${b.entity}`), ["dbo.fct_sales", "dbo.dim_date"]);
+  assert.deepEqual(f.candidates, [{ workspace: "aemo", lakehouse: "lake" }], "a warehouse holding them is no lakehouse; one holding some is not one");
+  assert.deepEqual(f.lakehousesAll, [{ workspace: "aemo", lakehouse: "lake" }, { workspace: "sales-dev", lakehouse: "lake" }]);
+  // Placed there, they are named in it: lake.dbo.fct_sales, in that workspace.
+  const placed = semantic.placeIn(structuredClone(bare), "lake");
+  assert.deepEqual(semantic.lakehousesOf(placed, "aemo"), [{ workspaceName: "aemo", itemName: "lake" }]);
+  assert.deepEqual(semantic.bareTables(placed), []);
+  await done();
+});
+
+test("tables named schema.table: the lakehouse picked for the file before, asked no more", async () => {
+  const picked = { workspace: "sales-dev", lakehouse: "lake" };
+  const again = await setup({ bim: bare, onelake: cachedWith(TABLES) });
+  const p2 = await again.file("dax_context.ossie.yaml");
+  // semviews keeps the pick by the file's path.
+  const withPick = createModels({
+    onelake: cachedWith(TABLES), fabric: {},
+    semviews: { list: async () => [], placement: async p => (p === p2 ? picked : null) },
+    modules: async () => ({ semantic, compiler: { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bare } }),
+    modelsFolder: () => "x", account: () => "a", oldModels: "x/old",
+    nameTables: async () => [], notify() {}, onModelChanged() {}, log() {},
+  });
+  const f = await withPick.modelFile(p2);
+  assert.equal(f.workspace, "sales-dev");
+  assert.equal(f.lakehouse, "lake");
+  assert.equal(f.kept, true);
+  // Given (serve --workspace --lakehouse): taken as it is.
+  const given = await withPick.modelFile(p2, { workspace: "aemo", lakehouse: "lake" });
+  assert.deepEqual([given.workspace, given.lakehouse], ["aemo", "lake"]);
+  await again.done();
+});
+
+test("a .tmdl that is one file of a Power BI project's definition is no model; a TMDL script is", async () => {
+  const { models, file, done } = await setup();
+  const one = await file("Sales.tmdl", "table Sales\n\tcolumn Amount\n\t\tdataType: double\n");
+  await assert.rejects(models.modelFile(one), e => e.notModel === true);
+  assert.equal(semantic.isTmdlModel("/// x\ncreateOrReplace\n\n\tdatabase m\n\t\tmodel Model\n\t\t\ttable t\n"), true);
+  assert.equal(semantic.isTmdlModel("database m\n\tcompatibilityLevel: 1604\n"), false, "database.tmdl alone has no tables");
   await done();
 });

@@ -95,13 +95,16 @@ for, say what is missing rather than faking it with a text tile.
 
 ## An OLAP server on a model file
 
-`serve <model.yaml|.bim>` starts an endpoint Excel's PivotTables connect to, on this machine only, and stays running until
+`serve <model.yaml|.bim|.tmdl>` starts an endpoint Excel's PivotTables connect to, on this machine only, and stays running until
 it is stopped, so start it in the background. It works with VS Code closed, on Windows, after `signin`. It prints how to
 connect, and `--json` prints `{ ok, catalog, port, url, connection, measures, opened }`.
 
 - `--open` opens a new workbook on it, in the Excel desktop app.
 - The model takes the name `<workspace>.<model>_semanticmodel`: the workspace its tables are in and the file's name, or
   `--workspace` and `--name`. It replaces whatever this machine holds under that name.
+- A file naming its tables `schema.table` alone, as a Fabric semantic view's YAML does (`source: dbo.sales`), says no
+  lakehouse: its tables are read from the one picked for that file before, else the one lakehouse this machine has listed
+  holding them all, else give it with `--workspace` and `--lakehouse` (kept for the file from then on).
 - Excel's PivotTables are the only client: it reads what they write, and refuses other MDX by name. It's not DAX.
 - A refresh in Excel sees an edit to the file.
 

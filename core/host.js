@@ -161,7 +161,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         const rel = modelsDir ? relative(resolve(modelsDir), resolve(path)) : '';
         if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${path}: not a semantic model's local copy`);
       }
-      return views().put(String(x.name), path, String(x.schema));
+      return views().put(String(x.name), path, String(x.schema), x.lakehouse ? String(x.lakehouse) : null);
     },
     // A semantic model a query names and the page has no view of: opened and kept (openModel).
     'semantic.open': async x => {

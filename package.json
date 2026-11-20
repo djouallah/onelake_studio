@@ -53,7 +53,7 @@
       {
         "viewType": "onelakeStudio.ossieModel",
         "displayName": "OneLake Studio model",
-        "selector": [{ "filenamePattern": "*.ossie.yaml" }],
+        "selector": [{ "filenamePattern": "*.ossie.yaml" }, { "filenamePattern": "*.tmdl" }],
         "priority": "default"
       }
     ],
@@ -156,6 +156,11 @@
         "title": "Open in OneLake Studio",
         "category": "OneLake Studio",
         "icon": "$(open-preview)"
+      },
+      {
+        "command": "onelakeStudio.pickLakehouse",
+        "title": "Pick the Lakehouse It Reads…",
+        "category": "OneLake Studio"
       },
       {
         "command": "onelakeStudio.createSemanticModel",
@@ -352,8 +357,13 @@
       "explorer/context": [
         {
           "command": "onelakeStudio.openPath",
-          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|fabricator|fabricapp|sql)$/i",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|tmdl|fabricator|fabricapp|sql)$/i",
           "group": "navigation@9"
+        },
+        {
+          "command": "onelakeStudio.pickLakehouse",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|tmdl)$/i",
+          "group": "navigation@10"
         }
       ],
       "view/title": [
@@ -545,6 +555,10 @@
       "commandPalette": [
         {
           "command": "onelakeStudio.openPath",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.pickLakehouse",
           "when": "false"
         },
         {

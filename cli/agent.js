@@ -260,7 +260,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (!v.schema) continue;   // named before models were ws.model_semanticmodel
       try {
         if (v.error) throw new Error(v.error);
-        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
+        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema, v.lakehouse || null);
         defined.add(m.name.toLowerCase());
         names.add(m.name.toLowerCase());
       } catch (e) { note(`semantic view ${v.schema ? `${v.schema}.` : ''}${v.name} skipped: ${e.message}`); }
@@ -677,7 +677,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         for (const ref of semantic.unopenedModels(text)) {
           if (!openModel) throw new Error('semantic models cannot be opened here');
           const v = await openModel(ref);
-          const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
+          const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema, v.lakehouse || null);
           defined.add(m.name.toLowerCase());
         }
         return semantic.statement(text, compiler);
@@ -966,7 +966,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     const key = catalog.toLowerCase();
     const kept = cubes.get(key);
     if (kept && kept.text === text && semantic.hasView(semantic.modelKey(ref.workspace, ref.model))) return kept.cube;
-    const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ref.workspace, ref.model);
+    const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ref.workspace, ref.model,
+                                           view ? view.lakehouse || null : null);
     if (!view) await semviews.put(m.view, path, ref.workspace);
     defined.add(m.name.toLowerCase());
     const cube = buildCube(catalog, m.bim, m.name);

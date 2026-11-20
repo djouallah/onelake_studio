@@ -297,6 +297,8 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
 
     // The semantic models opened here, for semviews.js.
     views: () => tables.views(),
+    placements: () => tables.placements(),
+    place: (path, workspace, lakehouse) => tables.place(path, workspace, lakehouse),
     /** Replaces whichever views `same` picks with this one, in one step. */
     keepView(view, same) {
       inOne(() => {

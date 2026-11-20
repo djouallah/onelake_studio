@@ -91,6 +91,7 @@ const SCHEMA = `
     PRIMARY KEY (workspace, item, schema_name, table_name, location)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS model_offline (key TEXT PRIMARY KEY, catalog TEXT NOT NULL, model TEXT NOT NULL, ts INTEGER NOT NULL) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS semantic_view (name TEXT NOT NULL, schema_name TEXT, path TEXT NOT NULL, created TEXT);
+  CREATE TABLE IF NOT EXISTS view_lakehouse (path TEXT PRIMARY KEY, workspace TEXT NOT NULL, lakehouse TEXT NOT NULL) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS sync_failure (
     kind TEXT NOT NULL, workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
     dir TEXT NOT NULL, ts INTEGER NOT NULL, error TEXT NOT NULL,
@@ -100,7 +101,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS lake_table_meta_ts ON lake_table (meta_ts);
 `;
 // What Clear Cached empties.
-const TABLES = ['semantic_view', 'listing_read', 'workspace', 'item', 'lake_schema', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
+const TABLES = ['semantic_view', 'view_lakehouse', 'listing_read', 'workspace', 'item', 'lake_schema', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
   'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure', 'table_use', 'table_kept', 'model_offline'];
 
 // Each kind of store key (onelake.js keys): the column each part after its kind goes in, where a row
@@ -590,6 +591,11 @@ function createCatalogTables({ statement }) {
       .map(r => ({ id: r.id, name: r.name, schema: r.schema_name, path: r.path, created: r.created })),
     removeView: id => run('DELETE FROM semantic_view WHERE rowid = ?', id),
     addView: v => run('INSERT INTO semantic_view VALUES (?, ?, ?, ?)', text(v.name) ?? '', text(v.schema), text(v.path) ?? '', text(v.created)),
+    // The lakehouse a model file whose tables are schema.table reads, as picked for it: { path, workspace, lakehouse }.
+    // A table of its own, not a column of semantic_view: an older version inserts four values there.
+    placements: () => all('SELECT path, workspace, lakehouse FROM view_lakehouse'),
+    place: (path, workspace, lakehouse) =>
+      run('INSERT OR REPLACE INTO view_lakehouse VALUES (?, ?, ?)', text(path) ?? '', text(workspace) ?? '', text(lakehouse) ?? ''),
   };
 }
 

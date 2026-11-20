@@ -681,7 +681,7 @@ export function createEngine({
   // Semantic models kept by the host (core/models/semviews.js): every one opened here, with its text,
   // and one just opened kept — `schema` is its workspace: ws.name_semanticmodel.
   const semanticViews = () => callHost("semantic.views", [{}]);
-  const semanticKeep = (name, path, schema) => callHost("semantic.keep", [{ name, path, schema }]);
+  const semanticKeep = (name, path, schema, lakehouse = null) => callHost("semantic.keep", [{ name, path, schema, lakehouse }]);
   // A Fabric semantic view's .yaml files, from its lakehouse's Context/Semantic Views/<view>/: { files: [{ path, text }] }.
   // Fabric's Publish of a semantic view (core.js publishView): what to say after.
   const publishView = x => callHost("fabric.publishView", [x]);

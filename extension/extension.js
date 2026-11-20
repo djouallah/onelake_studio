@@ -746,6 +746,16 @@ async function activateInner(context) {
       }
       const found = await core.models.modelFile(fsPath);
       openedFiles.add(pathKey(fsPath));
+      // Its tables are schema.table, as a Fabric semantic view's YAML names them: in a lakehouse it doesn't say.
+      if (found.bare) {
+        const at = await lakehouseFor(fsPath, found);
+        if (!at) {
+          if (fallbackToText) await openAsText(fsPath);
+          return false;
+        }
+        await openText({ name, path: fsPath, text: found.text, workspace: at.workspace, lakehouse: at.lakehouse, modelName: found.model });
+        return true;
+      }
       const workspace = found.workspace || (found.choices && found.choices.length === 1 ? found.choices[0] : null);
       if (!workspace) {
         throw new Error(`${name} names its tables <lakehouse>.<schema>.<table>, and ${found.choices && found.choices.length
@@ -757,6 +767,8 @@ async function activateInner(context) {
     } catch (e) {
       if (out) out.appendLine(`opening ${fsPath} failed — ${(e && e.stack) || e}`);
       const why = (e && e.message) || String(e);
+      // Not a model at all (a .tmdl of one table, a YAML of something else): text, as VS Code would have it.
+      if (fallbackToText && e && e.notModel) { await openAsText(fsPath); return false; }
       if (fallbackToText) {
         await openAsText(fsPath);
         vscode.window.showWarningMessage(`${name} opened as text: OneLake Studio could not open it — ${why}`);
@@ -764,6 +776,71 @@ async function activateInner(context) {
       }
       if (e && e.notModel) { vscode.window.showInformationMessage(e.message); return false; }
       showError(`Could not open ${name}: ${why}`);
+      return false;
+    }
+  }
+
+  // The lakehouse a model file whose tables are schema.table reads ({ workspace, lakehouse }), or null when
+  // none is picked. The one picked for it before; else the one lakehouse this machine has listed that holds
+  // every table; else asked, those holding them all first, then every other lakehouse. What is picked is kept
+  // by the file's path, so the next open asks nothing.
+  // `ask`: asked even when one was picked before or one lakehouse holds them all (Pick the Lakehouse It Reads…).
+  async function lakehouseFor(fsPath, found, { ask = false } = {}) {
+    if (found.lakehouse && !ask) return { workspace: found.workspace, lakehouse: found.lakehouse };
+    const tables = found.bare.map(b => `${b.schema}.${b.entity}`);
+    const keep = async at => {
+      await semviews.place(fsPath, at.workspace, at.lakehouse)
+        .catch(e => { if (out) out.appendLine(`${fsPath}: the lakehouse picked for it was not kept — ${(e && e.message) || e}`); });
+      return at;
+    };
+    if (found.candidates.length === 1 && !ask) {
+      const [at] = found.candidates;
+      if (out) out.appendLine(`${fsPath}: its tables are read from ${at.workspace}/${at.lakehouse}, the one lakehouse seen here holding all ${tables.length}`);
+      return keep(at);
+    }
+    const key = at => `${at.workspace}/${at.lakehouse}`.toLowerCase();
+    const holding = new Set(found.candidates.map(key));
+    const items = [
+      ...(found.candidates.length ? [{ label: `Holds all ${tables.length} tables`, kind: vscode.QuickPickItemKind.Separator }] : []),
+      ...found.candidates.map(at => ({ label: at.lakehouse, description: at.workspace, at })),
+      ...(found.lakehousesAll.some(at => !holding.has(key(at))) ? [{ label: 'Other lakehouses', kind: vscode.QuickPickItemKind.Separator }] : []),
+      ...found.lakehousesAll.filter(at => !holding.has(key(at))).map(at => ({ label: at.lakehouse, description: at.workspace, at })),
+    ];
+    if (!items.some(i => i.at)) {
+      throw new Error(`${basename(fsPath)} names its tables schema.table (${tables.join(', ')}), and no lakehouse is listed here yet: expand a workspace in the OneLake Studio tree, then open it again`);
+    }
+    const picked = await vscode.window.showQuickPick(items, {
+      title: `Which lakehouse does ${basename(fsPath)} read?`,
+      placeHolder: `Its tables are ${tables.slice(0, 4).join(', ')}${tables.length > 4 ? ', …' : ''}, in no lakehouse it names`,
+      matchOnDescription: true,
+      ignoreFocusOut: true,
+    });
+    return picked && picked.at ? keep(picked.at) : null;
+  }
+
+  // Explorer's Pick the Lakehouse It Reads… on a model file naming its tables schema.table: asked again, kept, and
+  // the model opened on it (its tab, if one shows it, drawn again).
+  async function pickLakehouse(arg) {
+    const editor = vscode.window.activeTextEditor;
+    const fsPath = typeof arg === 'string' ? arg : arg && arg.fsPath ? arg.fsPath : editor ? editor.document.uri.fsPath : null;
+    if (!fsPath) return false;
+    const name = basename(fsPath);
+    try {
+      const found = await core.models.modelFile(fsPath);
+      if (!found.bare) {
+        vscode.window.showInformationMessage(`${name} says which lakehouse its tables are in: there is none to pick`);
+        return false;
+      }
+      const at = await lakehouseFor(fsPath, found, { ask: true });
+      if (!at) return false;
+      openedFiles.add(pathKey(fsPath));
+      const msg = { type: 'open-model', name, path: fsPath, text: found.text, workspace: at.workspace, lakehouse: at.lakehouse, modelName: found.model };
+      if (revealTab(pathKey(fsPath))) { postToPanel(msg); return true; }
+      await openText(msg);
+      return true;
+    } catch (e) {
+      if (out) out.appendLine(`picking a lakehouse for ${fsPath} failed — ${(e && e.stack) || e}`);
+      showError(`Could not open ${name}: ${(e && e.message) || e}`);
       return false;
     }
   }
@@ -854,6 +931,7 @@ async function activateInner(context) {
   // every open document (page/semantic.js's isOssie: a top-level version and datasets), so a dbt
   // schema.yml has none, and a file restored with the window has it as soon as this starts.
   const isModelText = d => d.uri.scheme === 'file' && (/\.bim$/i.test(d.fileName)
+    || (/\.tmdl$/i.test(d.fileName) && /^\s*(createOrReplace|database)\b/m.test(d.getText()) && /^\s*table\s/m.test(d.getText()))
     || (/\.ya?ml$/i.test(d.fileName) && /^datasets:/m.test(d.getText()) && /^version:/m.test(d.getText())));
   // resourcePath is the Uri's fsPath (c:\… on Windows): both forms, so the menu's `in` finds it either way.
   const markModels = () => vscode.commands.executeCommand('setContext', 'onelakeStudio.modelPaths',
@@ -1339,6 +1417,7 @@ async function activateInner(context) {
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
     vscode.commands.registerCommand('onelakeStudio.openPath', arg => openPath(arg)),
+    vscode.commands.registerCommand('onelakeStudio.pickLakehouse', arg => pickLakehouse(arg)),
     // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.
     vscode.commands.registerCommand('onelakeStudio.copyAppUrl', async n => {
       if (!n || !n.url) return;

@@ -407,12 +407,16 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     // ws.model_semanticmodel: the semantic model the tree opened, by its own workspace and
     // name; else the file, in the workspace it is in (a file from disk: the one its tables are in), by its name.
     const schema = file.modelWorkspace || file.localWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
-    const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName);
+    // Its tables named schema.table and no more, as a Fabric semantic view's YAML names them: in the lakehouse
+    // picked for it (a file from disk), else, a file in a lakehouse's Files/, that lakehouse, as Fabric reads them.
+    const lakehouseName = file.lakehouseName || (fromOneLake && lakehouse && !file.modelWorkspace
+      ? String(lakehouse.item).replace(/\.[^.]+$/, '') : null);
+    const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName, lakehouseName);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
     // An app's file holds its model in a zip, which no view can read: not kept.
     if (!file.appFile && !file.fabricView) {
-      engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema)
+      engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema, lakehouseName)
         .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
     }
     if (my !== selSeq) return;
@@ -496,6 +500,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
+              (file.lakehouseName ? `, in ${m.schema}/${file.lakehouseName}, the lakehouse picked for it` : '') +
               '. SQL anywhere can name it.' +
               (m.skipped && m.skipped.length ? ` Left out, with no DAX here: ${m.skipped.map(x => x.name).join(', ')}.` : ''), 'ok');
   } catch (e) {
@@ -528,7 +533,7 @@ async function loadViews() {
     if (!v.schema) continue;   // named before models were ws.model_semanticmodel
     try {
       if (v.error) throw new Error(v.error);
-      await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
+      await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema, v.lakehouse || null);
     } catch (e) { console.warn(`[views] ${v.name}: ${e.message}`); }
   }
   // Every query waits for this (viewsReady), so the read log says how long it took.
@@ -542,7 +547,7 @@ async function openModels(sql) {
   for (const ref of semantic.unopenedModels(sql)) {
     setStatus(`Opening the semantic model ${ref.workspace}.${ref.model}…`);
     const v = await engine.semanticOpen(ref);
-    await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
+    await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema, v.lakehouse || null);
   }
 }
 
@@ -2018,6 +2023,8 @@ window.addEventListener('message', async e => {
         await openModelView({ name: String(m.name || 'model.yaml'), path: String(m.path || ''),
                               modelWorkspace: m.modelWorkspace ? String(m.modelWorkspace) : null,
                               localWorkspace: m.workspace ? String(m.workspace) : null,
+                              // The lakehouse its schema.table tables are in, picked for a file that doesn't say.
+                              lakehouseName: m.lakehouse ? String(m.lakehouse) : null,
                               appFile: m.appFile ? String(m.appFile) : null,
                               appModel: m.appModel ? String(m.appModel) : null,
                               appModelFile: m.appModelFile ? String(m.appModelFile) : null,

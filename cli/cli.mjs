@@ -71,9 +71,11 @@ const USAGE = {
   signin: `  signin                              with VS Code closed: sign in, in the browser, once. Needs no
                                         app registration, and the answers come from the same cache`,
   signout: "  signout                             forgets that sign-in. VS Code's own is its own",
-  serve: `  serve <model.yaml|.bim>             an OLAP server on a model file, for Excel's PivotTables, until
+  serve: `  serve <model.yaml|.bim|.tmdl>       an OLAP server on a model file, for Excel's PivotTables, until
                                         stopped. Prints how to connect; a refresh sees an edit to the file
     --workspace <ws>                  its workspace, if it can't be read from where its tables are
+    --lakehouse <lakehouse>           the lakehouse its tables are in, for a file naming them schema.table
+                                        (a Fabric semantic view's YAML); kept for the file once given
     --name <model>                    its name, if not the file's: <ws>.<model>_semanticmodel
     --open                            and a new workbook on it, in Excel`,
 };
@@ -98,7 +100,7 @@ ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
 const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded", "--open": "open" };
-const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name", "--set": "set" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--lakehouse": "lakehouse", "--name": "name", "--set": "set" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {
@@ -190,7 +192,7 @@ async function local(name) {
       answered({});
       if (!opts.json) console.log("signed out");
     } else {
-      const served = await alone.serve({ file: args[1], workspace: opts.workspace, name: opts.name, open: !!opts.open });
+      const served = await alone.serve({ file: args[1], workspace: opts.workspace, lakehouse: opts.lakehouse, name: opts.name, open: !!opts.open });
       answered(served);
       if (!opts.json) console.log(`serving ${served.catalog}\n\nconnection string:\n${served.connection}`);
       process.stderr.write("Serving until this is stopped (Ctrl+C).\n");

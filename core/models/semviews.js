@@ -9,8 +9,9 @@
 // written to Fabric or OneLake. An older version's JSON file is read once and then deleted.
 //
 // A path is a local model file (a semantic model's local copy) or an abfss:// URL of one in a
-// lakehouse's Files/. A view is kept when a model is opened — a click, or a query that names it. A model file is a .bim (TMSL) or an Apache Ossie
-// model (.yaml or .yml); page/semantic.js reads either. `schema` is the model's workspace: SQL
+// lakehouse's Files/. A view is kept when a model is opened — a click, or a query that names it. A model file is a .bim (TMSL), a
+// .tmdl script or an Apache Ossie model (.yaml or .yml); page/semantic.js reads each. A model file whose tables are
+// schema.table, as a Fabric semantic view's YAML names them, has the lakehouse picked for it kept by its path: `lakehouse`. `schema` is the model's workspace: SQL
 // names it ws.model_semanticmodel. A semantic model opened from the tree is a local copy of its
 // definition (extension.js fetchModel), and its view points at that.
 // =============================================================================
@@ -46,15 +47,29 @@ function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, 
     return file;
   };
 
+  // The lakehouse picked for a model file, by its path, ignoring case: { workspace, lakehouse }, or null.
+  const norm = p => String(p).replace(/\\/g, '/').toLowerCase();
+  const samePath = (a, b) => norm(a) === norm(b);
+  function placementOf(file, path) {
+    const p = file.placements().find(x => samePath(x.path, path));
+    return p ? { workspace: p.workspace, lakehouse: p.lakehouse } : null;
+  }
+
   // With no `id`, which is only how a row is found again. A file that can't be read holds no views.
   async function list() {
-    try { return catalog().views().map(({ id, ...view }) => view); }
+    try {
+      const file = catalog();
+      return file.views().map(({ id, ...view }) => {
+        const at = placementOf(file, view.path);
+        return at && samePath(at.workspace, view.schema || '') ? { ...view, lakehouse: at.lakehouse } : view;
+      });
+    }
     catch (_) { return []; }
   }
 
   async function readBim(path) {
-    if (!/\.(bim|ya?ml)$/i.test(path)) {
-      throw new Error(`${path}: a semantic view is read from a .bim file (TMSL) or an Ossie .yaml file`);
+    if (!/\.(bim|tmdl|ya?ml)$/i.test(path)) {
+      throw new Error(`${path}: a semantic view is read from a .bim file (TMSL), a .tmdl file or an Ossie .yaml file`);
     }
     const m = ABFSS.exec(path);
     const bytes = m ? await onelake.readBytes(m[1], m[2]) : await fsp.readFile(path);
@@ -64,6 +79,14 @@ function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, 
   return {
     useAccount(key) { account = key || null; },
     list,
+    // The lakehouse a model file whose tables are schema.table reads: picked once, kept by its path.
+    async placement(path) {
+      try { return placementOf(catalog(), path); } catch (_) { return null; }
+    },
+    async place(path, workspace, lakehouse) {
+      catalog().place(path, String(workspace), String(lakehouse));
+      onChange();
+    },
     // Every view with its text, for defining them; one that cannot be read says why.
     async texts() {
       const out = [];
@@ -82,12 +105,16 @@ function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, 
     },
     // Remembered (replacing the one of that name in that schema); the text is read first, so a
     // path that does not read is never stored.
-    async put(name, path, schema = null) {
+    // `lakehouse`: the one its schema.table tables are in, in `schema`, kept by its path (place).
+    async put(name, path, schema = null, lakehouse = null) {
       const text = await readBim(path);
       const sch = schema ? String(schema) : null;
-      catalog().keepView({ name: String(name), schema: sch, path, created: new Date().toISOString() }, v => sameView(v, name, sch));
+      const file = catalog();
+      file.keepView({ name: String(name), schema: sch, path, created: new Date().toISOString() }, v => sameView(v, name, sch));
+      if (lakehouse && sch) file.place(path, sch, String(lakehouse));
       onChange();
-      return { name: String(name), schema: sch, path, text };
+      const at = placementOf(file, path);
+      return { name: String(name), schema: sch, path, text, ...(at && samePath(at.workspace, sch || '') ? { lakehouse: at.lakehouse } : {}) };
     },
     // A copy under `accountDir` an earlier version named <model>.yaml is <model>.ossie.yaml now, the
     // name Ossie's own tools use: renamed, and its view pointed there. A file of the person's own,

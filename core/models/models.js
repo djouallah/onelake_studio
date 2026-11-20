@@ -276,17 +276,29 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   // it still holds those lakehouses, else `workspace` is null and `choices` are the workspaces whose
   // kept listing holds them all (`all` when none does). The cache alone, so it works offline. A
   // `workspace` given (serve --workspace) is taken as it is.
-  async function modelFile(path, { workspace = null } = {}) {
+  //
+  // A file whose tables are schema.table and nothing more, as a Fabric semantic view's YAML names them, says no
+  // lakehouse: Fabric reads them in the lakehouse the YAML is in. Here, the one picked for this file before
+  // (`lakehouse`, kept by semviews.place), else `lakehouse` is null with `bare`, its tables, and `candidates`,
+  // every cached lakehouse holding them all ({ workspace, lakehouse }), and `lakehousesAll`, every cached one.
+  // `lakehouse` given (serve --lakehouse) is taken as it is, in `workspace`.
+  async function modelFile(path, { workspace = null, lakehouse = null } = {}) {
     const name = basename(path);
     const text = await fsp.readFile(path, 'utf8').catch(e => { throw new Error(`${name} could not be read: ${e.message}`); });
     const { semantic, compiler } = await modules();
     if (semantic.isOssiePath(path) && !semantic.isOssie(text)) {
       throw Object.assign(new Error(`${name} is not an Apache Ossie model: it has no top-level version and datasets`), { notModel: true });
     }
-    const lakes = semantic.lakehousesOf(semantic.bimOf(path, text, compiler));
+    if (/\.tmdl$/i.test(path) && !semantic.isTmdlModel(text)) {
+      throw Object.assign(new Error(`${name} is one file of a TMDL definition, not a whole model: open the model's folder in Power BI, or a TMDL script`), { notModel: true });
+    }
+    const bim = semantic.bimOf(path, text, compiler);
+    const lakes = semantic.lakehousesOf(bim);
     const model = basename(path, extname(path));
     const byId = [...new Set(lakes.filter(l => l.workspace).map(l => l.workspace))];
     const byName = [...new Map(lakes.filter(l => !l.workspace).map(l => [l.itemName.toLowerCase(), l.itemName])).values()];
+    const bare = semantic.bareTables(bim);
+    if (!lakes.length && bare.length) return placeBare({ path, text, model, bare, workspace, lakehouse });
     if (!lakes.length) throw new Error(`${name} reads no lakehouse: its tables are named <lakehouse>.<schema>.<table>, or read through a Direct Lake expression`);
     if (workspace) return { text, model, workspace };
     // Where the workspace can't be known, `unknownWorkspace` says so: serve asks for --workspace.
@@ -309,6 +321,32 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     const choices = [];
     for (const ws of all) if (await holds(ws)) choices.push(ws);
     return { text, model, workspace: null, lakehouses: byName, choices, all };
+  }
+
+  // modelFile's schema.table case. The cache alone: a lakehouse whose tables were never listed here is
+  // only in `lakehousesAll`, to be picked by hand.
+  async function placeBare({ path, text, model, bare, workspace, lakehouse }) {
+    if (workspace && lakehouse) return { text, model, workspace, lakehouse, bare };
+    const kept = await semviews.placement(path);
+    const all = [];
+    const candidates = [];
+    const tree = await walkCached(onelake.cached);
+    for (const w of (tree && tree.workspaces) || []) {
+      for (const it of w.items) {
+        if (sqlKind(it.kind) !== 'lakehouse') continue;
+        const at = { workspace: w.name, lakehouse: displayName(it.name) };
+        all.push(at);
+        const have = new Set((it.tables || []).map(t => `${(t.schema || 'dbo').toLowerCase()}.${String(t.table).toLowerCase()}`));
+        if (bare.every(b => have.has(`${b.schema.toLowerCase()}.${b.entity.toLowerCase()}`))) candidates.push(at);
+      }
+    }
+    const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+    if (kept && (!workspace || same(kept.workspace, workspace))) {
+      return { text, model, workspace: kept.workspace, lakehouse: kept.lakehouse, bare, candidates, lakehousesAll: all, kept: true };
+    }
+    const fit = workspace ? candidates.filter(c => same(c.workspace, workspace)) : candidates;
+    return { text, model, workspace: workspace || null, lakehouse: null, bare, candidates: fit,
+             lakehousesAll: workspace ? all.filter(c => same(c.workspace, workspace)) : all };
   }
 
   // What Go to can name, from the cache alone (cachedSqlTables, below): every cached table

@@ -190,10 +190,49 @@ export const isOssiePath = path => /\.ya?ml$/i.test(String(path));
 export const isOssie = text =>
   /^datasets:/m.test(String(text)) && /^version:/m.test(String(text));
 
+// Whether a .tmdl file's text is a whole model, as a TMDL script is (createOrReplace, database, its tables),
+// rather than one file of a Power BI project's definition/ folder (a table, the model's own settings).
+export const isTmdlModel = text =>
+  /^\s*(createOrReplace|database)\b/m.test(String(text)) && /^\s*table\s/m.test(String(text));
+
+// The tables a model names schema.table and nothing more, as a Fabric semantic view's YAML does
+// (`source: dbo.sales`): an entity partition with a one-part schema and no expression, so in no lakehouse
+// until one is said. [{ table (the model's), schema, entity }].
+export function bareTables(bim) {
+  const out = [];
+  for (const t of bim?.model?.tables ?? []) {
+    const s = t.partitions?.[0]?.source;
+    if (!s || s.expressionSource || (s.type && s.type !== "entity")) continue;
+    if (!s.entityName && !s.schemaName) continue;
+    if (nameParts(s.schemaName ?? "dbo").length !== 1) continue;
+    out.push({ table: t.name, schema: unquote(s.schemaName ?? "dbo"), entity: s.entityName ?? t.name });
+  }
+  return out;
+}
+
+// Those tables placed in `lakehouse` (its name, in the model's workspace): their schema becomes
+// "lakehouse"."schema", as Fabric reads a view's tables in the lakehouse that holds it. In place.
+export function placeIn(bim, lakehouse) {
+  if (!lakehouse) return bim;
+  const quote = x => `"${String(x).replace(/"/g, '""')}"`;
+  const bare = new Set(bareTables(bim).map(b => lc(b.table)));
+  for (const t of bim?.model?.tables ?? []) {
+    if (!bare.has(lc(t.name))) continue;
+    const s = t.partitions[0].source;
+    s.entityName = s.entityName ?? t.name;
+    s.schemaName = `${quote(lakehouse)}.${quote(unquote(s.schemaName ?? "dbo"))}`;
+  }
+  return bim;
+}
+
 // The TMSL a model file's text is: a .bim as it is, an Ossie model as the .bim it stands for. An Ossie
 // metric or field with no DAX and no SQL dax-sql reads (another engine's dialect alone) is left out, not
 // the file refused: its `skipped` (not enumerable, so never written into a TMSL) names each, with why.
-export function bimOf(path, text, mods) {
+// `lakehouse`: where its schema.table tables are (placeIn), for a file that doesn't say.
+export function bimOf(path, text, mods, { lakehouse = null } = {}) {
+  return placeIn(readBim(path, text, mods), lakehouse);
+}
+function readBim(path, text, mods) {
   const body = stripBom(text);
   if (isOssiePath(path)) {
     let doc;
@@ -231,11 +270,11 @@ function itemOfIdent(ident) {
  * { name (its SQL name), view (the model's name), schema, file, sample, directLake, bim, exploreCompiler, lakeTables }:
  * `lakeTables`, each Direct Lake table's SQL name by its model table's name, lower-cased.
  */
-export async function defineView(name, path, text, mode = "replace", modules = null, schema = null) {
+export async function defineView(name, path, text, mode = "replace", modules = null, schema = null, lakehouse = null) {
   if (!schema) throw new Error(`a semantic model is named <workspace>.<model>${SUFFIX}: ${name} has no workspace`);
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
-  const bim = bimOf(path, text, mods);
+  const bim = bimOf(path, text, mods, { lakehouse });
   const lake = await namedLakeTables(bim, schema);
   // A Direct Lake table is read by its SQL name, the engine making its view as a query
   // names it. Any other has no OneLake table behind it: a shorter name would resolve to
@@ -243,7 +282,9 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const tableSource = t => {
     const l = lake.get(lc(t.name));
     if (l) return l.ident;
-    throw new Error(`${t.name} is not a OneLake table, so it has no workspace.lakehouse.schema.table name to read`);
+    throw new Error(bareTables(bim).some(b => lc(b.table) === lc(t.name))
+      ? `${t.name} is named ${t.partitions[0].source.schemaName ?? "dbo"}.${t.partitions[0].source.entityName ?? t.name}, in no lakehouse: open the model again and say which lakehouse it reads`
+      : `${t.name} is not a OneLake table, so it has no workspace.lakehouse.schema.table name to read`);
   };
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
@@ -267,8 +308,9 @@ export async function checkModel(fileName, text, modules = null) {
 
 // A model opened from a file, in its workspace: under the semantic model's own name when it is
 // one (the tree's click), else the file's — ws.nem_semanticmodel for nem.bim or nem.yaml.
-export const registerModel = (fileName, text, modules = null, schema = null, name = null) =>
-  defineView(name || modelName(fileName), fileName, text, "replace", modules, schema);
+// `lakehouse`: where its schema.table tables are, for a file that doesn't say (bimOf).
+export const registerModel = (fileName, text, modules = null, schema = null, name = null, lakehouse = null) =>
+  defineView(name || modelName(fileName), fileName, text, "replace", modules, schema, lakehouse);
 
 // A Fabric semantic view: <lakehouse>/Context/Semantic Views/<view>/, its .yaml in Microsoft's format
 // (https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-yaml-reference). [, item, view] of a path in one.

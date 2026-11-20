@@ -8,6 +8,13 @@
 - **An Ossie model with a metric in another engine's dialect only (a Databricks window measure, say) opens.** dax-sql
   0.2.3 leaves out a metric or field it can't say in DAX instead of refusing the whole model. The status line names
   each one left out.
+- **A model file that names its tables `schema.table` opens from disk.** That is how a Fabric semantic view's YAML names
+  them (`source: dbo.sales`), and Fabric reads them in the lakehouse the YAML sits in. From disk, OneLake Studio uses the
+  one lakehouse it has listed that holds every table. When several do, or none, it asks, with the lakehouses holding them
+  all first. The answer is kept for that file. Right-click the file > **Pick the Lakehouse It Reads…** to change it.
+  The same file in a lakehouse's `Files/` reads that lakehouse. The command line's `serve` takes `--lakehouse`.
+- **A TMDL script opens from disk**, by double-click, Explorer's right-click, or the editor's title bar, as a `.bim` does.
+  A `.tmdl` that is one file of a Power BI project's `definition/` folder is no model, and opens as text.
 
 ## 0.2.28
 

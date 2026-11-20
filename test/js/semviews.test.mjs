@@ -160,6 +160,33 @@ test("views kept at once are all kept", async () => {
   } finally { await done(dir); }
 });
 
+test("a model file naming its tables schema.table keeps the lakehouse picked for it, by its path", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-place-"));
+  try {
+    const yaml = join(dir, "dax_context.ossie.yaml");
+    await writeFile(yaml, "version: 0.2.0.dev0\ndatasets: []\n");
+    const tmdl = join(dir, "dax_context.tmdl");
+    await writeFile(tmdl, "createOrReplace\n");
+    const v = createSemViews({ catalogFor: catalogsIn(dir), onelake: {} });
+    v.useAccount("a");
+    assert.equal(await v.placement(yaml), null);
+    const kept = await v.put("dax_context", yaml, "app", "ossie");
+    assert.equal(kept.lakehouse, "ossie");
+    assert.deepEqual(await v.placement(yaml.toUpperCase()), { workspace: "app", lakehouse: "ossie" }, "by its path, any case");
+    assert.equal((await v.list())[0].lakehouse, "ossie");
+    // Kept again without one: the pick stays. In another workspace: not that workspace's lakehouse.
+    await v.put("dax_context", yaml, "app");
+    assert.equal((await v.texts())[0].lakehouse, "ossie");
+    await v.put("dax_context", yaml, "other");
+    assert.equal((await v.list()).find(x => x.schema === "other").lakehouse, undefined);
+    // Picked again: the new one.
+    await v.place(yaml, "app", "ossie2");
+    assert.equal((await v.list()).find(x => x.schema === "app").lakehouse, "ossie2");
+    // A TMDL script is a model file too.
+    assert.equal((await v.put("t", tmdl, "app")).text, "createOrReplace\n");
+  } finally { await done(dir); }
+});
+
 test("what an older version kept in a JSON file comes across once, and a view is in the catalog file", async () => {
   const dir = await mkdtemp(join(tmpdir(), "semviews-"));
   try {
