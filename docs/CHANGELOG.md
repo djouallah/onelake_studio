@@ -15,6 +15,11 @@
   The same file in a lakehouse's `Files/` reads that lakehouse. The command line's `serve` takes `--lakehouse`.
 - **A TMDL script opens from disk**, by double-click, Explorer's right-click, or the editor's title bar, as a `.bim` does.
   A `.tmdl` that is one file of a Power BI project's `definition/` folder is no model, and opens as text.
+- **The Model page gives the diagram the room.** The diagram takes the full width and fits the window, with no sideways
+  scroll. The model's name, counts and description sit in one line above it. A table's details open in a drawer beside it
+  when you click the table, and close with Esc, ×, or a click on empty space. A table of measures with no relationships
+  goes under the facts, marked as measures, instead of standing alone at the top left. Cards no longer say
+  "0 measures".
 
 ## 0.2.28
 

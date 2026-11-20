@@ -76,7 +76,17 @@ section.modelOpen #chartBtn { display: none; }
 /* Analyze, Model: the star (an SVG, model.js) and the table picked. */
 /* As tall as the Pivot's frame (.ex), so the two pages are one size and switching between them
    does not jump; the star sits in the middle of its box. */
-.model-page { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; min-height: 70vh; }
+/* The Model page: the model in one line, then the drawing at full width. A table picked opens its
+   details in a drawer beside it (m-open), which closes again with nothing picked. */
+.model-page { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 0.6rem var(--gap); padding: 0.6rem var(--gutter) 1.5rem; }
+.model-page.m-open { grid-template-columns: minmax(0, 1fr) 380px; }
+.model-summary { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.9rem; font-size: 13px; color: var(--muted); }
+.model-summary strong { color: var(--text); font-weight: 700; }
+.model-summary .m-about { color: var(--faint); flex: 1 1 18rem; min-width: 0; }
+.model-summary .m-help { margin-left: auto; width: 1.25rem; height: 1.25rem; border: 1px solid var(--border); border-radius: 50%; text-align: center; line-height: 1.15rem; font-size: 11px; font-weight: 700; color: var(--faint); cursor: help; align-self: center; }
+.model-panel[hidden] { display: none; }
+.m-close { margin-left: auto; background: none; border: 0; color: var(--faint); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 0.2rem; }
+.m-close:hover, .m-close:focus-visible { color: var(--text); }
 .report-page[hidden], .model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
 /* Model's Diagram | YAML: the model drawn, or its file (pretty.js's tk-* spans). */
 .model-switch { padding: 0.12rem; }
@@ -114,8 +124,8 @@ section.modelOpen #chartBtn { display: none; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
 .model-diagram { padding: 0.8rem; display: flex; position: relative; }
 /* Not clipped to its viewBox: a card dragged past the drawing's edge stays on screen, and the drawing grows to it when it is let go (fit). */
-.model-diagram svg { touch-action: none; display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; overflow: visible; }
-.model-panel { padding: 0.9rem 1rem; font-size: 13px; max-height: 75vh; }
+.model-diagram svg { touch-action: none; display: block; flex: none; width: 100%; min-width: 520px; height: auto; max-height: calc(100vh - 170px); margin: auto; font-family: inherit; overflow: visible; }
+.model-panel { padding: 0.9rem 1rem; font-size: 13px; max-height: calc(100vh - 170px); }
 .model-panel h3 { font-size: 1rem; font-weight: 700; margin: 0 0 0.3rem; display: flex; align-items: center; gap: 0.5rem; }
 .model-panel h4 { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin: 1.1rem 0 0.4rem; }
 .model-panel p { color: var(--muted); line-height: 1.5; margin: 0.35rem 0; }
@@ -142,11 +152,12 @@ section.modelOpen #chartBtn { display: none; }
 .model-arrange[hidden] { display: none; }
 .m-box { fill: var(--card); stroke: var(--border); stroke-width: 1; transition: stroke 0.15s; }
 .m-card.dim .m-box { fill: var(--raised); }
+.m-card.measures .m-box { stroke-dasharray: 4 3; }
 .m-card.m-on .m-box, .m-card:focus-visible .m-box { stroke: var(--muted); }
 .m-card.m-sel .m-box { stroke: var(--accent); stroke-width: 2; }
-.m-name { fill: var(--text); font-size: 13px; font-weight: 700; }
-.m-cap { fill: var(--faint); font-size: 10.5px; }
-.m-key { fill: var(--muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.m-name { fill: var(--text); font-size: 14px; font-weight: 700; }
+.m-cap { fill: var(--faint); font-size: 11.5px; }
+.m-key { fill: var(--muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .m-sep { stroke: var(--hairline); }
 .m-rel { transition: opacity 0.15s; }
 .m-edge { fill: none; stroke: var(--faint); stroke-opacity: 0.6; stroke-width: 1.3; }
@@ -293,7 +304,7 @@ section.modelOpen #chartBtn { display: none; }
    column; only a very narrow one stacks them, and then the list is given a height of its
    own — stacked with none, its flex: 1 1 0 collapsed it to the search box. */
 @media (max-width: 900px) {
-  .model-page { grid-template-columns: 1fr; }
+  .model-page, .model-page.m-open { grid-template-columns: 1fr; }
   .ex { grid-template-columns: 180px 170px minmax(0, 1fr); }
 }
 /* Each page's actions, at the right of the subtab bar. */

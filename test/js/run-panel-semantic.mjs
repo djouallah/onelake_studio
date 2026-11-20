@@ -150,9 +150,16 @@ try {
     await arrange.click();
     if (await card.getAttribute("transform") !== was || await edge.getAttribute("d") !== line) throw new Error("Auto arrange did not put the card back");
     if (!await arrange.isHidden()) throw new Error("Auto arrange still shows with every card in its place");
+    if (!await page.locator("#modelView .model-panel").isHidden()) throw new Error("the details drawer shows with no table picked");
+    const wide = (await page.locator("#modelView .model-diagram").boundingBox()).width;
     await card.click();
     if (await page.locator("#modelView .m-card.m-sel").count() !== 1) throw new Error("a click on a card did not pick it");
+    if (await page.locator("#modelView .model-panel").isHidden()) throw new Error("a picked table's details did not open");
     await page.locator("#modelView .model-diagram svg").click({ position: { x: 2, y: 2 } });
+    if (!await page.locator("#modelView .model-panel").isHidden()) throw new Error("the details drawer stayed open with nothing picked");
+    if ((await page.locator("#modelView .model-diagram").boundingBox()).width !== wide) throw new Error("the drawing did not get its width back");
+    const summary = await page.locator("#modelView .model-summary").innerText();
+    if (!/2 tables · 1 relationship/.test(summary)) throw new Error(`the model's summary line reads: ${summary}`);
   }
   if (!await page.locator(".resultsWrap").isHidden()) throw new Error("the results are still on screen under the model view");
   const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtab-bar")).display);

@@ -91,7 +91,10 @@ export function modelPlaces(tables, rels) {
     y += boxes[t.name].h + vgap;
   }
   const middle = b => b.y + b.h / 2;
-  const facts = tables.filter(t => !dims.has(t.name)).map(t => {
+  // A table in no relationship (a table of measures, most often) goes last, under the side
+  // that ends higher: it reaches nothing, so it should not take a place a fact's lines want.
+  const linked = new Set(rels.flatMap(r => [r.fromTable, r.toTable]));
+  const facts = tables.filter(t => !dims.has(t.name) && linked.has(t.name)).map(t => {
     const reach = rels.filter(r => r.fromTable === t.name && boxes[r.toTable]).map(r => middle(boxes[r.toTable]));
     return { t, at: reach.length ? reach.reduce((s, v) => s + v, 0) / reach.length : 0 };
   }).sort((a, b) => a.at - b.at);
@@ -102,6 +105,11 @@ export function modelPlaces(tables, rels) {
     boxes[t.name] = { x: side ? 2 * (w + gap) : 0, y: top, w, h, dim: false };
     next[side] = top + h + vgap;
   });
+  for (const t of tables.filter(t => !dims.has(t.name) && !linked.has(t.name))) {
+    const side = next[1] < next[0] ? 1 : 0, h = head + line * t.lines + pad;
+    boxes[t.name] = { x: side ? 2 * (w + gap) : 0, y: next[side], w, h, dim: false };
+    next[side] += h + vgap;
+  }
   return boxes;
 }
 

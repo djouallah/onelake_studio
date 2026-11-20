@@ -368,6 +368,17 @@ test("the model's lines are drawn from wherever its cards are", () => {
   assert.equal(stacked.one.anchor, "end");
 });
 
+test("a table in no relationship (a table of measures) goes under the facts, not first", () => {
+  const tables = [{ name: "Metrics", lines: 1 }, { name: "sales", lines: 3 }, { name: "budget", lines: 3 },
+    { name: "date", lines: 2 }, { name: "store", lines: 2 }];
+  const rels = [{ fromTable: "sales", toTable: "date" }, { fromTable: "sales", toTable: "store" }, { fromTable: "budget", toTable: "date" }];
+  const b = modelPlaces(tables, rels);
+  const sameSide = ["sales", "budget"].find(f => b[f].x === b.Metrics.x);
+  assert.ok(sameSide, "on a fact's side");
+  assert.ok(b.Metrics.y >= b[sameSide].y + b[sameSide].h, "under the fact there");
+  assert.notEqual(b.Metrics.x, b.date.x, "not among the dimensions");
+});
+
 const { STYLES, PALETTES, styleChart } = await import("../../page/explore/theme.js");
 
 test("a Report's style has its own palette, and draws its charts its way", () => {

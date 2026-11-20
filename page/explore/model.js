@@ -40,17 +40,25 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
   const rels = model.relationships;
   const keys = name => [...new Set(rels.flatMap(r => [
     ...(r.fromTable === name ? [r.fromColumn] : []), ...(r.toTable === name ? [r.toColumn] : [])]))];
-  const tables = model.tables.map(t => ({ ...t, keys: keys(t.name), lines: 1 + keys(t.name).length }));
+  const linked = new Set(rels.flatMap(r => [r.fromTable, r.toTable]));
+  const dimNames = new Set(rels.map(r => r.toTable));
+  // What a table is to the model: a dimension (a relationship points to it), a table of measures
+  // (in no relationship, no column shown, measures only), or a fact.
+  const kindOf = t => dimNames.has(t.name) ? 'dimension'
+    : !linked.has(t.name) && t.measures.length && !t.columns.some(c => !c.isHidden) ? 'measures' : 'fact';
+  const tables = model.tables.map(t => ({ ...t, kind: kindOf(t), keys: keys(t.name), lines: 1 + keys(t.name).length }));
   const byName = Object.fromEntries(tables.map(t => [t.name, t]));
   // The star, and where each card is now.
   const star = modelPlaces(tables, rels);
   const places = Object.fromEntries(Object.entries(star).map(([k, b]) => [k, { ...b }]));
 
   const svg = el('svg:svg', { role: 'img', 'aria-label': 'The tables of the semantic model and their relationships' });
-  const box = el('div', { class: 'model-panel' });
+  // What is picked, in a drawer beside the drawing; nothing picked, the drawing has the width.
+  const box = el('div', { class: 'model-panel', hidden: true });
   const arrange = el('button', { type: 'button', class: 'btn-explore model-arrange', hidden: true,
     title: 'Put every table back where the automatic layout has it', onclick: () => autoArrange() }, 'Auto arrange');
-  root.replaceChildren(el('div', { class: 'model-diagram' }, arrange, svg), box);
+  root.replaceChildren(summary(), el('div', { class: 'model-diagram' }, arrange, svg), box);
+  root.addEventListener('keydown', e => { if (e.key === 'Escape' && selected) select(null); });
 
   const edges = el('svg:g'), cards = el('svg:g');
   let edgeEls = [];
@@ -60,13 +68,16 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
   const { w, head, line } = MODEL_CARD;
   const cardEls = tables.map(t => {
     const b = places[t.name];
-    const g = el('svg:g', { class: `m-card ${b.dim ? 'dim' : 'fact'}`, transform: `translate(${b.x},${b.y})`, tabindex: 0, role: 'button', 'aria-label': t.name });
+    const g = el('svg:g', { class: `m-card ${b.dim ? 'dim' : t.kind === 'measures' ? 'measures' : 'fact'}`, transform: `translate(${b.x},${b.y})`, tabindex: 0, role: 'button', 'aria-label': t.name });
     g.dataset.name = t.name;
     g.append(el('svg:rect', { class: 'm-box', width: w, height: b.h, rx: 8 }));
     g.append(el('svg:text', { class: 'm-name', x: 12, y: 20 }, t.name));
     g.append(el('svg:line', { class: 'm-sep', x1: 0, x2: w, y1: head, y2: head }));
     const n = (a, word) => `${a?.length ?? 0} ${word}${a?.length === 1 ? '' : 's'}`;
-    g.append(el('svg:text', { class: 'm-cap', x: 12, y: head + 13 }, `${b.dim ? 'dimension' : 'fact'} · ${n(t.columns, 'column')} · ${n(t.measures, 'measure')}`));
+    // Only the counts there are: no "0 measures" on every dimension.
+    const cap = t.kind === 'measures' ? [n(t.measures, 'measure')]
+      : [t.kind, n(t.columns, 'column'), ...(t.measures.length ? [n(t.measures, 'measure')] : [])];
+    g.append(el('svg:text', { class: 'm-cap', x: 12, y: head + 13 }, cap.join(' · ')));
     t.keys.forEach((k, i) => g.append(el('svg:text', { class: 'm-key', x: 12, y: head + 13 + line * (i + 1) }, `⚷ ${k}`)));
     g.addEventListener('pointerenter', () => { if (!dragging) highlight(t.name); });
     g.addEventListener('pointerleave', () => { if (!dragging) highlight(selected); });
@@ -101,11 +112,26 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
     });
     edges.replaceChildren(...edgeEls);
   }
-  // The drawing as large as what is in it.
+  // The drawing fitted to its box: as wide as the box (up to a third larger than its own size,
+  // so a small model is not blown up), and never taller than the window (CSS max-height; the
+  // viewBox keeps its shape, centred).
   function fit() {
     const { width, height } = modelSize(places);
     svg.setAttribute('viewBox', `-12 -4 ${width + 24} ${height + 8}`);
-    svg.style.maxWidth = `${width + 24}px`;
+    svg.style.maxWidth = `${Math.round((width + 24) * 1.35)}px`;
+  }
+
+  // The model in one line over the drawing: its name, what is in it, what it is about.
+  function summary() {
+    const measures = tables.flatMap(x => x.measures), hidden = measures.filter(m => m.isHidden).length;
+    const n = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
+    const hint = `Drag a table to move it. Hover it to see what it reaches; click it for its columns, measures and relationships${openTable ? '; double-click it to open the table' : ''}. Esc closes the details.`;
+    return el('div', { class: 'model-summary' },
+      el('strong', {}, title),
+      el('span', { class: 'm-counts' }, [n(tables.length, 'table'), n(rels.length, 'relationship'),
+        `${n(measures.length, 'measure')}${hidden ? ` (${hidden} hidden)` : ''}`].join(' · ')),
+      ...(model.description ? [el('span', { class: 'm-about' }, lines(model.description))] : []),
+      el('span', { class: 'm-help', tabindex: 0, title: hint, 'aria-label': hint }, '?'));
   }
 
   // --- A card dragged: it follows the pointer, its lines with it ---
@@ -180,18 +206,12 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
 
   function panel(t) {
     const out = [];
-    if (!t) {
-      const measures = tables.flatMap(x => x.measures);
-      out.push(el('h3', {}, title));
-      out.push(el('p', {}, `${tables.length} tables · ${rels.length} relationships · ${measures.length} measures (${measures.filter(m => m.isHidden).length} hidden).`));
-      if (model.description) out.push(el('p', {}, lines(model.description)));
-      out.push(el('p', { class: 'm-hint' }, `Drag a table to move it. Hover it to see what it reaches; click it for its columns, measures and relationships${openTable ? '; double-click it to open the table' : ''}.`));
-      box.replaceChildren(...out);
-      return;
-    }
-    const isDim = rels.some(r => r.toTable === t.name);
+    root.classList.toggle('m-open', Boolean(t));
+    box.hidden = !t;
+    if (!t) { box.replaceChildren(); return; }
     const heading = el('h3', {}, t.name);
-    heading.append(el('span', { class: 'm-tag' }, isDim ? 'dimension' : 'fact'));
+    heading.append(el('span', { class: 'm-tag' }, t.kind));
+    heading.append(el('button', { type: 'button', class: 'm-close', title: 'Close (Esc)', 'aria-label': 'Close the details', onclick: () => select(null) }, '×'));
     out.push(heading);
     const src = t.partitions?.[0]?.source;
     if (src?.entityName) out.push(el('p', { class: 'm-src' }, `${t.partitions[0].mode ?? ''} · ${src.schemaName ? `${src.schemaName}.` : ''}${src.entityName}`));
