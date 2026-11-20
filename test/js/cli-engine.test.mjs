@@ -67,6 +67,20 @@ await writeFile(modelFile("broken_model"), "datasets: [this is : not an ossie mo
 // The same tables with no lakehouse behind them, as an Import model has none.
 const IMPORT = { compatibilityLevel: 1604, model: { ...BIM.model, expressions: [], tables: BIM.model.tables.map(({ partitions, ...t }) => t) } };
 await writeFile(modelFile("import_model"), stringify(tmslToOssie(IMPORT, "import_model")));
+// A Fabric semantic view's YAML: schema.table sources and no fields, the columns being the table's.
+await writeFile(modelFile("fieldless_model"), stringify({
+  version: "0.2.0.dev0", name: "fieldless_model",
+  datasets: [{ name: "fct_sales", source: "dbo.fct_sales" }, { name: "dim_customer", source: "dbo.dim_customer", primary_key: ["customer_id"] }],
+  relationships: [{ name: "r", from: "fct_sales", to: "dim_customer", from_columns: ["customer_id"], to_columns: ["customer_id"] }],
+  metrics: [{ name: "Total Sales", expression: { dialects: [{ dialect: "DAX", expression: "SUM(fct_sales[amount])" }] } },
+            { name: "Customer Count", expression: { dialects: [{ dialect: "DAX", expression: "DISTINCTCOUNT(fct_sales[customer_id])" }] } }],
+}));
+// What each table's metadata lists, read with no rows.
+const FIELDS = {
+  fct_sales: [{ name: "customer_id", type: "long" }, { name: "amount", type: "double" }],
+  dim_customer: [{ name: "customer_id", type: "long" }, { name: "Region", type: "string" }],
+};
+const fieldsAsked = [];
 
 const engine = createEngineHost({
   extensionDir: extDir,
@@ -106,6 +120,7 @@ const agent = createAgent({
       tables: async () => cached(Object.keys(ROWS).map(table => ({ schema: "dbo", table }))),
       table: async () => null,
     },
+    table: async (lh, t) => { fieldsAsked.push([lh.workspace, lh.item, t.schema, t.table]); return { schemaFields: FIELDS[t.table] ?? [] }; },
   },
   semviews,
   engine: async () => ({
@@ -340,6 +355,18 @@ test("a model table with no OneLake table is refused, never read by a shorter na
     assert.equal(r.stdout, "");
     assert.match(r.stderr, /fct_sales is not a OneLake table, so it has no workspace.lakehouse.schema.table name to read/);
   });
+});
+
+test("an Ossie model whose datasets list no fields has its tables' columns, as Fabric gives them", async () => {
+  kept.set("shop/fieldless_model", { name: "fieldless_model", path: modelFile("fieldless_model"), schema: "shop", lakehouse: "data" });
+  try {
+    await withAgent(agent, async ({ cli }) => {
+      const r = await cli(["sql", REGIONS.replace("sales_model", "fieldless_model"), "--json"]);
+      assert.equal(r.code, EXIT.OK, r.stderr || r.stdout);
+      assert.deepEqual(asRegions(JSON.parse(r.stdout).rows), EXPECTED);
+      assert.deepEqual(fieldsAsked.find(f => f[3] === "fct_sales"), ["shop", "data.Lakehouse", "dbo", "fct_sales"]);
+    });
+  } finally { kept.delete("shop/fieldless_model"); }
 });
 
 const SLOW = "SELECT sum(a) FROM range(1000000000000) t(a)";

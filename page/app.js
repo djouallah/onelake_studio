@@ -1991,6 +1991,8 @@ if (cfg.draft) {
   nameBoxQuery(cfg.draft.name ? String(cfg.draft.name) : null);
 }
 semantic.setTableNamer(list => engine.nameTables(list));
+// An Ossie dataset with no fields has its lakehouse table's columns, as Fabric gives it them.
+semantic.setColumnReader(x => engine.tableFields({ workspace: x.workspace, item: `${x.lakehouse}.Lakehouse` }, { schema: x.schema, table: x.table }));
 viewsListed = listViews();
 viewsReady = loadViews().catch(e => console.warn('[views]', e.message));
 

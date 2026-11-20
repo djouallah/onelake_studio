@@ -170,6 +170,44 @@ export function directLakeTables(bim) {
 let tableNamer = null;
 export const setTableNamer = fn => { tableNamer = fn; };
 
+// Who reads a lakehouse table's columns from its metadata, no rows read: [{ name, type }] of
+// { workspace, lakehouse (its name), schema, table }. Set once by the panel and by the command line.
+let columnReader = null;
+export const setColumnReader = fn => { columnReader = fn; };
+
+// The relationships' columns, as text, on each table that has no column at all: enough for the model
+// to hold together when its tables' own columns can't be read (no lakehouse picked yet, offline).
+function keyColumns(bim) {
+  const m = bim?.model;
+  for (const t of m?.tables ?? []) {
+    if ((t.columns ?? []).length || !t.partitions?.[0]?.source) continue;
+    const names = [...new Set((m.relationships ?? []).flatMap(r => [
+      ...(lc(r.fromTable) === lc(t.name) ? [r.fromColumn] : []), ...(lc(r.toTable) === lc(t.name) ? [r.toColumn] : [])]))];
+    t.columns = names.map(n => ({ name: n, dataType: "string", sourceColumn: n }));
+  }
+  return bim;
+}
+
+// An Ossie dataset may list no fields, as a Fabric semantic view's YAML need not: Fabric gives the table
+// every column its lakehouse table has. Each such table (no column, named lakehouse.schema.table in
+// `workspace`) gets those columns, from the table's metadata; one whose table can't be asked, its
+// relationships' columns (keyColumns). In place.
+async function lakeColumns(bim, workspace) {
+  const empty = (bim?.model?.tables ?? []).filter(t => !(t.columns ?? []).length && t.partitions?.[0]?.source);
+  await Promise.all(empty.map(async t => {
+    const n = namedInWorkspace(t.partitions[0].source);
+    if (!n || !columnReader || !workspace) return;
+    try {
+      t.columns = (await columnReader({ workspace, lakehouse: n.item, schema: n.schema, table: n.table }))
+        .map(c => ({ name: c.name, dataType: tmslType(c.type), sourceColumn: c.name }))
+        .filter(c => c.dataType);
+    } catch (e) {
+      console.warn(`[semantic] ${t.name}: the columns of ${n.item}.${n.schema}.${n.table} could not be read: ${e.message}`);
+    }
+  }));
+  return keyColumns(bim);
+}
+
 // directLakeTables(), each with its SQL name as `ident`; `workspace` is the model's, where a
 // table named item.schema.table is.
 async function namedLakeTables(bim, workspace) {
@@ -274,7 +312,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   if (!schema) throw new Error(`a semantic model is named <workspace>.<model>${SUFFIX}: ${name} has no workspace`);
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
-  const bim = bimOf(path, text, mods, { lakehouse });
+  const bim = await lakeColumns(bimOf(path, text, mods, { lakehouse }), schema);
   const lake = await namedLakeTables(bim, schema);
   // A Direct Lake table is read by its SQL name, the engine making its view as a query
   // names it. Any other has no OneLake table behind it: a shorter name would resolve to
@@ -304,7 +342,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
 // say. A model file's Save asks it first, so a file is never written into one that doesn't open.
 export async function checkModel(fileName, text, modules = null) {
   const mods = await ready(modules);
-  mods.tmslToModel(bimOf(fileName, text, mods));
+  mods.tmslToModel(keyColumns(bimOf(fileName, text, mods)));
 }
 
 // A model opened from a file, in its workspace: under the semantic model's own name when it is

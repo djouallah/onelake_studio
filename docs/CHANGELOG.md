@@ -15,6 +15,9 @@
   The same file in a lakehouse's `Files/` reads that lakehouse. The command line's `serve` takes `--lakehouse`.
 - **A TMDL script opens from disk**, by double-click, Explorer's right-click, or the editor's title bar, as a `.bim` does.
   A `.tmdl` that is one file of a Power BI project's `definition/` folder is no model, and opens as text.
+- **An Ossie model whose datasets list no `fields` opens.** A Fabric semantic view's YAML can leave them out, and Fabric
+  gives each table every column of its lakehouse table. OneLake Studio now does the same, reading the columns from the
+  table's metadata. It used to fail with "the model has no column 'fact_sales'[sale_date]".
 - **The Model page gives the diagram the room.** The diagram takes the full width and fits the window, with no sideways
   scroll. The model's name, counts and description sit in one line above it. A table's details open in a drawer beside it
   when you click the table, and close with Esc, ×, or a click on empty space. A table of measures with no relationships

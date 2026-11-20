@@ -131,6 +131,9 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     // names behind their GUIDs: the same SQL names the panel's models use.
     semantic.setTableNamer(list => (nameTables ? nameTables(list)
       : Promise.reject(new Error('Direct Lake tables cannot be named here'))));
+    // An Ossie dataset with no fields has its lakehouse table's columns, as Fabric gives it them.
+    semantic.setColumnReader(async x => (await onelake.table({ workspace: x.workspace, item: `${x.lakehouse}.Lakehouse` },
+      { schema: x.schema, table: x.table })).schemaFields || []);
     mods = { paths, semantic,
              compiler: { createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
                          ossieToTmsl: o.ossieToTmsl, tmslToOssie: o.tmslToOssie,
