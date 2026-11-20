@@ -267,3 +267,21 @@ test("a profile's time is the clock's, not every thread's added up", async () =>
   assert.deepEqual(p.operators.map(o => o.cpu), [8000, 16000], "and its threads' time kept");
   assert.equal(p.scanned, null, "a scan that passed rows on and says it read none: unknown");
 });
+
+test("an Ossie metric with no DAX here is left out, not the file refused, and named", async () => {
+  const { bimOf } = await import("../../page/semantic.js");
+  // dax-sql's ossieToTmsl, as far as it goes here: the metric in another engine's dialect alone is skipped.
+  const mods = {
+    parseYaml: () => ({ datasets: [{ name: "sales" }], metrics: [{ name: "ly_month" }, { name: "qty" }] }),
+    ossieToTmsl: (doc, { onSkip } = {}) => {
+      onSkip?.({ kind: "metric", name: "ly_month", dataset: null, why: "metric 'ly_month' has no DAX expression and no SQL" });
+      return { name: "m", model: { tables: [{ name: "sales", measures: [{ name: "qty", expression: "1" }] }] } };
+    },
+  };
+  const bim = bimOf("m.ossie.yaml", "version: 0.3.0.dev0\ndatasets: []\n", mods);
+  assert.deepEqual(bim.skipped.map(s => s.name), ["ly_month"]);
+  // Not a TMSL property: never written into a model Fabric is sent.
+  assert.equal("skipped" in JSON.parse(JSON.stringify(bim)), false);
+  // Read again, the same object: a second note, not an error.
+  assert.doesNotThrow(() => bimOf("m.ossie.yaml", "x", { ...mods, ossieToTmsl: () => bim }));
+});

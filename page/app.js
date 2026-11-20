@@ -496,7 +496,8 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
-              '. SQL anywhere can name it.', 'ok');
+              '. SQL anywhere can name it.' +
+              (m.skipped && m.skipped.length ? ` Left out, with no DAX here: ${m.skipped.map(x => x.name).join(', ')}.` : ''), 'ok');
   } catch (e) {
     if (my !== selSeq) return;
     setStatus(`${file.name} does not open as a semantic model: ${e.message}`, 'error');

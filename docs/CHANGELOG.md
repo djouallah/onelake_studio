@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.29
+
+- **Fixed: an Ossie `.yaml` that OneLake Studio couldn't open opened nothing at all.** A double-click gave "OverlayWebview
+  has been disposed" and an error. Now the file opens, and if it can't open here it opens as text in VS Code's own
+  editor, with a warning that says why.
+- **An Ossie model with a metric in another engine's dialect only (a Databricks window measure, say) opens.** dax-sql
+  0.2.3 leaves out a metric or field it can't say in DAX instead of refusing the whole model. The status line names
+  each one left out.
+
 ## 0.2.28
 
 - **Fixed: Publish could make several models of one semantic view.** Two Publishes of a view at once, from the tree

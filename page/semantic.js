@@ -190,7 +190,9 @@ export const isOssiePath = path => /\.ya?ml$/i.test(String(path));
 export const isOssie = text =>
   /^datasets:/m.test(String(text)) && /^version:/m.test(String(text));
 
-// The TMSL a model file's text is: a .bim as it is, an Ossie model as the .bim it stands for.
+// The TMSL a model file's text is: a .bim as it is, an Ossie model as the .bim it stands for. An Ossie
+// metric or field with no DAX and no SQL dax-sql reads (another engine's dialect alone) is left out, not
+// the file refused: its `skipped` (not enumerable, so never written into a TMSL) names each, with why.
 export function bimOf(path, text, mods) {
   const body = stripBom(text);
   if (isOssiePath(path)) {
@@ -199,7 +201,10 @@ export function bimOf(path, text, mods) {
     catch (e) { throw new Error(`${basename(path)} is not YAML: ${e.message}`); }
     if (!doc || typeof doc !== "object" || !Array.isArray(doc.datasets))
       throw new Error(`${basename(path)} is not an Ossie model: it has no datasets`);
-    return mods.ossieToTmsl(doc);
+    const skipped = [];
+    const bim = mods.ossieToTmsl(doc, { onSkip: s => skipped.push(s) });
+    if (bim && typeof bim === "object") Object.defineProperty(bim, "skipped", { value: skipped, enumerable: false, configurable: true });
+    return bim;
   }
   if (/\.tmdl$/i.test(String(path))) {
     try { return tmdlToTmsl(body); }
@@ -249,7 +254,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
   const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
   return { name: fullName(v), view: modelOf(v.name), schema, file: basename(path), sample: sampleQuery(v),
-           directLake: lake.size, bim, exploreCompiler, done,
+           directLake: lake.size, bim, exploreCompiler, done, skipped: bim.skipped ?? [],
            lakeTables: Object.fromEntries([...lake].map(([table, l]) => [table, l.ident])) };
 }
 

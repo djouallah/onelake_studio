@@ -725,22 +725,24 @@ async function activateInner(context) {
   // app's File > Open… or a double-click. An app's file (.fabricator, or an earlier .fabricapp) opens its model on the Report page, drawing this
   // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it; a .sql file
   // opens in the SQL box, its text not run, as a saved query does. `arg`: a Uri, a path, or nothing
-  // (the active editor's file).
-  async function openPath(arg) {
+  // (the active editor's file). `fallbackToText` (a double-click VS Code handed to this extension's editor):
+  // a file that does not open here opens as text in VS Code's own editor, with why, never as nothing at all.
+  // Resolves true when it opened here.
+  async function openPath(arg, { fallbackToText = false } = {}) {
     const editor = vscode.window.activeTextEditor;
     const fsPath = typeof arg === 'string' ? arg : arg && arg.fsPath ? arg.fsPath : editor ? editor.document.uri.fsPath : null;
-    if (!fsPath) return;
+    if (!fsPath) return false;
     const name = basename(fsPath);
     // Open already: its tab, before the file is read again.
-    if (revealTab(pathKey(fsPath))) return;
+    if (revealTab(pathKey(fsPath))) return true;
     try {
-      if (/\.(fabricator|fabricapp)$/i.test(fsPath)) return await openAppFile(fsPath);
+      if (/\.(fabricator|fabricapp)$/i.test(fsPath)) { await openAppFile(fsPath); return true; }
       if (/\.sql$/i.test(fsPath)) {
         const sql = await fsp.readFile(fsPath, 'utf8');
         openedFiles.add(pathKey(fsPath));
         // A file from disk needs no account to open: no sign-in is asked for it.
         await openInPanel({ type: 'query', name: name.replace(/\.sql$/i, ''), sql, file: fsPath }, name, pathKey(fsPath), { signIn: false });
-        return;
+        return true;
       }
       const found = await core.models.modelFile(fsPath);
       openedFiles.add(pathKey(fsPath));
@@ -751,12 +753,24 @@ async function activateInner(context) {
           'open it from its lakehouse\'s Files/ in the tree');
       }
       await openText({ name, path: fsPath, text: found.text, workspace, modelName: found.model });
+      return true;
     } catch (e) {
-      if (e && e.notModel) { vscode.window.showInformationMessage(e.message); return; }
       if (out) out.appendLine(`opening ${fsPath} failed — ${(e && e.stack) || e}`);
-      showError(`Could not open ${name}: ${(e && e.message) || e}`);
+      const why = (e && e.message) || String(e);
+      if (fallbackToText) {
+        await openAsText(fsPath);
+        vscode.window.showWarningMessage(`${name} opened as text: OneLake Studio could not open it — ${why}`);
+        return false;
+      }
+      if (e && e.notModel) { vscode.window.showInformationMessage(e.message); return false; }
+      showError(`Could not open ${name}: ${why}`);
+      return false;
     }
   }
+
+  // A file in VS Code's own text editor, past this extension's custom editor.
+  const openAsText = fsPath => Promise.resolve(vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(fsPath), 'default'))
+    .catch(e => { if (out) out.appendLine(`opening ${fsPath} as text failed — ${(e && e.message) || e}`); });
 
   // A model handed to a tab as text, under a progress notification until the page says it is on screen.
   async function openText(msg) {
@@ -820,10 +834,18 @@ async function activateInner(context) {
     for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
       context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {
         openCustomDocument: uri => ({ uri, dispose() {} }),
-        resolveCustomEditor: async (doc, webviewPanel) => {
-          webviewPanel.webview.html = '<p>Opened in OneLake Studio.</p>';
-          setTimeout(() => webviewPanel.dispose(), 0);
-          return openPath(doc.uri);
+        // It returns at once: VS Code is still putting the panel on screen while this runs, and a panel
+        // disposed before that is "OverlayWebview has been disposed". Then the file opens (or, failing,
+        // opens as text) and the empty panel goes.
+        resolveCustomEditor: (doc, webviewPanel) => {
+          webviewPanel.webview.html = '<p>Opening in OneLake Studio…</p>';
+          let gone = false;
+          webviewPanel.onDidDispose(() => { gone = true; });
+          setTimeout(() => {
+            openPath(doc.uri, { fallbackToText: true })
+              .catch(e => { if (out) out.appendLine(`opening ${doc.uri.fsPath} failed — ${(e && e.stack) || e}`); })
+              .finally(() => { if (!gone) webviewPanel.dispose(); });
+          }, 0);
         },
       }, { supportsMultipleEditorsPerDocument: false }));
     }
