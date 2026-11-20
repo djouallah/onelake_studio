@@ -282,9 +282,10 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const tableSource = t => {
     const l = lake.get(lc(t.name));
     if (l) return l.ident;
-    throw new Error(bareTables(bim).some(b => lc(b.table) === lc(t.name))
-      ? `${t.name} is named ${t.partitions[0].source.schemaName ?? "dbo"}.${t.partitions[0].source.entityName ?? t.name}, in no lakehouse: open the model again and say which lakehouse it reads`
-      : `${t.name} is not a OneLake table, so it has no workspace.lakehouse.schema.table name to read`);
+    // `t` is dax-sql's table: what the model file says of it is in the bim's.
+    const bare = bareTables(bim).find(b => lc(b.table) === lc(t.name));
+    throw new Error(`${t.name} is not a OneLake table, so it has no workspace.lakehouse.schema.table name to read` +
+      (bare ? `: it is named ${bare.schema}.${bare.entity}, in no lakehouse — open the model file from disk and pick the lakehouse it reads` : ""));
   };
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
