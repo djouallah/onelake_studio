@@ -502,22 +502,8 @@ once and counts, though the answer still comes through the host.
   and semantic models have no right-click: their actions are icons on the row, shown on hover.
   - **A file:** Download File… and Copy SQL Name. A file is read from OneLake after the save dialog, so a cancel
     reads nothing.
-  - **A semantic model:** **Export YAML** and Copy SQL Name. Export YAML writes the model as a Fabric semantic view, in
-    the format Fabric's own New semantic view writes
-    ([reference](https://learn.microsoft.com/en-us/fabric/fundamentals/semantic-views-yaml-reference)): one file,
-    `<lakehouse>/Context/Semantic Views/<model>/<model>_semantic_view.yaml`, in the lakehouse its tables are in.
-    Fabric has no way yet to make a view from a model, so Studio does it. It reads the model's TMSL from Fabric as
-    it is now and keeps nothing. Datasets are `schema.table` with no columns, since Fabric reads them from the
-    table. A renamed column is written as the lake names it, in relationships and in DAX. Every measure is a metric.
-    Relationships are active and one column each.
-    - **What a view has no place for is dropped and said:** calculated tables and columns, inactive relationships,
-      formats, hierarchies, roles, and a measure that names one of those. The message lists the first three, and the
-      log lists them all.
-    - **Refused, with why:** a model that isn't Direct Lake on one lakehouse, and one whose lakehouse is another
-      kind of item. Anything else is Fabric's to judge: its Publish says what it refuses, by file and line.
-    - **A folder of that name already there is asked about**, as a copy asks. **Replace** deletes it and everything
-      in it. **Keep Both** writes this one beside it as `<model> (2)`. Studio writes the file and stops: Publish is
-      Fabric's ([`core/models/semanticview.js`](../core/models/semanticview.js)).
+  - **A semantic model:** Download File… and Copy SQL Name. Download File… saves the model's YAML (Apache Ossie, its
+    local copy, `<model>.ossie.yaml`) to this computer, and works offline once the model has been opened.
   - **A folder** (Files/ itself, or one under it): **Upload Files…**, Copy SQL Name and Refresh. Upload picks files on
     this computer and writes each into that folder ([`fabric_app/export/onelakewrite.js`](../fabric_app/export/onelakewrite.js)): a name already
     there asks Replace or Skip, each file is written beside the target in 32 MB pieces and renamed into place, so a
@@ -555,7 +541,7 @@ once and counts, though the answer still comes through the host.
     whose `SystemContext/Semantic Views/<model>/metadata.json` names it (`modelObjectId`), as if Fabric had given it
     (`publishedTmsl` in [`core/models/models.js`](../core/models/models.js)). With no such TMDL, the tree marks it a
     semantic view's model and says to open the view. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
-    [`core/names.js`](../core/names.js)). The only thing Studio writes to `Context/` is a semantic model's Export YAML.
+    [`core/names.js`](../core/names.js)): Studio writes nothing to `Context/`.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
 

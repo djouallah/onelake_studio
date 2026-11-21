@@ -2,6 +2,8 @@
 
 ## 0.2.29
 
+- **Download File… on a semantic model, in place of Export YAML.** It saves the model's YAML to this computer.
+  Nothing is written to the lakehouse.
 - **Removed: Open in Excel, and the command line's `serve`.** Both put a model in an Excel PivotTable through an XMLA
   endpoint of our own, which answered only the MDX a PivotTable sends. For Excel on a model, Create Semantic Model
   (or Export) puts it in Fabric, and Fabric's Analyze in Excel opens it there.

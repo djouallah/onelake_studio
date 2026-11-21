@@ -246,7 +246,7 @@ workspace's tables can still be named.
 | `CREATE SCHEMA aemo.data.raw` | The schema `raw` in that lakehouse. |
 | `COPY (…) TO 'aemo.data/Files/out/x.parquet'` | A file in that lakehouse's `Files/`. |
 | `COPY (…) TO 'aemo.data/SystemContext/x.csv'` | Refused: only Fabric writes `SystemContext/`. |
-| `COPY (…) TO 'aemo.data/Context/x.csv'` | Refused: `COPY` writes only to `Files/`. A semantic model's Export YAML is what writes to `Context/`. |
+| `COPY (…) TO 'aemo.data/Context/x.csv'` | Refused: `COPY` writes only to `Files/`. |
 | `INSERT INTO aemo.data_warehouse.dbo.t …` | Refused: only a lakehouse is written. |
 | `INSERT INTO aemo.data.monthly …` | Refused: a target is a table's whole name. |
 
