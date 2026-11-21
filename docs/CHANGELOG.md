@@ -4,8 +4,9 @@
 
 - **Removed: the desktop app.** OneLake Studio is the VS Code extension. An installed app stays on its last version;
   it finds no newer one.
-- **Removed: Publish on a semantic view.** Publish it in Fabric: right-click its folder in the lakehouse, then Publish.
-  OneLake Studio still opens the view and the model Fabric makes of it.
+- **A semantic view's YAML can be edited and saved.** Open the view's `.yaml` in a lakehouse's
+  `Context/Semantic Views/`, edit it on the Model page's YAML tab, then **Save** and **Publish**. Fabric's published
+  model is read-only, so the YAML is where a change goes. A view whose folder holds several `.yaml` files stays read-only.
 - **Removed: the Performance tab** and its live charts. Logs still shows what the engine ran.
 - **Removed: reading files inside a `.zip`**, and DuckDB's `zipfs` and `h3` extensions with it.
 - **Download File… on a semantic model, in place of Export YAML.** It saves the model's YAML to this computer.

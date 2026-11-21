@@ -513,8 +513,9 @@ once and counts, though the answer still comes through the host.
     Publish makes it (`fabricViewBim` in [`page/semantic.js`](../page/semantic.js)). Every `.yaml` in the folder
     is merged, and each dataset is a Direct Lake table with the columns its lake table has, from the table's
     metadata. The DAX metrics go in a table named `Metrics`. Microsoft's version (0.2.0.dev0) opens, and Ossie
-    0.3.0.dev0 too. It is read-only: the Model page shows the view's YAML, with no Save or Upgrade, since Fabric
-    reads those files. Its YAML shows in red, and why on hover, what Fabric's Publish refuses as far as a line shows
+    0.3.0.dev0 too. The published model is read-only, so the view's YAML is what a change goes into: a view of one
+    `.yaml` is edited on the Model page's YAML tab and **Save** writes it back over that file, once it still opens as a
+    view; then **Publish**. A view of several files is read-only here, and there is no Upgrade. Its YAML shows in red, and why on hover, what Fabric's Publish refuses as far as a line shows
     it: a version other than 0.2.0.dev0, 0.3's `nonportable_extensions`, a dialect Fabric has no name for (`OSSIE_SQL_2026`
     fails the whole Publish, even beside DAX; `ANSI_SQL` is only left out), an empty `dialects` or `datasets`, a source
     that isn't schema.table, a relationship's description or second column, a name given twice
@@ -522,13 +523,21 @@ once and counts, though the answer still comes through the host.
     of the model the view opens as, so the view still opens: a query source, a name given again, a relationship of
     more columns or to a dataset left out, a metric named as a dataset. As in any model's YAML, an expression in a
     dialect other than Ossie SQL (DAX, say) and an extensions block are amber.
-  - **A view is published in Fabric** (right-click its folder > Publish, in the lakehouse): Fabric compiles it into
-    its TMDL in `SystemContext/` and the model of the view's name. Fabric refuses the definition of that model to everyone
+  - **A view's folder** (`Context/Semantic Views/<view>`, `semanticViewDir`) **and its `.yaml`** (`semanticViewFile`):
+    **Publish** beside them, as Fabric's own right-click has it. It is one request to Fabric's beta API, made in the background with the status bar saying
+    so ([`fabric_app/export/publishview.js`](../fabric_app/export/publishview.js)). A Publish of a view while one of
+    it is under way joins it: Fabric finds the view's model by its name and makes one when there is none, so two at
+    once made two models, and Fabric then refused every Publish of the view (`DuplicateDatasetNamesInWorkspace`, said
+    in plain words). Fabric compiles the view into
+    its TMDL in `SystemContext/` and the model of the view's name. Studio says what Fabric answered: the model's
+    name, or Fabric's diagnostics, each by file and line, also in the log. It then lists `SystemContext/` and the
+    workspace's semantic models again. Fabric refuses the definition of the model Publish makes to everyone
     ("configured by service apps"), so a click on it in the tree reads it from that TMDL: in the workspace's lakehouse
     whose `SystemContext/Semantic Views/<model>/metadata.json` names it (`modelObjectId`), as if Fabric had given it
     (`publishedTmsl` in [`core/models/models.js`](../core/models/models.js)). With no such TMDL, the tree marks it a
-    semantic view's model and says to open the view. Upload, Save and `COPY … TO` are refused for both (`AREAS` in
-    [`core/names.js`](../core/names.js)): Studio writes nothing to `Context/`.
+    semantic view's model and says to open the view. Upload and `COPY … TO` are refused for both (`AREAS` in
+    [`core/names.js`](../core/names.js)). The one write to `Context/` is Save, over a view's own `.yaml`
+    (`host.saveFileText` in [`core/host.js`](../core/host.js)).
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
 
