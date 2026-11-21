@@ -3,7 +3,7 @@
 // models.js — a semantic model's local copy, and what the cache can name
 // =============================================================================
 
-const { dirname, basename, extname, resolve } = require('node:path');
+const { dirname, basename, resolve } = require('node:path');
 const { existsSync, renameSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { walkCached } = require('../onelake/onelake');
@@ -16,6 +16,10 @@ const { viewOf } = require('./semanticview');
 // every such model, 2026-11-19): such a model never opens, and the tree marks it as that.
 const VIEW_MODEL_REFUSED = /configured by service apps|denied access to read the model/i;
 const VIEW_MODEL = "a semantic view's model";
+
+// A model file's model name: its file name with no model extension, `.ossie.yaml` being one, as Ossie's
+// own tools name a model (sales.ossie.yaml is sales, as exportflow.js names its app).
+const modelNameOf = path => basename(path).replace(/(\.ossie)?\.(ya?ml|bim|tmdl)$/i, '') || basename(path);
 
 /**
  * @param {object} o
@@ -55,6 +59,9 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       // Copies named <model>.yaml by an earlier version are <model>.ossie.yaml now, their views with them.
       const renamed = await semviews.renameCopies(here);
       if (renamed) log(`move: model copies: ${renamed} renamed <model>.ossie.yaml`);
+      // Views named <model>.ossie after their file by an earlier version are <model> now.
+      const ossie = await semviews.renameOssieViews(here);
+      if (ossie) log(`move: model views: ${ossie} named without .ossie`);
       return moved;
     }).catch(e => {
       log(`move: the local copies of models could not be moved, and are tried again next time — ${e.message}`);
@@ -294,7 +301,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     }
     const bim = semantic.bimOf(path, text, compiler);
     const lakes = semantic.lakehousesOf(bim);
-    const model = basename(path, extname(path));
+    const model = modelNameOf(path);
     const byId = [...new Set(lakes.filter(l => l.workspace).map(l => l.workspace))];
     const byName = [...new Map(lakes.filter(l => !l.workspace).map(l => [l.itemName.toLowerCase(), l.itemName])).values()];
     const bare = semantic.bareTables(bim);
@@ -412,4 +419,4 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   };
 }
 
-module.exports = { createModels };
+module.exports = { createModels, modelNameOf };

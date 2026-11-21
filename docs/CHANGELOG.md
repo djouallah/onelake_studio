@@ -2,6 +2,10 @@
 
 ## 0.2.29
 
+- **Fixed: a model file named `*.ossie.yaml` kept `.ossie` in its model's name.** `serve sales.ossie.yaml`, opening it
+  from disk and Create Semantic Model all named it `sales.ossie`, so SQL had to write `ws."sales.ossie_semanticmodel"`.
+  It is `ws.sales_semanticmodel` now. A model this machine kept under the old name takes the new one on the next start,
+  or goes when the new name is kept already.
 - **Fixed: an Ossie `.yaml` that OneLake Studio couldn't open opened nothing at all.** A double-click gave "OverlayWebview
   has been disposed" and an error. Now the file opens, and if it can't open here it opens as text in VS Code's own
   editor, with a warning that says why.

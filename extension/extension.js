@@ -31,6 +31,7 @@ const { createSettings } = require('../core/settings');
 const { queryStem } = require('../core/queries');
 const { createCore } = require('../core/core');
 const { commitOf } = require('../core/home');
+const { modelNameOf } = require('../core/models/models');
 const { dirBytes, treeBytes, removeDir } = require('../core/diskuse');
 const { SKILL_MARKER, skillFile, writeSkill, refreshSkill } = require('../cli/skill');
 const { createHostMethods } = require('../core/host');
@@ -1281,7 +1282,7 @@ async function activateInner(context) {
       if (!n || n.kind !== 'file' || !/\.(bim|ya?ml)$/i.test(String(n.path))) return;
       if (connectivity.offline()) { vscode.window.showInformationMessage('Create Semantic Model needs a connection.'); return; }
       const file = basename(String(n.path));
-      const name = file.replace(/\.[^.]+$/, '');
+      const name = modelNameOf(file);
       // Whether it replaces one of that name is asked in createSemanticModel.
       try {
         const text = Buffer.from(await onelake.readBytes(n.workspace, n.path)).toString('utf8');

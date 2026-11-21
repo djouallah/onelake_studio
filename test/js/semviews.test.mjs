@@ -218,3 +218,34 @@ test("what an older version kept in a JSON file comes across once, and a view is
     assert.deepEqual(await again.list(), [], "a file that isn't JSON holds none");
   } finally { await done(dir); }
 });
+
+test("a view named <model>.ossie by an earlier version is <model>; its copy named after it is renamed, or goes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-ossie-"));
+  try {
+    const account = join(dir, "models", "a"), ws = join(account, "app");
+    await mkdir(ws, { recursive: true });
+    const own = join(dir, "mine", "oss_dax_dialect.ossie.yaml");
+    await mkdir(join(dir, "mine"), { recursive: true });
+    await writeFile(own, "the person's model");
+    const stale = join(ws, "nyc_taxi.ossie.ossie.yaml"), kept = join(ws, "nyc_taxi.ossie.yaml");
+    await writeFile(stale, "a stale copy");
+    await writeFile(kept, "the copy");
+    const alone = join(ws, "green.ossie.ossie.yaml");
+    await writeFile(alone, "the only copy");
+    const views = createSemViews({ catalogFor: catalogsIn(dir), onelake: {} });
+    await views.put("oss_dax_dialect.ossie", own, "app");
+    await views.put("nyc_taxi", kept, "app");
+    await views.put("nyc_taxi.ossie", stale, "app");
+    await views.put("green.ossie", alone, "app");
+    assert.equal(await views.renameOssieViews(account), 3);
+    const byName = Object.fromEntries((await views.list()).map(v => [v.name, v.path]));
+    assert.deepEqual(Object.keys(byName).sort(), ["green", "nyc_taxi", "oss_dax_dialect"]);
+    assert.equal(byName.oss_dax_dialect, own, "a file of the person's own stays where it is, as it is");
+    assert.equal(await readFile(own, "utf8"), "the person's model");
+    assert.equal(byName.nyc_taxi, kept, "the view of that name already kept is the one kept");
+    assert.equal(existsSync(stale), false, "the stale copy goes with its view");
+    assert.equal(byName.green, join(ws, "green.ossie.yaml"), "the only copy is renamed as the copies are named");
+    assert.equal(await readFile(byName.green, "utf8"), "the only copy");
+    assert.equal(await views.renameOssieViews(account), 0, "once");
+  } finally { await done(dir); }
+});

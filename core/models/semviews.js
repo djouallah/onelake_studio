@@ -135,6 +135,35 @@ function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, 
       }
       return moved;
     },
+    // A view an earlier version named after its file with `.ossie` kept (nyc_taxi.ossie, for
+    // nyc_taxi.ossie.yaml) takes the name without it, or goes when that name is kept in its schema
+    // already. Its local copy under `accountDir`, named <model>.ossie.ossie.yaml after it, is renamed
+    // <model>.ossie.yaml, or goes with it; a file of the person's own is left as it is. Answers how many.
+    async renameOssieViews(accountDir) {
+      let fixed = 0;
+      const all = await list();
+      for (const v of all) {
+        if (!/.\.ossie$/i.test(v.name)) continue;
+        const name = v.name.replace(/\.ossie$/i, '');
+        const rel = ABFSS.test(v.path) ? '..' : relative(accountDir, v.path);
+        const copy = !isAbsolute(rel) && rel.split(/[\\/]/)[0] !== '..' && /\.ossie\.ossie\.yaml$/i.test(v.path);
+        const same = x => sameView(x, v.name, v.schema);
+        if (all.some(x => sameView(x, name, v.schema))) {
+          catalog().dropViews(same);
+          if (copy && !all.some(x => x !== v && samePath(x.path, v.path))) await fsp.rm(v.path, { force: true }).catch(() => {});
+        } else {
+          let path = v.path;
+          if (copy) {
+            const to = v.path.replace(/\.ossie\.ossie\.yaml$/i, '.ossie.yaml');
+            if (!await exists(to) && await fsp.rename(v.path, to).then(() => true, () => false)) path = to;
+          }
+          catalog().keepView({ ...v, name, path }, same);
+        }
+        fixed++;
+      }
+      if (fixed) onChange();
+      return fixed;
+    },
     // A local copy from before they were kept per account sits in <root>/<workspace>/. The ones
     // this account opened move into `accountDir`, so they still open offline, and never over one
     // there. A copy no account points at is left where it is; nothing reads it now. Answers how

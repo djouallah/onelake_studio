@@ -306,6 +306,10 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
         tables.addView(view);
       });
     },
+    /** Drops whichever views `same` picks, in one step. */
+    dropViews(same) {
+      inOne(() => { for (const v of tables.views()) if (same(v)) tables.removeView(v.id); });
+    },
     /** The pointers an older version kept in a JSON file, once. The file then goes. */
     importViews(jsonFile) {
       database();

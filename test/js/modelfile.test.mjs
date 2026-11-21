@@ -52,6 +52,7 @@ test("tables named by lakehouse: no workspace yet, and the ones that hold that l
   const f = await models.modelFile(await file("sales.yaml"));
   assert.equal(f.workspace, null);
   assert.equal(f.model, "sales");
+  assert.equal((await models.modelFile(await file("oss_dax_dialect.ossie.yaml"))).model, "oss_dax_dialect");
   assert.deepEqual(f.lakehouses, ["lake"]);
   assert.deepEqual(f.choices, ["aemo", "sales-dev"]);
   assert.deepEqual(f.all, ["aemo", "sales-dev", "empty"]);
@@ -216,6 +217,7 @@ const cachedWith = tables => ({
 test("tables named schema.table: the lakehouses holding them all, and every lakehouse to pick from", async () => {
   const { models, file, done } = await setup({ bim: bare, onelake: cachedWith(TABLES) });
   const f = await models.modelFile(await file("dax_context.ossie.yaml"));
+  assert.equal(f.model, "dax_context", ".ossie.yaml is one extension: the model is not dax_context.ossie");
   assert.equal(f.lakehouse, null);
   assert.deepEqual(f.bare.map(b => `${b.schema}.${b.entity}`), ["dbo.fct_sales", "dbo.dim_date"]);
   assert.deepEqual(f.candidates, [{ workspace: "aemo", lakehouse: "lake" }], "a warehouse holding them is no lakehouse; one holding some is not one");
