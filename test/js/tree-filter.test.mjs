@@ -97,7 +97,7 @@ test("a type no workspace holds says so, and Queries and the engine's views stay
   const tree = treeOf("SQL database");
   tree.onelake.items = async () => [];
   const kinds = (await tree.getChildren()).map(n => n.kind);
-  assert.deepEqual(kinds, ["empty", "queries", "logs", "performance"]);
+  assert.deepEqual(kinds, ["empty", "queries", "logs"]);
 });
 
 test("a Fabric filter with no Fabric sign-in offers one, and reads nothing", async () => {

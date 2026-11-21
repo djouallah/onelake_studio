@@ -1078,13 +1078,14 @@ test("DuckDB refuses a community extension from a file, however it is offered, w
 test("a community extension is the file this build ships or it is not there: nothing is downloaded in its place", { skip: !existsSync(join(BUNDLED, "nanoarrow.duckdb_extension")) }, async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const bundle = await mkdtemp(join(tmpdir(), "onelake-bundle-"));
-  // The bundle as it is, but for nanoarrow: as a build for a platform with none would be.
-  for (const name of readdirSync(BUNDLED)) if (name !== "nanoarrow.duckdb_extension") cpSync(join(BUNDLED, name), join(bundle, name), { recursive: true });
+  // The bundle as it is, but its nanoarrow is not an extension: a file that ships and won't load.
+  for (const name of readdirSync(BUNDLED)) cpSync(join(BUNDLED, name), join(bundle, name), { recursive: true });
+  await writeFile(join(bundle, "nanoarrow.duckdb_extension"), "not an extension");
   const warned = [];
   const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: bundle, onWarn: w => warned.push(String(w)) });
   t.after(async () => { await engine.close(); for (const d of [extDir, bundle]) await rm(d, { recursive: true, force: true }).catch(() => {}); });
   assert.deepEqual((await engine.call("query", ["SELECT 1 AS a"])).rows, [{ a: 1 }], "the engine starts without it");
-  assert.equal(warned.filter(w => /'nanoarrow' unavailable — this build does not ship it/.test(w)).length, 1, warned.join(" | "));
+  assert.equal(warned.filter(w => /'nanoarrow' unavailable — the file this build ships would not load, and nothing is downloaded in its place/.test(w)).length, 1, warned.join(" | "));
   await assert.rejects(engine.call("query", ["SELECT * FROM read_arrow('x.arrow')"]), /read_arrow/, "and its functions are not there");
   assert.deepEqual((await engine.call("query", ["SELECT count(*) AS n FROM duckdb_extensions() WHERE extension_name = 'nanoarrow' AND (loaded OR installed)"])).rows, [{ n: 0 }],
     "neither loaded nor installed from anywhere");

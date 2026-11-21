@@ -199,6 +199,7 @@ async function show(context, { newTab = false, key = null, signIn = true, ...opt
         stamp: x => (modelReport ? modelReport.stamp(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
         save: x => (modelReport ? modelReport.save(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       },
+      publishView: x => (theCore ? theCore.publishView(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       setOffline: x => (keepOffline ? keepOffline.set(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -707,8 +708,9 @@ async function activateInner(context) {
     if (connectivity.offline()) throw new Error('Saving to OneLake needs a connection.');
     const over = await core.writer.stat(workspace, path);
     await core.writer.writeFile(workspace, path, Buffer.from(text, 'utf8'), { over });
-    const [item, , ...rest] = path.split('/');
-    await onelake.files({ workspace, item }, rest.slice(0, -1).join('/'), { fresh: true })
+    // Files/, or a semantic view's .yaml in Context/: its folder in its own area.
+    const [item, area, ...rest] = path.split('/');
+    await onelake.files({ workspace, item, ...(area === 'Files' ? {} : { area }) }, rest.slice(0, -1).join('/'), { fresh: true })
       .catch(e => { if (out) out.appendLine(`${workspace}/${path} was saved, and its folder could not be listed again — ${(e && e.message) || e}`); });
   };
 
@@ -1188,6 +1190,29 @@ async function activateInner(context) {
         if (e && e.unsupported) { vscode.window.showInformationMessage(e.message); return; }
         showError(`Could not download ${name}: ${(e && e.message) || e}`);
       }
+    }),
+    // Fabric's Publish of a semantic view, from a .yaml of it (Context/Semantic Views/<view>/…): one request to Fabric,
+    // which makes the view's TMDL and model (fabric_app/export/publishview.js). In the status bar while it runs,
+    // blocking nothing; what Fabric said after, its diagnostics by file and line in the log too.
+    vscode.commands.registerCommand('onelakeStudio.publishSemanticView', n => {
+      // From its folder, or from a .yaml in it.
+      const view = n && n.area === 'Context' && (n.kind === 'dir' ? (/^Semantic Views\/([^/]+)$/.exec(String(n.dir)) || [])[1]
+        : n.kind === 'file' ? (/^[^/]+\/Context\/Semantic Views\/([^/]+)\/.+\.yaml$/.exec(String(n.path)) || [])[1] : null);
+      if (!view) return;
+      if (connectivity.offline()) { vscode.window.showInformationMessage('Publish needs a connection.'); return; }
+      const lakehouse = basename(String(n.item)).replace(/\.[^.]+$/, '');
+      vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Publishing ${view}` },
+        () => core.publishView({ workspace: n.workspace, item: n.item, view }))
+        .then(r => {
+          if (out) for (const w of r.warnings) out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view}: ${w}`);
+          vscode.window.showInformationMessage(`Published ${view}: Fabric made its model, ${view}` +
+            (r.warnings.length ? `, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'} (in the log).` : '.'));
+        }, e => {
+          if (out) {
+            out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view} failed — ${(e && e.message) || e}`);
+          }
+          showError(`Publish ${view}: ${(e && e.message) || e}`);
+        });
     }),
     // Files from this computer into a folder of a lakehouse's Files/ (onelakewrite.js): a name already
     // there is asked about, each file is written beside and renamed into place, and the folder is

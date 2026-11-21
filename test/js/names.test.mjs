@@ -153,7 +153,7 @@ test("a lakehouse's Context/ and SystemContext/ are named as Files/ is, and only
   for (const p of ["data.Lakehouse/Tables/dbo/t", "data.Lakehouse/Contexts/x", "data.Lakehouse/context/x", "data.Lakehouse"]) assert.equal(n.areaOf(p), null, p);
   assert.equal(n.areaWriteError("Files"), null);
   assert.match(n.areaWriteError("SystemContext").message, /read-only: Fabric writes it/);
-  assert.match(n.areaWriteError("Context").message, /only a lakehouse's Files\/ is written here: Context\/ holds the semantic views made in Fabric/);
+  assert.match(n.areaWriteError("Context").message, /only a lakehouse's Files\/ is written here: in Context\/, Save writes a semantic view's own \.yaml/);
   const host = "onelake.dfs.fabric.microsoft.com";
   assert.equal(n.fileNamesIn(`FROM 'abfss://ws@${host}/lh.Lakehouse/SystemContext/Semantic Views/s/s.tmdl'`),
     "FROM 'ws.lh/SystemContext/Semantic Views/s/s.tmdl'");

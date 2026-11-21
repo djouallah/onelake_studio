@@ -232,7 +232,7 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
   const refs = sql => fileRefs(sql);
   const F = "'aemo.data/Files/x.parquet'";
   assert.deepEqual(refs(`SELECT * FROM ${F}`),
-    [{ zip: "", workspace: "aemo", item: "data", area: "Files", path: "/Files/x.parquet", written: "aemo.data/Files", start: 14, end: 14 + F.length, quote: "'" }]);
+    [{ workspace: "aemo", item: "data", area: "Files", path: "/Files/x.parquet", written: "aemo.data/Files", start: 14, end: 14 + F.length, quote: "'" }]);
   // Every place DuckDB reads one, each as DuckDB's own CLI was seen to read it.
   for (const sql of [`FROM ${F}`, `from (${F})`, `SELECT 1 FROM ${F} a, ${F} b`, `SELECT 1 FROM t JOIN ${F} ON true`, `DESCRIBE ${F}`, `SUMMARIZE ${F}`,
     `PIVOT ${F} ON a`, `DESCRIBE FROM ${F}`, `EXPLAIN SELECT * FROM ${F}`, `SELECT 1 FROM read_parquet(${F}, filename = true)`,
@@ -292,7 +292,7 @@ test("a file in Context/ or SystemContext/ is named as one in Files/ is, and is 
     assert.throws(() => fileRefs(`SELECT * FROM glob('${v}')`), /a file's name is/, v);
   }
   assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/SystemContext/x.csv'"), /SystemContext\/ is read-only: Fabric writes it/);
-  assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/Context/x.csv'"), /only a lakehouse's Files\/ is written here: Context\/ holds the semantic views made in Fabric/);
+  assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/Context/x.csv'"), /only a lakehouse's Files\/ is written here: in Context\/, Save writes a semantic view's own \.yaml/);
   assert.equal(writeOf("COPY (SELECT 1) TO 'a.b/Files/x.csv'").ref.area, "Files");
 });
 

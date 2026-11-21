@@ -37,6 +37,8 @@ const LOCAL_COPY_MAX_BYTES = 200e6;
 const PEEK_MAX_ROWS = 200_000;
 // What a tab's Save writes back: a .sql file in the SQL box, a model file on its Model page.
 const SAVABLE = /\.(sql|bim|ya?ml)$/i;
+// A semantic view's own file, the one write to Context/: Fabric's published model is read-only, so this is the truth.
+const VIEW_YAML = /^[^/]+\/Context\/Semantic Views\/[^/]+\/[^/]+\.yaml$/;
 
 // The engine's own methods the page may call. Everything else on the engine — opening a
 // table by metadata location, writing a temp file — is the host's to do, below.
@@ -75,7 +77,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, offlineState = null, setOffline = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, offlineState = null, setOffline = null, publishView = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveFileText = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -102,6 +104,15 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!x || !x.workspace || !x.path) throw new Error("Create Semantic Model needs a model file in a lakehouse's Files/");
       return createSemanticModel({ file: String(x.file || 'model'), text: String(x.text ?? ''),
                                    workspace: String(x.workspace), path: String(x.path) });
+    },
+    // Fabric's Publish of a semantic view (core.js publishView), from the Model tab of one: what to say after.
+    'fabric.publishView': async x => {
+      if (!publishView) throw new Error('Publish is not available here');
+      const view = String((x && x.view) ?? '');
+      if (!x || !x.workspace || !x.item || !view || /[/\\]/.test(view) || view === '.' || view === '..') throw new Error('Publish needs a semantic view of a lakehouse');
+      const r = await publishView({ workspace: String(x.workspace), item: String(x.item), view });
+      return `Published ${view}: Fabric made its model, ${view}` +
+        (r.warnings.length ? `, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'}: ${r.warnings.join('; ')}` : '.');
     },
     // The Report tab (exportflow.js reportOf): a model by its names.
     'model.report': async x => {
@@ -285,7 +296,8 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? '') });
     },
     // Save: the text of a file a tab opened, back over that file. Only a .sql or a model file; on this machine
-    // only one the host opened (it says which), in OneLake only one in a lakehouse's Files/.
+    // only one the host opened (it says which), in OneLake only one in a lakehouse's Files/, or a semantic view's
+    // .yaml in its Context/Semantic Views/<view>/.
     'host.saveFileText': async x => {
       if (!saveFileText) throw new Error('saving files is not available here');
       const text = String((x && x.text) ?? '');
@@ -295,11 +307,13 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         return saveFileText({ disk, text });
       }
       const path = strip((x && x.path) ?? '');
+      const dots = path.split('/').some(s => s === '.' || s === '..');
+      const view = VIEW_YAML.test(path) && !dots;
       const at = areaOf(path);
-      const refused = at && areaWriteError(at.area);
+      const refused = !view && at && areaWriteError(at.area);
       if (refused) throw new Error(`${path}: ${refused.message}`);
-      if (!x || !x.workspace || !SAVABLE.test(path) || !/^[^/]+\/Files\/./.test(path) || path.split('/').some(s => s === '.' || s === '..')) {
-        throw new Error(`${path || 'that file'}: only a .sql, .bim or .yaml file in a lakehouse's Files/ is saved to OneLake`);
+      if (!x || !x.workspace || dots || (!view && (!SAVABLE.test(path) || !/^[^/]+\/Files\/./.test(path)))) {
+        throw new Error(`${path || 'that file'}: only a .sql, .bim or .yaml file in a lakehouse's Files/, or a semantic view's .yaml, is saved to OneLake`);
       }
       return saveFileText({ workspace: String(x.workspace), path, text });
     },

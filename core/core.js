@@ -32,6 +32,7 @@ const { PINS } = require('./vendored');
 const { createQueries } = require('./queries');
 const { createModels } = require('./models/models');
 const { createOneLakeWriter } = require('../fabric_app/export/onelakewrite');
+const { createViewPublisher } = require('../fabric_app/export/publishview');
 const { createExport } = require('../fabric_app/export/exportflow');
 const { createEngines } = require('./engine/engines');
 
@@ -526,6 +527,19 @@ function createCore({
 
   // The one OneLake writer (onelakewrite.js): Upload's files.
   const writer = createOneLakeWriter({ getToken: hostToken });
+  // Fabric's Publish of a semantic view (publishview.js), from the tree or the Model tab: { workspace, item (the
+  // lakehouse's directory, data.Lakehouse), view }. After it, what Fabric wrote is listed again: the view's TMDL in
+  // SystemContext/, and its model in the workspace's semantic models. Answers { modelId, warnings }.
+  const viewPublisher = createViewPublisher({ fabric, getToken: fabricToken });
+  const publishView = async ({ workspace, item, view }) => {
+    try {
+      return await viewPublisher.publish(workspace, String(item).replace(/.[^.]+$/, ''), view);
+    } finally {
+      const sys = { workspace, item, area: 'SystemContext' };
+      for (const d of ['', 'Semantic Views', `Semantic Views/${view}`]) onelake.files(sys, d, { fresh: true }).catch(() => {});
+      onelake.models(workspace, { fresh: true }).catch(() => {});
+    }
+  };
   const exporter = createExport({
     connectivity, modules: () => agent.modules(), appToken, powerBiToken: fabricToken, fabric,
     memento, extensionDir, pageDir, reportDir: join(storageDir, 'reports'),
@@ -585,6 +599,7 @@ function createCore({
       return adoptModels(join(old, 'models')).then(moved => { if (moved) view.redraw(); });
     },
     fabric, sqlTables, syncWorker, favorites, queries, models, agent, writer,
+    publishView,
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,
     storeAccount: () => storeAccount, queryAccount: () => queryAccount,

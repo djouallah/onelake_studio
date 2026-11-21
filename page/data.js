@@ -605,6 +605,8 @@ export function createEngine({
   const semanticViews = () => callHost("semantic.views", [{}]);
   const semanticKeep = (name, path, schema, lakehouse = null) => callHost("semantic.keep", [{ name, path, schema, lakehouse }]);
   // A Fabric semantic view's .yaml files, from its lakehouse's Context/Semantic Views/<view>/: { files: [{ path, text }] }.
+  // Fabric's Publish of a semantic view (core.js publishView): what to say after.
+  const publishView = x => callHost("fabric.publishView", [x]);
   const semanticViewFiles = (lh, view) => callHost("onelake.semanticView", [{ workspace: lh.workspace, item: lh.item, view }]);
   // A lakehouse table's columns as its metadata lists them, [{ name, type }], with no rows read.
   const tableFields = async (lh, t) => (await callHost("onelake.table", [{
@@ -645,5 +647,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticViewFiles, tableFields, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticViewFiles, publishView, tableFields, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

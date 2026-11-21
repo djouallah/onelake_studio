@@ -51,17 +51,25 @@ test("Save: a page names a .sql or model file on disk or in a lakehouse's Files/
   await save({ disk: "C:\\work\\q.sql", text: "select 1", extra: "dropped" });
   await save({ workspace: "ws", path: "/lh.Lakehouse/Files/models/sales.yaml", text: "version: 1" });
   await save({ workspace: "ws", path: "lh.Lakehouse/Files/sales.bim" });
+  await save({ workspace: "ws", path: "lh.Lakehouse/Context/Semantic Views/sales/sales_semantic_view.yaml", text: "version: 0.2.0.dev0" });
   assert.deepEqual(asked, [
     { disk: "C:\\work\\q.sql", text: "select 1" },
     { workspace: "ws", path: "lh.Lakehouse/Files/models/sales.yaml", text: "version: 1" },
     { workspace: "ws", path: "lh.Lakehouse/Files/sales.bim", text: "" },
+    { workspace: "ws", path: "lh.Lakehouse/Context/Semantic Views/sales/sales_semantic_view.yaml", text: "version: 0.2.0.dev0" },
   ]);
   await assert.rejects(save({ disk: "C:\\Users\\me\\.ssh\\config", text: "x" }), /only a \.sql, \.bim or \.yaml file/);
   await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Tables/dbo/t/x.sql", text: "x" }), /in a lakehouse's Files\//);
   await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Files/../Tables/x.sql", text: "x" }), /in a lakehouse's Files\//);
   await assert.rejects(save({ path: "lh.Lakehouse/Files/x.sql", text: "x" }), /in a lakehouse's Files\//, "no workspace");
   await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Files/x.csv", text: "x" }), /in a lakehouse's Files\//);
-  assert.equal(asked.length, 3, "nothing refused reached the host");
+  // In Context/, a view's own .yaml and nothing else.
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Context/notes.yaml", text: "x" }), /Save writes a semantic view's own \.yaml/);
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Context/Semantic Views/sales/x.sql", text: "x" }), /Save writes a semantic view's own \.yaml/);
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Context/Semantic Views/sales/sub/x.yaml", text: "x" }), /Save writes a semantic view's own \.yaml/);
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/Context/Semantic Views/../x.yaml", text: "x" }), /Save writes a semantic view's own \.yaml/);
+  await assert.rejects(save({ workspace: "ws", path: "lh.Lakehouse/SystemContext/Semantic Views/sales/s.yaml", text: "x" }), /read-only/);
+  assert.equal(asked.length, 4, "nothing refused reached the host");
   await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["host.saveFileText"]({ disk: "q.sql" }), /not available here/);
 });
 
@@ -215,4 +223,14 @@ test("saving goes through the host's save function: text as given, a OneLake fil
   const out = [];
   await answer({ methods: none, engine: {} }, { id: 2, method: "host.saveFile", args: [{ name: "a", text: "" }] }, m => out.push(m));
   assert.equal(out[0].type, "error", "no save function, no save");
+});
+
+test("Publish: a page names a semantic view of a lakehouse, and is told what Fabric did", async () => {
+  const asked = [];
+  const methods = createHostMethods({ onelake: {}, engine: {}, publishView: async x => { asked.push(x); return { modelId: "m", warnings: ["w1"] }; } });
+  assert.equal(await methods["fabric.publishView"]({ workspace: "ws", item: "data.Lakehouse", view: "sales", extra: 1 }),
+    "Published sales: Fabric made its model, sales, with 1 warning: w1");
+  assert.deepEqual(asked, [{ workspace: "ws", item: "data.Lakehouse", view: "sales" }]);
+  await assert.rejects(methods["fabric.publishView"]({ workspace: "ws", item: "data.Lakehouse", view: "../x" }), /needs a semantic view/);
+  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["fabric.publishView"]({ workspace: "ws", item: "i", view: "v" }), /not available here/);
 });

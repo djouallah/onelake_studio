@@ -313,10 +313,10 @@ async function selectFile(file) {
   }
 }
 
-// A Fabric semantic view, as the model Fabric's Publish makes of it (semantic.js fabricViewBim): read here, never
-// written, since Fabric reads those files. Its tables' columns are the lake's, from their metadata. The Model
-// page's text is the view's own YAML.
-async function openFabricView(file, view) {
+// A Fabric semantic view, as the model Fabric's Publish makes of it (semantic.js fabricViewBim). Its tables' columns
+// are the lake's, from their metadata. The Model page's text is the view's own YAML: one file of it is saved back
+// there (the published model is read-only, so the YAML is the truth); several are shown merged, and read only.
+async function openFabricView(file, view, { openOnText = false } = {}) {
   const my = ++selSeq;
   setStatus(`Reading the semantic view ${view}…`);
   try {
@@ -331,7 +331,8 @@ async function openFabricView(file, view) {
     const viewText = files.length === 1 ? files[0].text
       : files.map(f => `# ${String(f.path).slice(lead.length)}\n${f.text}`).join('\n');
     await openModelView({ name: `${view}.bim`, path: file.path, localWorkspace: lakehouse.workspace, modelName: view,
-                          fabricView: true, viewText, label: `${view} (semantic view)` }, JSON.stringify(bim), { fromOneLake: false });
+                          fabricView: true, viewText, viewFile: files.length === 1 ? files[0].path : null,
+                          label: `${view} (semantic view)` }, JSON.stringify(bim), { fromOneLake: false, openOnText });
   } catch (e) {
     if (my !== selSeq) return;
     setStatus(`${view} does not open as a semantic model: ${e.message}`, 'error');
@@ -458,6 +459,9 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       createSemanticModel: fromOneLake && !file.systemView
         ? () => engine.createSemanticModel({ file: file.name, text: bim, workspace: lakehouse.workspace, path: file.path })
         : undefined,
+      // A Fabric semantic view: Fabric's Publish of it, from its lakehouse.
+      publishView: file.fabricView && lakehouse
+        ? () => engine.publishView({ workspace: lakehouse.workspace, item: lakehouse.item, view: file.modelName }) : undefined,
       // The Model page's table: the OneLake table behind it, in a tab of its own. Only a Direct Lake table has one.
       openTable: table => {
         const sqlName = m.lakeTables && m.lakeTables[String(table).toLowerCase()];
@@ -480,8 +484,19 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       openOnText,
       // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's
       // local copy (Fabric's is the model, and Refresh reads it again) nor an app's file (its model is in a zip).
-      // A Fabric semantic view is read only: Fabric reads its files. So is the TMDL Fabric made of one (SystemContext/).
-      saveFileText: !file.appFile && !file.fabricView && !file.systemView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+      // A Fabric semantic view of one .yaml: that file, back in Context/, once it still opens as a view; then the view
+      // again, from what was saved. The TMDL Fabric made of one (SystemContext/) is read only.
+      saveFileText: file.fabricView ? (file.viewFile ? async edited => {
+        const lh = lakehouse;
+        await semantic.fabricViewBim(file.modelName, [{ path: file.viewFile, text: edited }], {
+          lakehouse: String(lh.item).replace(/\.[^.]+$/, ''),
+          columnsOf: (schema, table) => engine.tableFields(lh, { schema, table }),
+        });
+        await engine.saveFileText({ workspace: lh.workspace, path: file.viewFile, text: edited });
+        await openFabricView({ path: file.path }, file.modelName, { openOnText: true });
+        setStatus(`Saved ${file.viewFile.split('/').pop()}. Publish makes Fabric's model of it.`, 'ok');
+      } : undefined)
+      : !file.appFile && !file.systemView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
         ? async edited => {
           // A text that doesn't open as a model is not written: the file stays one that opens.
           await semantic.checkModel(file.name, edited);
