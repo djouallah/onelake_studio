@@ -15,8 +15,6 @@ const { planExport, modelDoc, appFiles, setModel, setModelCopy, modelCopyOf, tab
         buildDist, fingerprint, zip, rayfinYml, appNameBefore, REPORT, APP_EXT, LEGACY_EXT, SITE, DEPLOYMENTS, CONFIG, setStatic, setPage, pageChanges, oldLayout,
         setSecrets, setDeployment } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
-const { createFabricModel } = require('./fabricmodel');
-const { semanticTmsl, definitionOf } = require('./pbimodel');
 
 // An earlier export's local copy was a folder, <app>/, with this marker in it.
 const OLD_MARKER = '.onelake-studio-export.json';
@@ -54,7 +52,6 @@ const reportName = (workspace, model) =>
  * @param {object} o.connectivity  connectivity.js
  * @param {() => Promise<object>} o.modules  the compiler and the page's modules (agent.js)
  * @param {Function} o.appToken  the Fabric API's own audience (signin.js)
- * @param {Function} [o.powerBiToken]  the Power BI API's (signin.js fabricToken): a semantic model's refresh
  * @param {object} o.fabric  fabric.js
  * @param {{ get: Function, update: Function }} o.memento  where each app's zip was approved last time
  * @param {string} o.extensionDir  where this install's files are
@@ -64,9 +61,8 @@ const reportName = (workspace, model) =>
  * @param {(node: object) => void} o.onRefresh  this part of the tree changed
  * @param {(line: string) => void} o.log
  */
-function createExport({ connectivity, modules, appToken, powerBiToken = appToken, fabric,
+function createExport({ connectivity, modules, appToken, fabric,
                         memento, extensionDir, reportDir = null, pageDir, ui, onRefresh, log, maxRows = () => null,
-                        fabricModel = createFabricModel({ getToken: appToken, powerBiToken, log: m => log(m) }),
                         fabricAppOf = createFabricApp }) {
 
   // The lakehouses a model reads, by GUIDs: the app's catalog is addressed by them. One its
@@ -473,49 +469,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
     return { report, modelPath: String(marker.model || ''), copy: modelCopyOf(files) };
   }
 
-  // Create Semantic Model, from the tree (a .bim or Ossie .yaml in a lakehouse's Files/) or the
-  // command line's `semanticmodel`: a Power BI semantic model of the file, and nothing else (no app,
-  // no zip, no Report). Named for the file (`name`, else its name), in the file's workspace, on
-  // Direct Lake, and refreshed once made. A model of that name is replaced only on the user's OK.
-  // Answers what to say when it is done; a No is thrown as `declined`.
-  async function createSemanticModel({ file, name, text, workspace, path }) {
-    const declined = message => Object.assign(new Error(message), { declined: true });
-    try {
-      if (connectivity.offline()) {
-        throw new Error(`Create Semantic Model needs a connection, and ${connectivity.noInternet() ? 'there is no internet' : 'you are not signed in'}.`);
-      }
-      if (!workspace || !path) throw new Error('Create Semantic Model needs a model file in a lakehouse\'s Files/');
-      const mods = await modules();
-      const modelName = name || mods.semantic.modelName(file);
-      const plan = planExport(text, file, modelName, mods, { workspace, path }, await lakesOf(text, file, workspace));
-      const workspaceId = String(await fabric.workspaceId(workspace)).toLowerCase();
-      const existing = await fabricModel.find(workspaceId, modelName);
-      if (existing) {
-        const pick = await ui.warn(`Update the semantic model ${modelName}?`,
-          { modal: true, detail: `Workspace: ${workspace}\nFrom: ${path}\n\n${workspace} already has a semantic model of this name: its definition is replaced.` }, 'Update');
-        if (pick !== 'Update') throw declined(`Not created: ${modelName} already exists in ${workspace}.`);
-      }
-      const tmsl = semanticTmsl(mods.semantic.bimOf(file, text, mods.compiler), {
-        name: modelName, tables: plan.tables, lake: { workspace: plan.workspace, item: plan.lakehouse } });
-      await ui.withProgress(`Create Semantic Model: ${modelName}`, async progress => {
-        const say = line => { log(`semantic model ${workspace}/${modelName}: ${line}`); progress.report({ message: line }); };
-        say(`${existing ? 'updating' : 'creating'} it`);
-        const { id } = await fabricModel.write(workspaceId, modelName, definitionOf(tmsl), existing && existing.id);
-        say('refreshing it');
-        await fabricModel.frame(workspaceId, id);
-      });
-      // The workspace's semantic models, listed again: it is there now.
-      onRefresh({ kind: 'models', workspace });
-      const done = `Semantic model ${modelName} ${existing ? 'updated' : 'created'} in ${workspace} (Direct Lake).`;
-      log(done);
-      return done;
-    } catch (e) {
-      if (!(e && e.declined)) log(`create semantic model from ${path || file} failed — ${(e && e.stack) || e}`);
-      throw e;
-    }
-  }
-
-  return { exportExplore, openApp, reportOf, reportStamp, reportSave, createSemanticModel };
+  return { exportExplore, openApp, reportOf, reportStamp, reportSave };
 }
 
 module.exports = { createExport };

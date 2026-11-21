@@ -23,9 +23,7 @@ const bim = { model: {
 } };
 const REQUEST = { file: "sales.yaml", name: "sales", text: OSSIE, state: {}, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml" };
 
-// `models`: the workspace's semantic models by name.
-async function setup({ offline = false, noInternet = false, answers = [], folder = null, token = "t", functionPackage = true,
-                       models = {} } = {}) {
+async function setup({ offline = false, noInternet = false, answers = [], folder = null, token = "t", functionPackage = true } = {}) {
   const ext = await mkdtemp(join(tmpdir(), "exportflow-"));
   if (functionPackage) {
     await mkdir(join(ext, "fabric-function"));
@@ -34,7 +32,6 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     await writeFile(join(ext, "fabric-function", "agent-files.json"), JSON.stringify({ ".agents/skills/rayfin/SKILL.md": "# rayfin\n" }));
   }
   const asked = [];
-  const looked = [];
   const kept = new Map();
   const ui = {
     openFolder: () => folder,
@@ -54,10 +51,6 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
       itemOf: async () => ({ workspace: "power bi", item: "nem.Lakehouse" }),
     },
     onelake: {}, catalog: {},
-    fabricModel: {
-      find: async (ws, name) => { looked.push({ ws, name }); return models[name] || null; },
-      write: async () => { throw new Error("nothing is written in these tests"); },
-    },
     memento: { get: k => kept.get(k), update: async (k, v) => { kept.set(k, v); } },
     // Fabric is never asked: the first call stops the export here.
     fabricAppOf: () => ({ takenName: async () => { throw new Error("stop: Fabric is not asked in these tests"); },
@@ -70,7 +63,7 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     log() {},
   });
   const exportExplore = x => flow.exportExplore(x);
-  return { exportExplore, flow, asked, looked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
+  return { exportExplore, flow, asked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
 }
 
 test("offline says why, before anything is asked", async () => {
@@ -152,10 +145,9 @@ for (const ext of [".zip", ".fabricapp"]) test(`an app an earlier export saved a
   await done();
 });
 
-test("a model file's app: the Save dialog alone, and no semantic model looked up", async () => {
-  const { exportExplore, asked, looked, done } = await setup({ answers: [null] });
+test("a model file's app: the Save dialog alone", async () => {
+  const { exportExplore, asked, done } = await setup({ answers: [null] });
   await exportExplore(REQUEST).catch(() => {});
-  assert.equal(looked.length, 0);
   assert.equal(asked.length, 1, "the Save dialog alone");
   await done();
 });
@@ -221,23 +213,7 @@ test("an earlier .fabricapp opened from disk is published from its .fabricator: 
   await done();
 });
 
-// Create Semantic Model: only replacing one is asked.
-const CREATE = { file: "sales.yaml", text: OSSIE, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml" };
 
-test("Create Semantic Model: a new one is not asked about, one there is", async () => {
-  const a = await setup({ models: { sales: { id: "m1", displayName: "sales" } }, answers: [undefined] });
-  const e = await a.flow.createSemanticModel(CREATE).then(() => null, x => x);
-  assert.equal(e.declined, true);
-  assert.equal(a.asked.length, 1, "one question");
-  assert.equal(a.asked[0].message, "Update the semantic model sales?");
-  assert.deepEqual(a.asked[0].rest.slice(1), ["Update"]);
-  assert.match(a.asked[0].rest[0].detail, /^Workspace: power bi\nFrom: nem\.Lakehouse\/Files\/semantic_model\/sales\.yaml\n\npower bi already has a semantic model of this name: its definition is replaced\.$/);
-  await a.done();
-  const b = await setup();
-  await assert.rejects(b.flow.createSemanticModel(CREATE), /nothing is written in these tests/, "on to writing it");
-  assert.equal(b.asked.length, 0);
-  await b.done();
-});
 
 // The Report tab's tiles, as Add to report and a tile's ✕ save them (reportSave).
 const MODEL = { workspace: "power bi", model: "sales" };

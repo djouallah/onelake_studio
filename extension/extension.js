@@ -30,7 +30,6 @@ const { createSettings } = require('../core/settings');
 const { queryStem } = require('../core/queries');
 const { createCore } = require('../core/core');
 const { commitOf } = require('../core/home');
-const { modelNameOf } = require('../core/models/models');
 const { dirBytes, treeBytes, removeDir } = require('../core/diskuse');
 const { SKILL_MARKER, skillFile, writeSkill, refreshSkill } = require('../cli/skill');
 const { createHostMethods } = require('../core/host');
@@ -134,8 +133,6 @@ let semviews = null;
 // Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
 // which owns the agent's modules.
 let exportExplore = null;
-// Create Semantic Model (exportflow.js), the tree's; set by activateInner, as above.
-let createSemanticModel = null;
 // The Report tab's tiles (exportflow.js reportOf), the page's model.report; set by activateInner, as above.
 let modelReport = null;
 // Keep offline (modeldata.js), the page's model.offlineState and model.setOffline; set by activateInner, as above.
@@ -191,8 +188,6 @@ async function show(context, { newTab = false, key = null, signIn = true, ...opt
       saveFile, semviews, modelsDir: engines.modelsFolder(),
       // A refusal is what Explore's info line says, not a failure of the export.
       exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
-        : Promise.reject(new Error('OneLake Studio is still starting'))),
-      createSemanticModel: x => (createSemanticModel ? createSemanticModel(x).catch(e => { if (e.declined) return e.message; throw e; })
         : Promise.reject(new Error('OneLake Studio is still starting'))),
       report: {
         load: x => (modelReport ? modelReport.load(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -448,7 +443,7 @@ async function activateInner(context) {
     mark: step => out && out.mark(step),
   });
   theCore = core;
-  ({ engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
+  ({ engines, onelake, semviews, rebindStore, exportExplore, modelReport, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
   const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
@@ -1217,29 +1212,6 @@ async function activateInner(context) {
     // Files from this computer into a folder of a lakehouse's Files/ (onelakewrite.js): a name already
     // there is asked about, each file is written beside and renamed into place, and the folder is
     // listed again. Needs a connection, as Export does.
-    // A .bim or .yaml in a lakehouse's Files/ made into the Power BI semantic model of its name, in
-    // its workspace, and no app (exportflow.js createSemanticModel), on Direct Lake. Needs a connection,
-    // as Export does.
-    vscode.commands.registerCommand('onelakeStudio.createSemanticModel', async n => {
-      if (!n || n.kind !== 'file' || !/\.(bim|ya?ml)$/i.test(String(n.path))) return;
-      if (connectivity.offline()) { vscode.window.showInformationMessage('Create Semantic Model needs a connection.'); return; }
-      const file = basename(String(n.path));
-      const name = modelNameOf(file);
-      // Whether it replaces one of that name is asked in createSemanticModel.
-      try {
-        const text = Buffer.from(await onelake.readBytes(n.workspace, n.path)).toString('utf8');
-        if (!createSemanticModel) throw new Error('OneLake Studio is still starting');
-        // Said in the status bar from the click to the end: Fabric is asked about the model first,
-        // and a Direct Lake refresh can take minutes after it.
-        const said = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Create Semantic Model: ${name}` },
-          () => createSemanticModel({ file, name, text, workspace: n.workspace, path: n.path }));
-        vscode.window.showInformationMessage(said);
-      } catch (e) {
-        // Cancelled: said, so a dialog closed without an answer doesn't look like one that worked.
-        if (e && e.declined) { vscode.window.setStatusBarMessage(e.message, 8000); return; }
-        showError(`Create Semantic Model: ${(e && e.message) || e}`);
-      }
-    }),
     vscode.commands.registerCommand('onelakeStudio.uploadFiles', async n => {
       if (!n || n.kind !== 'dir') return;
       const refused = areaWriteError(n.area || 'Files');

@@ -246,7 +246,7 @@ class LakehouseTree {
     // A pinned workspace offers Unpin, an unpinned one Pin (package.json menus).
     item.contextValue = n.kind === 'workspace' && n.pinned ? 'workspacePinned'
       : n.kind === 'fabricApp' && n.url ? 'fabricAppUrl'
-      // A .bim or .yaml in Files/: a file, that Create Semantic Model takes too.
+      // A .bim or .yaml in Files/: a file, and a model.
       : n.kind === 'file' && !n.area && /\.(bim|ya?ml)$/i.test(String(n.path)) ? 'modelFile'
       // A .yaml of a Fabric semantic view (Context/Semantic Views/<view>/…): a file, with Publish beside it.
       : n.kind === 'file' && n.area === 'Context' && /\/Context\/Semantic Views\/[^/]+\/.+\.yaml$/.test(String(n.path)) ? 'semanticViewFile'

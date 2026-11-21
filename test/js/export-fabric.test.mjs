@@ -26,7 +26,6 @@ if (skip && process.env.NO_SKIP) throw new Error(skip);
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const TABLE = "lakeci_plain";
-const MODEL = "lakeci_model";
 const FILE = "lakeci.bim";
 const PATH = `${LAKEHOUSE}.Lakehouse/Files/lakeci/${FILE}`;
 
@@ -228,13 +227,3 @@ async function signedIn(s) {
   console.log(`published app: signed in with no browser; its function named test.${TABLE} and its read-only SAS read it`);
 }
 
-test("on fabriccat: the model file made a Direct Lake semantic model, and refreshed", { skip, timeout: 20 * 60_000 }, async () => {
-  const s = await setup();
-  const text = JSON.stringify(bimOf(s.workspaceId, s.lakehouseId, "lakeci model"), null, 2);
-  const made = await s.flow.createSemanticModel({ file: FILE, name: MODEL, text, workspace: WS, path: PATH, mode: "directlake" });
-  assert.match(made, new RegExp(`^Semantic model ${MODEL} (created|updated) in ${WS} \\(`));
-
-  const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
-  const model = await createFabricModel({ getToken: async () => FABRIC_TOKEN, powerBiToken: async () => POWERBI_TOKEN }).find(s.workspaceId, MODEL);
-  assert.ok(model, `${WS} lists ${MODEL}`);
-});

@@ -123,7 +123,7 @@ async function bodyMessage(r, pick) {
 const fabricMessage = r => bodyMessage(r, j => j && (j.message || (j.error && j.error.message)));
 const oneLakeMessage = r => bodyMessage(r, j => j && j.error && j.error.message);
 
-// What the Fabric REST clients share (models/fabric.js, and the export's fabricapp.js and fabricmodel.js).
+// What the Fabric REST clients share (models/fabric.js, and the export's fabricapp.js).
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 /** An answer the Fabric API gave, which must be OK or one of `ok`: else `what` failed, with what it said. */
 async function fabricOk(r, what, ok = []) {

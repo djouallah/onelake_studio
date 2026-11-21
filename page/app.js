@@ -455,10 +455,6 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
           ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
           : { file: file.name, name: m.view, text: bim, state, workspace: file.modelWorkspace || file.localWorkspace, onDisk: true })
         : undefined,
-      // A model file in OneLake, made a Power BI semantic model as the tree's ⛁ does it. A semantic model is one already.
-      createSemanticModel: fromOneLake && !file.systemView
-        ? () => engine.createSemanticModel({ file: file.name, text: bim, workspace: lakehouse.workspace, path: file.path })
-        : undefined,
       // A Fabric semantic view: Fabric's Publish of it, from its lakehouse.
       publishView: file.fabricView && lakehouse
         ? () => engine.publishView({ workspace: lakehouse.workspace, item: lakehouse.item, view: file.modelName }) : undefined,

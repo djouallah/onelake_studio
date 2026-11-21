@@ -60,8 +60,6 @@ const REPORT_POLL_MS = 2000;
 //                    is, so nothing is asked here; answers what to say when it is done
 //   publishView()  (optional) a Fabric semantic view's Publish button, on the Model page: what to say after
 //   fabricView       (optional) true for a Fabric semantic view: its YAML shows what Fabric's Publish refuses, in red
-//   createSemanticModel()  (optional) a model file's Create Semantic Model button, on the Model page:
-//                    the tree's own (fabric_app/export/exportflow.js), its dialog the host's; answers what to say
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
 //                    table of this model on this machine (core/models/modeldata.js); both answer what it shows:
 //                    { on, say, tone, meter, tip, busy }
@@ -181,8 +179,6 @@ export function mountExplore(root, ctx) {
     b.title = title;
     return b;
   };
-  const createBtn = ctx.createSemanticModel
-    ? hostBtn('Create Semantic Model', 'Creating…', ctx.createSemanticModel, 'A Power BI semantic model of this file, in its workspace') : null;
   // A Fabric semantic view's: Fabric's Publish of it (its TMDL and its model), as the tree's ▶ does it.
   const publishBtn = ctx.publishView
     ? hostBtn('Publish', 'Publishing…', ctx.publishView, "Fabric's Publish of this semantic view: its TMDL in SystemContext/, and its model") : null;
@@ -247,11 +243,11 @@ export function mountExplore(root, ctx) {
   const extName = `${vendors.length && vendors.every(v => v.toUpperCase() === 'POWER_BI') ? 'Power BI' : 'vendor'} extension`;
   const textNote = el('p', { class: 'text-file-note', hidden: true }, el('span', { class: 'swatch' }),
     `Amber: ${extName}, what Ossie has no field for`);
-  // At the right of the bar, before Create Semantic Model. On the Model page only.
+  // At the right of the bar, before Save and Publish. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
-  const modelActions = modelSwitch || createBtn || publishBtn
-    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, publishBtn) : null;
+  const modelActions = modelSwitch || publishBtn
+    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, publishBtn) : null;
   const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textEdit || textPre);
 
   root.replaceChildren(

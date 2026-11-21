@@ -35,14 +35,6 @@ function fixture() {
   return { calls, ask };
 }
 
-test("Create Semantic Model: a page names a model file in OneLake, and hears how it went", async () => {
-  const asked = [];
-  const methods = createHostMethods({ onelake: {}, engine: {}, createSemanticModel: async x => { asked.push(x); return "made"; } });
-  assert.equal(await methods["fabric.createSemanticModel"]({ file: "sales.yaml", text: "t", workspace: "ws", path: "lh.Lakehouse/Files/sales.yaml", other: "x" }), "made");
-  assert.deepEqual(asked, [{ file: "sales.yaml", text: "t", workspace: "ws", path: "lh.Lakehouse/Files/sales.yaml" }], "what the page names, and nothing else");
-  await assert.rejects(methods["fabric.createSemanticModel"]({ file: "sales.yaml", workspace: "ws" }), /needs a model file in a lakehouse's Files\//);
-  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["fabric.createSemanticModel"]({ workspace: "ws", path: "p" }), /not available here/);
-});
 
 test("Save: a page names a .sql or model file on disk or in a lakehouse's Files/, and nothing else", async () => {
   const asked = [];

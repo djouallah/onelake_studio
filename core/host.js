@@ -77,7 +77,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, offlineState = null, setOffline = null, publishView = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, report = null, offlineState = null, setOffline = null, publishView = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveFileText = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -97,13 +97,6 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
                              ...(onDisk ? { workspace: String(x.workspace), onDisk: true, ...(x.path ? { path: String(x.path) } : {}) }
                                : { workspace: String(x.workspace), path: String(x.path) }),
                              state: x.state && typeof x.state === 'object' ? x.state : null });
-    },
-    // Create Semantic Model (exportflow.js), from Explore: a model file in OneLake. The host's dialog asks the rest.
-    'fabric.createSemanticModel': async x => {
-      if (!createSemanticModel) throw new Error('Create Semantic Model is not available here');
-      if (!x || !x.workspace || !x.path) throw new Error("Create Semantic Model needs a model file in a lakehouse's Files/");
-      return createSemanticModel({ file: String(x.file || 'model'), text: String(x.text ?? ''),
-                                   workspace: String(x.workspace), path: String(x.path) });
     },
     // Fabric's Publish of a semantic view (core.js publishView), from the Model tab of one: what to say after.
     'fabric.publishView': async x => {

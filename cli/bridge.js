@@ -45,7 +45,6 @@ const COMMANDS = {
   model: { usage: 'model <ws> <model>', min: 2, max: 2, flags: ['fresh', 'json'] },
   sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['csv', 'json', 'limit', 'showSql', 'fresh'] },
   export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json'] },
-  semanticmodel: { usage: 'semanticmodel <ws> <item> <Files/path>', min: 3, max: 3, flags: ['json'] },
   report: { usage: 'report <ws> <model>, or report <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json', 'set'] },
   status: { usage: 'status', max: 0, flags: ['json'] },
   log: { usage: 'log [<text>]', max: 1, flags: ['json', 'limit'] },
