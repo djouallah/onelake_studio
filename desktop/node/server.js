@@ -8,7 +8,7 @@
 //
 // It binds 127.0.0.1, and everything but the first request needs a cookie made from a token only this
 // process and the window it started know (a cookie is the host's, whatever the port, so the pages have
-// it too). As with Excel's endpoint (xmla/server.js), a browser can still send a request here, so a Host
+// it too). A browser can still send a request here, so a Host
 // that isn't this address, or an Origin that isn't the port's own, is refused.
 //
 // A tab's page can reach only what it could as a webview: its own files. Its port is another origin, so

@@ -461,7 +461,7 @@ jobs:
           for f in source.zip deploymetadata.json agent-files.json; do
             grep -qx "extension/fabric-function/$f" <<<"$files" || { echo "no fabric-function/$f in the vsix"; exit 1; }
           done
-          stray=$(grep -E '^extension/(src|core|extension|xmla|cli|fabric_app/export)/' <<<"$files"                   | grep -vxE 'extension/cli/(cli.mjs|bridge.js|SKILL.md)' || true)
+          stray=$(grep -E '^extension/(src|core|extension|cli|fabric_app/export)/' <<<"$files"                   | grep -vxE 'extension/cli/(cli.mjs|bridge.js|SKILL.md)' || true)
           [ -z "$stray" ] || { echo "source shipped beside the bundle: $stray"; exit 1; }
           ! grep -q '^extension/node_modules/@duckdb/node-api/' <<<"$files" \
             || { echo "@duckdb/node-api shipped beside the bundle"; exit 1; }
@@ -578,7 +578,7 @@ jobs:
           retention-days: 14
 
   # The command line with VS Code closed, from the vsix a person installs, where it runs: Windows, its
-  # DPAPI, a named pipe, its own engine server, and Excel's endpoint on a model file.
+  # DPAPI, a named pipe and its own engine server.
   standalone:
     needs: package
     runs-on: windows-latest

@@ -3,16 +3,15 @@
 // standalone.js — the command line with VS Code closed
 // =============================================================================
 // core.js with no editor around it. cli/cli.mjs comes here when nothing answers on the bridge, and for
-// the commands only this does: signin, signout and serve. What a window remembers is the same files, so
+// the commands only this does: signin and signout. What a window remembers is the same files, so
 // the same person has the same cache with VS Code open or not. The engine is a server of its own, since
 // VS Code's has its session token in VS Code's secret storage: the two share the catalog and the disk
 // cache, as the background engine does.
 //
-// Nothing is kept running: no sync and no idle job, and the process ends with the answer. `serve` stays,
-// for as long as Excel needs it.
+// Nothing is kept running: no sync and no idle job, and the process ends with the answer.
 // =============================================================================
 
-const { join, resolve } = require('node:path');
+const { join } = require('node:path');
 const { mkdirSync, readFileSync, existsSync } = require('node:fs');
 const { EXIT, failureJson } = require('./bridge');
 const { createConnectivity, probeOf } = require('../core/onelake/connectivity');
@@ -25,8 +24,7 @@ const { createCore } = require('../core/core');
 const { createTokenStore } = require('../core/tokenstore');
 const { createMsalSession } = require('../core/msalsession');
 const { pathsOf, readSettings, keptIn, commitOf } = require('../core/home');
-const { connectionString, openInExcel } = require('../xmla/excel');
-const { DFS_ORIGIN, modelSqlName } = require('../core/names');
+const { DFS_ORIGIN } = require('../core/names');
 
 const SETTLE_MS = 2_000;
 
@@ -70,8 +68,8 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
 
   const core = createCore({
     signIn, connectivity, settings, readLog, extensionDir, storageDir: home,
-    production: true, dev: false, memento: state, secrets, serverTag: 'standalone',
-    servesCommandLine: false, servesExcel: false,
+    production: true, memento: state, secrets, serverTag: 'standalone',
+    servesCommandLine: false,
     httpProxy: () => String(config['http.proxy'] || ''),
     readmePath: async () => readme,
     pageDir: async () => page,
@@ -138,55 +136,7 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
       await msal.clear();
       await signIn.markSignedOut();
     },
-
-    /**
-     * Excel's endpoint on a model file: `workspace` and `name` make its one SQL name, and a model in
-     * the same place under that name is replaced, as NAMING.md says. The file is read again whenever
-     * it changes, so a refresh in Excel sees an edit. Answers how to connect.
-     */
-    async serve({ file, workspace, lakehouse = null, name, open = false }) {
-      await settle();
-      if (!core.signedIn()) throw Object.assign(new Error('not signed in, and nothing is cached on this machine'), { code: EXIT.UNAVAILABLE });
-      const path = resolve(file);
-      if (lakehouse && !workspace) throw new Error('--lakehouse is a lakehouse in a workspace: give that with --workspace');
-      const found = await core.models.modelFile(path, { workspace, lakehouse })
-        .catch(e => { throw e.unknownWorkspace ? new Error(`${e.message.trim()}: give it with --workspace`) : e; });
-      const model = name || found.model;
-      // Tables named schema.table, as a Fabric semantic view's YAML names them: the lakehouse picked for this file,
-      // else the one lakehouse listed here holding them all, else it is asked for.
-      if (found.bare) {
-        const at = found.lakehouse ? { workspace: found.workspace, lakehouse: found.lakehouse }
-          : found.candidates.length === 1 ? found.candidates[0] : null;
-        if (!at) {
-          const tables = found.bare.map(b => `${b.schema}.${b.entity}`).join(', ');
-          throw new Error(`${file} names its tables schema.table (${tables}) in no lakehouse: give it with --workspace and --lakehouse` +
-            (found.candidates.length ? ` (${found.candidates.map(c => `${c.workspace}/${c.lakehouse}`).join(', ')} hold them all)` : ''));
-        }
-        const catalog = modelSqlName(at.workspace, model);
-        await core.semviews.put(model, path, at.workspace, at.lakehouse);
-        return startServing({ catalog, model, open });
-      }
-      const where = found.workspace;
-      if (!where) {
-        throw new Error(`${file} names its tables <lakehouse>.<schema>.<table>, in its own workspace: give it with --workspace` +
-          (found.choices.length ? ` (${found.choices.join(', ')} ${found.choices.length === 1 ? 'holds' : 'hold'} ${found.lakehouses.join(', ')})` : ''));
-      }
-      const catalog = modelSqlName(where, model);
-      await core.semviews.put(model, path, where);
-      return startServing({ catalog, model, open });
-    },
   };
-
-  // Excel's endpoint on a model kept as a view: answers how to connect.
-  async function startServing({ catalog, model, open }) {
-    const { measures } = await core.agent.excelCube(catalog);
-    const engine = core.engines.ensureEngine({ readme });
-    if (!engine) throw new Error(core.engines.resetting() ? 'the engine is restarting: try again in a moment' : 'DuckDB could not be loaded on this platform');
-    await engine.warm();
-    const { port, token } = await core.startExcel({ create: true });
-    if (open) await openInExcel({ port, token, catalog, name: model });
-    return { catalog, port, url: `http://127.0.0.1:${port}/${token}/`, connection: connectionString({ port, token, catalog }), measures: measures.length, opened: !!open };
-  }
 }
 
 module.exports = { createStandalone };

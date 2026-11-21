@@ -2,7 +2,7 @@
 // =============================================================================
 // dialogs.js — what the window can't do itself: Windows' own dialogs, the clipboard, Explorer
 // =============================================================================
-// Through PowerShell, as Open in Excel is (xmla/excel.js): no native module to ship. What goes into a
+// Through PowerShell: no native module to ship. What goes into a
 // script comes through the environment or stdin, so no file name can be read as PowerShell.
 // =============================================================================
 

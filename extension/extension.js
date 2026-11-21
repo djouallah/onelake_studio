@@ -141,8 +141,6 @@ let exportExplore = null;
 let createSemanticModel = null;
 // The Report tab's tiles (exportflow.js reportOf), the page's model.report; set by activateInner, as above.
 let modelReport = null;
-// Open in Excel (xmla), the page's excel.open; set by activateInner, as above.
-let openExcel = null;
 // Keep offline (modeldata.js), the page's model.offlineState and model.setOffline; set by activateInner, as above.
 let keepOffline = null;
 // A semantic model a query names (ws.model_semanticmodel), opened: its local copy kept, and
@@ -204,7 +202,6 @@ async function show(context, { newTab = false, key = null, signIn = true, ...opt
         stamp: x => (modelReport ? modelReport.stamp(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
         save: x => (modelReport ? modelReport.save(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       },
-      openInExcel: x => (openExcel ? openExcel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       publishView: x => (theCore ? theCore.publishView(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       setOffline: x => (keepOffline ? keepOffline.set(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -410,7 +407,7 @@ async function activateInner(context) {
   const core = createCore({
     signIn, connectivity, settings, readLog,
     extensionDir: context.extensionUri.fsPath, storageDir: context.globalStorageUri.fsPath,
-    production: context.extensionMode === vscode.ExtensionMode.Production, dev,
+    production: context.extensionMode === vscode.ExtensionMode.Production,
     // The desktop app's (desktop/node/main.js); VS Code gives none.
     serverTag: context.serverTag || '',
     memento: context.globalState, secrets: context.secrets,
@@ -457,7 +454,7 @@ async function activateInner(context) {
     mark: step => out && out.mark(step),
   });
   theCore = core;
-  ({ engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
+  ({ engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
   const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;

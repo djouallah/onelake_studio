@@ -47,7 +47,7 @@ test("signin.js and settings.js, which the extension hands in, need no editor ei
 });
 
 // core/ is what reads OneLake, and the other parts are built on it. Only core.js, which puts a window
-// together, names them: the command line, Excel's endpoint and the export.
+// together, names them: the command line and the export.
 test("nothing in core/ but core.js requires another part", async () => {
   const { readdir } = await import("node:fs/promises");
   const core = join(src, "core");

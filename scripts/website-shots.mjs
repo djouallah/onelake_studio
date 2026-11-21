@@ -1,12 +1,11 @@
 // The website's screenshots, taken in the app's own window. The installed app runs on this machine's
 // home, signed in, with what it has read, so the pictures show real data; Edge draws the window, as
-// WebView2 does in the app. Excel's picture is Excel's own window, opened from the app's Open in
-// Excel. Nothing is built. The pictures go to website/img.
+// WebView2 does in the app. Nothing is built. The pictures go to website/img.
 //
 //   node scripts/website-shots.mjs "%LOCALAPPDATA%\OneLake Studio\app" [out dir]
 //
 // The data is the account's: the demo workspace's lakehouse (aemo tables) and its DL semantic model.
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 
@@ -36,51 +35,6 @@ function start() {
   });
   return { child, ready, stderr: () => stderr };
 }
-
-// Fields onto the Excel PivotTable the app just opened, then Excel's window, below its title bar
-// (the account's picture is there), into excel.png. The workbook is closed unsaved.
-const EXCEL = `
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Drawing
-Add-Type -ReferencedAssemblies System.Drawing @'
-using System; using System.Drawing; using System.Runtime.InteropServices;
-public static class Win {
-  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-  struct RECT { public int L, T, R, B; }
-  public static Bitmap Shot(IntPtr h) {
-    RECT r; GetWindowRect(h, out r);
-    var bmp = new Bitmap(r.R - r.L, r.B - r.T);
-    using (var g = Graphics.FromImage(bmp)) { var dc = g.GetHdc(); PrintWindow(h, dc, 2); g.ReleaseHdc(dc); }
-    return bmp;
-  }
-}
-'@
-[Win]::SetProcessDPIAware() | Out-Null
-$xl = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
-$wb = $xl.ActiveWorkbook
-$ws = $wb.Worksheets.Item(1)
-$pt = $ws.PivotTables('PivotTable1')
-$pt.CubeFields.Item('[duid].[FuelSourceDescriptor]').Orientation = 1
-$pt.CubeFields.Item('[duid].[Region]').Orientation = 2
-$pt.CubeFields.Item('[Measures].[Mwh]').Orientation = 4
-$pt.DataBodyRange.NumberFormat = '#,##0'
-[void]$ws.Columns('A:G').AutoFit()
-$wb.ShowPivotTableFieldList = $true
-[void]$ws.Range('B5').Select()
-$xl.WindowState = -4143; $xl.Left = 20; $xl.Top = 20; $xl.Width = 1200; $xl.Height = 645
-[void][Win]::SetForegroundWindow([IntPtr]$xl.Hwnd)
-Start-Sleep -Milliseconds 2000
-$full = [Win]::Shot([IntPtr]$xl.Hwnd)
-$top = [int]($full.Height * 0.062)
-$crop = New-Object System.Drawing.Rectangle 0, $top, ($full.Width - 8), ($full.Height - $top - 8)
-$img = $full.Clone($crop, $full.PixelFormat)
-$img.Save($env:OLS_SHOT, [System.Drawing.Imaging.ImageFormat]::Png)
-$wb.Close($false)
-if ($xl.Workbooks.Count -eq 0) { $xl.Quit() }
-`;
 
 const proc = start();
 const browser = await chromium.launch({ channel: "msedge", headless: true });
@@ -209,14 +163,6 @@ try {
     await tab().locator('.ex-mark-menu .ex-mark[data-mark="area"]').click();
     await page.waitForTimeout(3000);
     await shot("pivot");
-  });
-
-  await step("excel.png: the same model, in an Excel PivotTable", async () => {
-    await tab().locator("button", { hasText: "Open in Excel" }).first().click();
-    await tab().getByText(/is open in Excel/).waitFor({ timeout: 120_000 });
-    const ps = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(EXCEL, "utf16le").toString("base64")],
-      { env: { ...process.env, OLS_SHOT: join(out, "excel.png") }, encoding: "utf8", timeout: 300_000 });
-    if (ps.status !== 0) throw new Error(`Excel: ${ps.stderr || ps.stdout}`);
   });
 
   // Back as the tree was found.

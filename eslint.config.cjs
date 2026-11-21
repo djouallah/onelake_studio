@@ -51,7 +51,7 @@ module.exports = [
               'test/fixtures/**', 'test/e2e/driver/**'] },
   { linterOptions: { reportUnusedDisableDirectives: 'error' } },
   // The host: CommonJS on Node.
-  { files: ['core/**/*.js', 'extension/**/*.js', 'cli/**/*.js', 'xmla/**/*.js', 'desktop/node/**/*.js', 'fabric_app/export/**/*.js',
+  { files: ['core/**/*.js', 'extension/**/*.js', 'cli/**/*.js', 'desktop/node/**/*.js', 'fabric_app/export/**/*.js',
             '*.cjs'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'commonjs', globals: node }, rules },
   // Scripts, tests and the command line: modules on Node. A test's page-side code names the browser's too.

@@ -75,7 +75,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, openInExcel = null, offlineState = null, setOffline = null, publishView = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, offlineState = null, setOffline = null, publishView = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveFileText = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -129,12 +129,6 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
       return report.save({ workspace: String(x.workspace), model: String(x.model), spec: x.spec,
                            stamp: typeof x.stamp === 'number' ? x.stamp : null });
-    },
-    // Open in Excel (xmla): a semantic model, by its names alone.
-    'excel.open': async x => {
-      if (!openInExcel) throw new Error('Open in Excel is not available here');
-      if (!x || !x.workspace || !x.model) throw new Error('Open in Excel needs a semantic model');
-      return openInExcel({ workspace: String(x.workspace), model: String(x.model) });
     },
     // Keep offline (modeldata.js): a semantic model's tables on this machine, by its names alone.
     'model.offlineState': async x => {

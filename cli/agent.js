@@ -45,7 +45,6 @@ const { editDistance, deltaTableOf } = require('../core/sqltables');
 const { lakehouseHealth } = require('../core/lake/health');
 const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED, statementsOf } = require('../core/sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
-const { buildCube } = require('../xmla/cube');
 
 const SIGN_IN_TO_FABRIC = 'expand "Semantic models" in the OneLake tree once to sign in to Fabric';
 
@@ -952,12 +951,11 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   }
 
   // modules(): the compiler, for the extension's own uses of it too (Export to Fabric).
-  // Open in Excel (xmla): a model as a cube, and a model SELECT run as `sql` runs one, through
-  // the same guard. A model is wherever its view says: a local copy, or a file in a lakehouse's
-  // Files/. One whose text changed is read again, so a Refresh of its workspace reaches an open workbook at
-  // its next refresh.
-  const cubes = new Map();   // lower-cased SQL name -> { text, cube }
-  async function excelCube(catalog) {
+
+  // A model by its SQL name, defined here as a view: wherever its view says, a local copy or a file in a
+  // lakehouse's Files/. One whose text changed is defined again. Answers its view's SQL name.
+  const modelsRead = new Map();   // lower-cased SQL name -> { text, sqlName }
+  async function modelView(catalog) {
     const { semantic, compiler } = await modules();
     const ref = semantic.modelNameParts(catalog);
     if (!ref) throw new Error(`${catalog} does not name a semantic model`);
@@ -967,31 +965,24 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     if (!view && !await exists(path)) throw new Error(`${catalog} is not on this machine: open it in OneLake Studio first`);
     const text = view ? view.text : await fsp.readFile(path, 'utf8');
     const key = catalog.toLowerCase();
-    const kept = cubes.get(key);
-    if (kept && kept.text === text && semantic.hasView(semantic.modelKey(ref.workspace, ref.model))) return kept.cube;
+    const kept = modelsRead.get(key);
+    if (kept && kept.text === text && semantic.hasView(semantic.modelKey(ref.workspace, ref.model))) return kept.sqlName;
     const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ref.workspace, ref.model,
                                            view ? view.lakehouse || null : null);
     if (!view) await semviews.put(m.view, path, ref.workspace);
     defined.add(m.name.toLowerCase());
-    const cube = buildCube(catalog, m.bim, m.name);
-    cubes.set(key, { text, cube });
-    return cube;
-  }
-  async function excelQuery(sql, { signal } = {}) {
-    const { semantic, compiler } = await modules();
-    const st = await semantic.statement(sql, compiler);
-    if (!st) throw new Error('This semantic model is no longer open: refresh the PivotTable');
-    return (await engine()).agentQuery(st.sql, { signal });
+    modelsRead.set(key, { text, sqlName: m.name });
+    return m.name;
   }
 
   // Keep offline (modeldata.js): the tables a model reads, by their SQL names.
   async function modelTables(catalog) {
     const { semantic } = await modules();
-    const { sqlName } = await excelCube(catalog);
+    const sqlName = await modelView(catalog);
     return semantic.lakeTablesOf(sqlName).map(t => t.ident);
   }
 
-  return { run, modules, excelCube, excelQuery, modelTables };
+  return { run, modules, modelTables };
 }
 
 module.exports = { createAgent };

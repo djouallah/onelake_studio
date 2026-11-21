@@ -3,7 +3,7 @@
 // tokenstore.js — the sign-in's token cache on disk, outside any editor
 // =============================================================================
 // VS Code keeps its own tokens. With no editor, the refresh token is this file's, so it is encrypted
-// for this Windows user with DPAPI. PowerShell does that, as it drives Excel for Open in Excel: no
+// for this Windows user with DPAPI. PowerShell does that: no
 // native module to ship. It takes a moment, so what was read is held until the file changes: the desktop
 // app and the command line keep one file, and a sign-out in one is a sign-out in the other.
 // A file that can't be read (another user's, another machine's) is no sign-in, not a failure.

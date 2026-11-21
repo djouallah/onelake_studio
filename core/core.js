@@ -2,7 +2,7 @@
 // =============================================================================
 // core.js — everything a window builds that isn't about how it looks
 // =============================================================================
-// The store, the catalog, the engine, the command line, Excel and what happens when the account
+// The store, the catalog, the engine, the command line and what happens when the account
 // moves. It has no editor in it: the sign-in, what is kept, the folders, the questions and what's on
 // screen are handed in, and extension/extension.js is what hands them in today.
 // =============================================================================
@@ -25,8 +25,6 @@ const { inTime } = require('./onelake/http');
 const { createFabric, modelAccountDir } = require('./models/fabric');
 const { modelSqlName } = require('./names');
 const { createAgent } = require('../cli/agent');
-const { serveXmla } = require('../xmla/server');
-const { openInExcel } = require('../xmla/excel');
 const { createModelData } = require('./models/modeldata');
 const { createSemViews } = require('./models/semviews');
 const { serveBridge } = require('../cli/bridge');
@@ -71,8 +69,6 @@ const accountTurn = serialized(body => body());
  * @param {boolean} o.production  an installed build
  * @param {string} [o.serverTag]  engines.js
  * @param {boolean} [o.servesCommandLine]  answers on the bridge
- * @param {boolean} [o.servesExcel]  opens Excel's port as it starts, once it has been used
- * @param {boolean} o.dev  run from a checkout, whose Excel endpoint is its own
  * @param {{ get: Function, update: Function }} o.memento  what outlives a window
  * @param {{ get: Function, store: Function }} o.secrets
  * @param {() => string} o.httpProxy  a proxy the person set, or ''
@@ -93,7 +89,7 @@ const accountTurn = serialized(body => body());
  * @param {(step: string) => void} o.mark  a step of starting up
  */
 function createCore({
-  signIn, connectivity, settings, readLog, extensionDir, storageDir, production, serverTag = '', servesCommandLine = true, servesExcel = true, dev, memento, secrets, httpProxy,
+  signIn, connectivity, settings, readLog, extensionDir, storageDir, production, serverTag = '', servesCommandLine = true, memento, secrets, httpProxy,
   readmePath, pageDir, build, editorVersion, outputLog, windowLog, exportUi, view, closePanel, closeAllTabs, post,
   notify, warn, showError, reloadWindow = null, setContext, onAccountChange, subscribe, log, mark,
 }) {
@@ -105,7 +101,7 @@ function createCore({
   // Set below: what an engine, a tab and the command line ask for by the time anything can ask.
   let onelake = null, semviews = null, rebindStore = null, onStoreCleared = () => {};
   let resolveSqlTable = null, resolveSqlFile = null, resolveSqlLakehouse = null, nameModelTables = null, cachedSqlTables = null;
-  let openSqlModel = null, saveQuery = null, exportExplore = null, openApp = null, modelReport = null, openExcel = null, keepOffline = null;
+  let openSqlModel = null, saveQuery = null, exportExplore = null, openApp = null, modelReport = null, keepOffline = null;
   let createSemanticModel = null;
 
   // What an engine asks of this window, whichever engine it is.
@@ -520,79 +516,6 @@ function createCore({
     set: ({ workspace, model, on }) => modelData.set(modelSqlName(workspace, model), model, on),
   };
 
-  // Open in Excel (xmla): the endpoint a PivotTable connects to. Its port and token outlive a
-  // reload, since a saved workbook holds them, and F5 has its own so it doesn't lose the port to
-  // the installed build. Not opened until the command has been used once; after that, whenever a
-  // window starts, so a saved workbook refreshes with VS Code open.
-  const xmlaPortKey = `xmlaPort${dev ? '.dev' : ''}`, xmlaTokenKey = `xmlaToken${dev ? '.dev' : ''}`;
-  const randomPort = () => 49152 + (randomBytes(2).readUInt16LE(0) % 16384);
-  let xmlaServer = null, xmlaAddress = null;
-  // How long an address is waited for before it is given out anyway: a workbook that connects too early says so.
-  const XMLA_UP_MS = 5000;
-  // One start at a time: two callers in the same moment would otherwise each open a server.
-  let xmlaStarting = null;
-  async function startXmla(o = {}) {
-    if (xmlaAddress) return xmlaAddress;
-    if (xmlaStarting) {
-      const address = await xmlaStarting;
-      if (address || !o.create) return address;
-    }
-    xmlaStarting = startXmlaOnce(o).finally(() => { xmlaStarting = null; });
-    return xmlaStarting;
-  }
-  async function startXmlaOnce({ create = false } = {}) {
-    if (process.platform !== 'win32') return null;
-    if (xmlaAddress) return xmlaAddress;
-    let port = memento.get(xmlaPortKey);
-    let token = await secrets.get(xmlaTokenKey);
-    if (!port || !token) {
-      if (!create) return null;
-      port = port || randomPort();
-      token = token || randomBytes(24).toString('hex');
-      await secrets.store(xmlaTokenKey, token);
-      await memento.update(xmlaPortKey, port);
-    }
-    // The address once something answers on it: given out before that, Excel (and `serve`'s caller) was
-    // sometimes refused the connection, and after a port was lost it was given the port that was lost.
-    const serve = p => new Promise(resolve => {
-      const address = { port: p, token };
-      const server = serveXmla({
-        port: p, token, log,
-        backend: { cube: c => agent.excelCube(c), query: (sql, o) => agent.excelQuery(sql, o) },
-        // Something else took it: a new port. A workbook saved on the old one stops refreshing.
-        onPortLost: () => {
-          const next = randomPort();
-          memento.update(xmlaPortKey, next);
-          resolve(serve(next));
-        },
-      });
-      xmlaServer = server;
-      // Whichever port answers last is the address: one lost later, after this was first given out, moves it.
-      server.listening.then(() => { xmlaAddress = address; resolve(address); });
-    });
-    const up = serve(port);
-    const late = new Promise(resolve => { const t = setTimeout(() => resolve(null), XMLA_UP_MS); if (t.unref) t.unref(); });
-    return (await Promise.race([up, late])) || xmlaAddress || { port, token };
-  }
-  subscribe({ dispose: () => { if (xmlaServer) xmlaServer.dispose(); } });
-  if (servesExcel) startXmla().catch(e => log(`xmla: ${e.message}`));
-
-  // The button on a model's Pivot: a new workbook with a PivotTable on it. A failure is thrown
-  // back to the Pivot's status line, and logged. Answers what that line says when it's open.
-  openExcel = async ({ workspace, model }) => {
-    try {
-      const { port, token } = await startXmla({ create: true });
-      const catalog = modelSqlName(workspace, model);
-      const { measures } = await agent.excelCube(catalog);
-      await openInExcel({ port, token, catalog, name: model });
-      return measures.length ? `${model} is open in Excel`
-        : `${model} is open in Excel. It has no measures, so its PivotTable lists its fields' values and has no numbers: Excel only adds up a model's measures.`;
-    } catch (e) {
-      log(`opening ${model} in Excel failed — ${(e && e.stack) || e}`);
-      throw e;
-    }
-  };
-
   cachedSqlTables = walkTables;
   onStoreCleared = () => {
     onelake.forgetKept();
@@ -667,7 +590,7 @@ function createCore({
   }
 
   return {
-    engines, onelake, semviews, rebindStore, exportExplore, openApp, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
+    engines, onelake, semviews, rebindStore, exportExplore, openApp, createSemanticModel, modelReport, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
     // The cache folder moved from `old` (setCacheRoot): the store's Files/ bytes go to the new one too, and
     // this account's model copies move there, their views with them. Waited for before `old` is deleted.
@@ -675,7 +598,7 @@ function createCore({
       onelake.useStore(storeFor(storeAccount));
       return adoptModels(join(old, 'models')).then(moved => { if (moved) view.redraw(); });
     },
-    fabric, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla, writer,
+    fabric, sqlTables, syncWorker, favorites, queries, models, agent, writer,
     publishView,
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,

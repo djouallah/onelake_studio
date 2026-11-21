@@ -6,7 +6,7 @@
 // extension answers with its own sign-in, cache and engine (cli/agent.js), and this prints the
 // answer — the answer alone on stdout, notes on stderr, and the exit code an agent can branch on
 // (EXIT, in bridge.js). With VS Code closed, on Windows, the same answer comes from dist/standalone.js,
-// on a sign-in of its own (signin). `serve` is always that: it stays, for Excel to connect to.
+// on a sign-in of its own (signin).
 // Written for an agent to run. SQL reads, or writes to a lakehouse; export is confirmed in VS Code.
 //
 //   node cli/cli.mjs --help
@@ -71,13 +71,6 @@ const USAGE = {
   signin: `  signin                              with VS Code closed: sign in, in the browser, once. Needs no
                                         app registration, and the answers come from the same cache`,
   signout: "  signout                             forgets that sign-in. VS Code's own is its own",
-  serve: `  serve <model.yaml|.bim|.tmdl>       an OLAP server on a model file, for Excel's PivotTables, until
-                                        stopped. Prints how to connect; a refresh sees an edit to the file
-    --workspace <ws>                  its workspace, if it can't be read from where its tables are
-    --lakehouse <lakehouse>           the lakehouse its tables are in, for a file naming them schema.table
-                                        (a Fabric semantic view's YAML); kept for the file once given
-    --name <model>                    its name, if not the file's: <ws>.<model>_semanticmodel
-    --open                            and a new workbook on it, in Excel`,
 };
 
 const OPTIONS = `  --limit N                           rows printed (default 100; --csv prints all unless given)
@@ -99,8 +92,8 @@ on a sign-in of its own. SQL reads, or writes to a lakehouse; export waits for y
 ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
-const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded", "--open": "open" };
-const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--lakehouse": "lakehouse", "--name": "name", "--set": "set" };
+const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout", "--set": "set" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {
@@ -173,7 +166,7 @@ async function leave(alone) {
   process.exit(process.exitCode || 0);
 }
 
-const LOCAL = { signin: [0, "signin"], signout: [0, "signout"], serve: [1, "serve <model.yaml|.bim>"] };
+const LOCAL = { signin: [0, "signin"], signout: [0, "signout"] };
 
 async function local(name) {
   const [wanted, usage] = LOCAL[name];
@@ -187,16 +180,10 @@ async function local(name) {
       const account = await alone.signin();
       answered({ account });
       if (!opts.json) console.log(`signed in as ${account}`);
-    } else if (name === "signout") {
+    } else {
       await alone.signout();
       answered({});
       if (!opts.json) console.log("signed out");
-    } else {
-      const served = await alone.serve({ file: args[1], workspace: opts.workspace, lakehouse: opts.lakehouse, name: opts.name, open: !!opts.open });
-      answered(served);
-      if (!opts.json) console.log(`serving ${served.catalog}\n\nconnection string:\n${served.connection}`);
-      process.stderr.write("Serving until this is stopped (Ctrl+C).\n");
-      await new Promise(r => { process.once("SIGINT", r); process.once("SIGTERM", r); });
     }
   } catch (e) {
     fail(e.code === EXIT.UNAVAILABLE ? EXIT.UNAVAILABLE : EXIT.FAILED, e.message);

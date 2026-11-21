@@ -17,8 +17,8 @@
 //             double-click renames it, ✎ opens a visual's shelves in Visual under a strip that
 //             updates the tile, and Add text adds a text tile
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
-// The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML, Create
-// Semantic Model (a model file only) and Open in Excel at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add
+// The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML and Create
+// Semantic Model (a model file only) at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add
 // text and Export to Fabric, which publishes the Report as a Fabric app.
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
@@ -62,8 +62,6 @@ const REPORT_POLL_MS = 2000;
 //   fabricView       (optional) true for a Fabric semantic view: its YAML shows what Fabric's Publish refuses, in red
 //   createSemanticModel()  (optional) a model file's Create Semantic Model button, on the Model page:
 //                    the tree's own (fabric_app/export/exportflow.js), its dialog the host's; answers what to say
-//   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
-//                    PivotTable (xmla); answers what to say when it is open
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
 //                    table of this model on this machine (core/models/modeldata.js); both answer what it shows:
 //                    { on, say, tone, meter, tip, busy }
@@ -188,8 +186,6 @@ export function mountExplore(root, ctx) {
   // A Fabric semantic view's: Fabric's Publish of it (its TMDL and its model), as the tree's ▶ does it.
   const publishBtn = ctx.publishView
     ? hostBtn('Publish', 'Publishing…', ctx.publishView, "Fabric's Publish of this semantic view: its TMDL in SystemContext/, and its model") : null;
-  const excelBtn = ctx.openInExcel
-    ? hostBtn('Open in Excel', 'Opening…', ctx.openInExcel, 'This model in a new Excel workbook, as a live PivotTable') : null;
   const keepOffline = ctx.keepOffline ? offlineSwitch(ctx.keepOffline) : null;
   const editBtn = ctx.editSql ? btn('Edit SQL', () => {
     const sql = explorer?.query({ cap: 0, plain: ctx.plainSql ?? null })?.sql;
@@ -251,11 +247,11 @@ export function mountExplore(root, ctx) {
   const extName = `${vendors.length && vendors.every(v => v.toUpperCase() === 'POWER_BI') ? 'Power BI' : 'vendor'} extension`;
   const textNote = el('p', { class: 'text-file-note', hidden: true }, el('span', { class: 'swatch' }),
     `Amber: ${extName}, what Ossie has no field for`);
-  // At the right of the bar, before Create Semantic Model and Open in Excel. On the Model page only.
+  // At the right of the bar, before Create Semantic Model. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
-  const modelActions = modelSwitch || createBtn || publishBtn || excelBtn
-    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, publishBtn, excelBtn) : null;
+  const modelActions = modelSwitch || createBtn || publishBtn
+    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, saveBtn, createBtn, publishBtn) : null;
   const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textEdit || textPre);
 
   root.replaceChildren(

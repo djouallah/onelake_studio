@@ -277,19 +277,17 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return semviews.put(hit.name, path, ws);
   };
 
-  // A model file on this machine (an Ossie .yaml or a .bim, served by the command line): its text, its model's name, and the workspace its tables are in when that can be
+  // A model file on this machine (an Ossie .yaml, a .bim or a TMDL script, opened from disk): its text, its model's name, and the workspace its tables are in when that can be
   // known with no question asked. Its tables are always OneLake's. One named <lakehouse>.<schema>.<table>
   // is in the model's workspace, which the file doesn't say: the one this file was opened in before, if
   // it still holds those lakehouses, else `workspace` is null and `choices` are the workspaces whose
-  // kept listing holds them all (`all` when none does). The cache alone, so it works offline. A
-  // `workspace` given (serve --workspace) is taken as it is.
+  // kept listing holds them all (`all` when none does). The cache alone, so it works offline.
   //
   // A file whose tables are schema.table and nothing more, as a Fabric semantic view's YAML names them, says no
   // lakehouse: Fabric reads them in the lakehouse the YAML is in. Here, the one picked for this file before
   // (`lakehouse`, kept by semviews.place), else `lakehouse` is null with `bare`, its tables, and `candidates`,
   // every cached lakehouse holding them all ({ workspace, lakehouse }), and `lakehousesAll`, every cached one.
-  // `lakehouse` given (serve --lakehouse) is taken as it is, in `workspace`.
-  async function modelFile(path, { workspace = null, lakehouse = null } = {}) {
+  async function modelFile(path) {
     const name = basename(path);
     const text = await fsp.readFile(path, 'utf8').catch(e => { throw new Error(`${name} could not be read: ${e.message}`); });
     const { semantic, compiler } = await modules();
@@ -305,11 +303,9 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     const byId = [...new Set(lakes.filter(l => l.workspace).map(l => l.workspace))];
     const byName = [...new Map(lakes.filter(l => !l.workspace).map(l => [l.itemName.toLowerCase(), l.itemName])).values()];
     const bare = semantic.bareTables(bim);
-    if (!lakes.length && bare.length) return placeBare({ path, text, model, bare, workspace, lakehouse });
+    if (!lakes.length && bare.length) return placeBare({ path, text, model, bare });
     if (!lakes.length) throw new Error(`${name} reads no lakehouse: its tables are named <lakehouse>.<schema>.<table>, or read through a Direct Lake expression`);
-    if (workspace) return { text, model, workspace };
-    // Where the workspace can't be known, `unknownWorkspace` says so: serve asks for --workspace.
-    if (byId.length > 1) throw Object.assign(new Error(`${name} reads ${byId.length} workspaces, and a model is in one`), { unknownWorkspace: true });
+    if (byId.length > 1) throw new Error(`${name} reads ${byId.length} workspaces, and a model is in one`);
     const holds = async ws => {
       const items = await onelake.cached.items(ws);
       const have = new Set(((items && items.value) || []).filter(i => sqlKind(i.kind)).map(i => displayName(i.name).toLowerCase()));
@@ -317,7 +313,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     };
     if (byId.length) {
       const it = await onelake.itemNamed(byId[0], lakes.find(l => l.workspace).item)
-        .catch(e => { throw Object.assign(new Error(`the name of ${name}'s workspace could not be read: ${e.message}`), { unknownWorkspace: true }); });
+        .catch(e => { throw new Error(`the name of ${name}'s workspace could not be read: ${e.message}`); });
       if (!await holds(it.workspace)) throw new Error(`${name} names a lakehouse its workspace ${it.workspace} doesn't hold: ${byName.join(', ')}`);
       return { text, model, workspace: it.workspace };
     }
@@ -332,8 +328,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
 
   // modelFile's schema.table case. The cache alone: a lakehouse whose tables were never listed here is
   // only in `lakehousesAll`, to be picked by hand.
-  async function placeBare({ path, text, model, bare, workspace, lakehouse }) {
-    if (workspace && lakehouse) return { text, model, workspace, lakehouse, bare };
+  async function placeBare({ path, text, model, bare }) {
     const kept = await semviews.placement(path);
     const all = [];
     const candidates = [];
@@ -347,13 +342,10 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         if (bare.every(b => have.has(`${b.schema.toLowerCase()}.${b.entity.toLowerCase()}`))) candidates.push(at);
       }
     }
-    const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
-    if (kept && (!workspace || same(kept.workspace, workspace))) {
+    if (kept) {
       return { text, model, workspace: kept.workspace, lakehouse: kept.lakehouse, bare, candidates, lakehousesAll: all, kept: true };
     }
-    const fit = workspace ? candidates.filter(c => same(c.workspace, workspace)) : candidates;
-    return { text, model, workspace: workspace || null, lakehouse: null, bare, candidates: fit,
-             lakehousesAll: workspace ? all.filter(c => same(c.workspace, workspace)) : all };
+    return { text, model, workspace: null, lakehouse: null, bare, candidates, lakehousesAll: all };
   }
 
   // What Go to can name, from the cache alone (cachedSqlTables, below): every cached table

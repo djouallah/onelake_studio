@@ -81,12 +81,6 @@ test("a Direct Lake expression says its workspace: nothing to ask", async () => 
   await done();
 });
 
-test("a workspace given is taken as it is", async () => {
-  const { models, file, done } = await setup();
-  assert.equal((await models.modelFile(await file("sales.yaml"), { workspace: "prod" })).workspace, "prod");
-  await done();
-});
-
 test("a YAML file that is not Ossie is no model, said as such", async () => {
   const { models, file, done } = await setup();
   await assert.rejects(models.modelFile(await file("dbt_project.yml", "name: x\nmodels:\n")),
@@ -245,9 +239,6 @@ test("tables named schema.table: the lakehouse picked for the file before, asked
   assert.equal(f.workspace, "sales-dev");
   assert.equal(f.lakehouse, "lake");
   assert.equal(f.kept, true);
-  // Given (serve --workspace --lakehouse): taken as it is.
-  const given = await withPick.modelFile(p2, { workspace: "aemo", lakehouse: "lake" });
-  assert.deepEqual([given.workspace, given.lakehouse], ["aemo", "lake"]);
   await again.done();
 });
 
