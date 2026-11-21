@@ -1259,7 +1259,7 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 
 | Folder | What it holds |
 | --- | --- |
-| `export/` | Export to Fabric, from its first question to the published app (`exportflow.js`, `exportapp.js`, `fabricapp.js`), a semantic model's TMSL and writes (`pbimodel.js`, `fabricmodel.js`), and writes to OneLake (`onelakewrite.js`). |
+| `export/` | Export to Fabric, from its first question to the published app (`exportflow.js`, `exportapp.js`, `fabricapp.js`), a semantic view's Publish (`publishview.js`), and writes to OneLake (`onelakewrite.js`). |
 | `site/` | The exported app's page, and its two data sources in `storage/`. |
 | `rayfin/` | The app's project and its function. |
 
