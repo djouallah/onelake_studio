@@ -124,7 +124,7 @@ test("system_internal comes after the workspaces, and lists the engine's tables"
     internalTables: async () => ["ducklake_snapshot", "studio_synced"],
   });
   const top = await tree.getChildren();
-  assert.deepEqual(top.map(n => n.label), ["Favorites", "Workspaces", "system_internal", "Queries", "Logs", "Performance"]);
+  assert.deepEqual(top.map(n => n.label), ["Favorites", "Workspaces", "system_internal", "Queries", "Logs"]);
   const tables = await tree.getChildren(top[2]);
   assert.deepEqual(tables.map(n => `${n.kind}:${n.table}`), ["internalTable:ducklake_snapshot", "internalTable:studio_synced"]);
   // A filter shows one type of item, and this is none.

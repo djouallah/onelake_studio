@@ -77,12 +77,6 @@
         "icon": "$(gear)"
       },
       {
-        "command": "onelakeStudio.showPerformance",
-        "title": "Performance",
-        "category": "OneLake Studio",
-        "icon": "$(pulse)"
-      },
-      {
         "command": "onelakeStudio.showLogs",
         "title": "Logs",
         "category": "OneLake Studio",

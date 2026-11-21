@@ -21,7 +21,6 @@ const { randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent, sqlStr, tableRefs } = require('../core/sql');
 const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, revealTab, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
-const { openPerformance, closePerformance } = require('./performance');
 const { createDiagLog, outputLogOf } = require('../core/diaglog');
 const { createConnectivity, probeOf } = require('../core/onelake/connectivity');
 const { useConnectivity } = require('../core/onelake/http');
@@ -122,10 +121,9 @@ const { keepLimitBytes } = settings;
 // The engine and what goes with it (engines.js); set first thing at activation.
 let engines = null;
 
-// Every tab of this window, for an account that is going: Performance shows what it ran too.
+// Every tab of this window, for an account that is going.
 function closeAllTabs() {
   closePanel();
-  closePerformance();
 }
 
 // Points the store and the engine's disk cache at the account now signed in; a no-op when
@@ -1039,8 +1037,8 @@ async function activateInner(context) {
         // This window hears nothing of its own Clear from the file.
         core.onStoreCleared();
         // The engine has the disk cache's files open and lists what was cleared: it goes first, and is
-        // rebuilt on the next open. Every tab goes with it, Logs and Performance too: they ask the engine
-        // every few seconds, which would start it again on the folder being deleted.
+        // rebuilt on the next open. Every tab goes with it, Logs too: a tab asking the engine
+        // would start it again on the folder being deleted.
         closeAllTabs();
         await engines.resetEngine();
         await removeDir(fileCacheDir);
@@ -1058,17 +1056,6 @@ async function activateInner(context) {
 
     vscode.commands.registerCommand('onelakeStudio.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
-
-    vscode.commands.registerCommand('onelakeStudio.showPerformance', async () => {
-      const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
-      openPerformance({
-        engine: () => engines.ensureEngine({ readme: readme.fsPath }),
-        disk: async () => ({
-          bytes: await treeBytes(engines.fileCacheDirFor(core.storeAccount())),
-          limit: settings.diskCacheBytes(),
-        }),
-      });
-    }),
 
     vscode.commands.registerCommand('onelakeStudio.showLogs', () => openInPanel({ type: 'run-sql', sql: LOGS_SQL }, 'Logs')),
 

@@ -292,16 +292,11 @@ class LakehouseTree {
         item.iconPath = new vscode.ThemeIcon('table');
         item.command = { command: 'onelakeStudio.openInternalTable', title: 'Open table', arguments: [n] };
         break;
-      // Two views of the engine, each a tab of its own.
+      // What the engine ran, in a tab of its own.
       case 'logs':
         item.iconPath = new vscode.ThemeIcon('history');
         item.tooltip = 'What the engine has run, from every tab and window';
         item.command = { command: 'onelakeStudio.showLogs', title: 'Logs' };
-        break;
-      case 'performance':
-        item.iconPath = new vscode.ThemeIcon('pulse');
-        item.tooltip = 'How the engine is doing right now';
-        item.command = { command: 'onelakeStudio.showPerformance', title: 'Performance' };
         break;
       case 'query':
         item.iconPath = new vscode.ThemeIcon('file-code');
@@ -470,7 +465,6 @@ class LakehouseTree {
     return [
       this._track(node('queries', 'Queries', {})),
       node('logs', 'Logs', { leaf: true }),
-      node('performance', 'Performance', { leaf: true }),
     ];
   }
 

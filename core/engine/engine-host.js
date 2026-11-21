@@ -1792,7 +1792,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
   const running = () => [...live, ...agentLive, ...[...tabs].flatMap(t => [...t])];
 
-  // What the Performance tab shows, as it is now (performance.js). Nothing is kept. Not a page method.
+  // The engine's memory and threads, as they are now. Nothing is kept. Not a page method.
   async function stats() {
     await init();
     // The server answers, on its own connections: over Quack this would fill the log it reads.
@@ -1813,7 +1813,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const emptyLog = () => withConn(c => c.run('CALL truncate_duckdb_logs();'), agentLive);
   // serve: Quack listening again, on the same port, with its listener gone or going.
   const relisten = () => admin(() => restartListener(conn, served, serve.token));
-  // What the table service holds and has done: for Performance, and the tests.
+  // What the table service holds and has done: for the tests.
   const lakeStats = () => init().then(() => (remote ? instance.lakeStats() : lakeService ? lakeService.stats() : null));
   // The sync service's (syncworker.js): the lake's tables, and one synced now.
   const lakeTables = () => init().then(() => (remote ? instance.lakeTables() : capabilities.lake ? lakeTablesHere() : []));

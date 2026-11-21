@@ -154,7 +154,7 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
       await flush().catch(() => {});
       return logs.read(Math.max(1, Math.floor(limit))).map(entryOf);
     },
-    /** How many statements someone has asked for so far, up to date: Performance's queries per second. */
+    /** How many statements someone has asked for so far, up to date. */
     async statements() {
       await flush().catch(() => {});
       return asked;

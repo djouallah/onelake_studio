@@ -580,10 +580,8 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     check("the file's row brings the overview back", await f.locator("#dbOverview").isVisible());
   }, 180000);
 
-  await step("Tree: Logs and Performance open, and a statement that ran is in Logs", async () => {
+  await step("Tree: Logs opens, and a statement that ran is in it", async () => {
     const tabs = async () => (await drive("state")).tabs.join(", ");
-    await drive("exec", { command: "onelakeStudio.showPerformance" });
-    await until("the Performance tab", async () => /Performance/.test(await tabs()), 15000);
     const r = await openLogs();
     settled("Logs", r);
     check("Logs is a tab of SQL over onelake_logs, run at once", /FROM onelake_logs/.test(r.box) && !isError(r) && /Logs/.test(await tabs()), r.status);
