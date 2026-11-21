@@ -187,11 +187,11 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   asked at query time. A table with OneLake security that OneLake refuses this user is read with
   `read_arrow` on what the table read API answered ([OneLake security](#onelake-security)).
 - **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
-- **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
-  remote archive. Nothing loads after it: every extension is loaded before, and autoload is off. They load from the
+- **Lockdown:** file access is limited to the temp directory, `https://` and `abfss://`.
+  Nothing loads after it: every extension is loaded before, and autoload is off. They load from the
   files that ship, `httpfs` and `avro` before `iceberg`, which asks for both as it starts, so a first start fetches
   nothing. DuckDB 2.0 takes a community extension's signature only from its own repository, so the shipped
-  `zipfs` and `nanoarrow` load as unsigned, each held to its hash at build time. With unsigned loading on DuckDB checks
+  `nanoarrow` loads as unsigned, held to its hash at build time. With unsigned loading on DuckDB checks
   no signature at all, so in a packaged build no extension is ever fetched, a core one included: one whose shipped
   file is missing or won't load is not there, and the engine doesn't start without one it needs.
 - **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one, or one of
@@ -415,8 +415,8 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 - **The OneLake token and other hosts:** the guard refuses an Azure URL whose host isn't OneLake's, as a statement
   writes it. A URL joined up from pieces at run time gets past that check, and nothing behind it refuses it yet.
 - **What a build downloads is held to its hash:** the libraries and DuckDB's extensions, against
-  `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions
-  `zipfs` and `nanoarrow` ship in the vsix too, and load as unsigned extensions, as a load by path knows only DuckDB's own
+  `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extension
+  `nanoarrow` ships in the vsix too, and loads as an unsigned extension, as a load by path knows only DuckDB's own
   signing keys. `ducklake` ships with the rest.
 
 ## The explorer
@@ -445,7 +445,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
   each snapshot says how its row count and columns differ from the table now.
 - **Visual** is the SQL starter described under the rules above.
 
-**Clicking a file** opens it in a new tab, or brings forward the tab that shows it: Parquet, CSV, JSON, Excel, DuckDB, SQLite, and files inside a zip.
+**Clicking a file** opens it in a new tab, or brings forward the tab that shows it: Parquet, CSV, JSON, Excel, DuckDB and SQLite.
 - **A database file** is recognised by its header, never its extension. A DuckDB file is attached
   read-only and block-read on demand. A SQLite file is copied by the host into the engine's temp
   directory and attached read-only, capped at 200 MB.
@@ -457,8 +457,6 @@ shows offline, and it is asked again when the table is opened or its Tables node
   - **Row counts:** a DuckDB file's are its own estimate, which still counts deleted rows, and say so. A SQLite file's
     are counted from its copy, for up to 200 tables, since its estimate means nothing.
 - **CSV, JSON, avro, xlsx and plain text** have no block structure, so DuckDB pulls them whole.
-- **A `.zip`** is listed through its central directory, with a range read at the tail, so the archive
-  is not downloaded. Every readable entry becomes a view, and it decompresses when queried.
 - **A `.bim`, or an Ossie `.yaml`** opens in the model view (see [Semantic models](#semantic-models)).
 
 **Each workspace's Apps node** lists its Fabric apps (`AppBackend` items), however they were made.

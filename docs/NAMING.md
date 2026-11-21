@@ -179,7 +179,6 @@ before DuckDB sees the statement.
 | `'aemo.data/Files/X.parquet'` | A different file: the path is exact. |
 | `'"ANZ Retail".data/Files/a b.csv'` | A file: a part is quoted as it is in a table's name, and the path never is. |
 | `'aemo.data/Files/raw/*.csv'` | Every `.csv` directly in `raw/`. `**` goes through its subfolders. |
-| `'zip://aemo.data/Files/a.zip/b.csv'` | An entry in a zip. |
 | `'aemo.data/Files'` | The folder itself, for `glob('aemo.data/Files/*')`. |
 | `'aemo.*/Files/x.parquet'` | Refused: a wildcard goes in the path, and a name means one item. |
 | `'aemo.data/Tables/dbo/t/x.parquet'` | Refused: a table has its own name. |

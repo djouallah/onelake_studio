@@ -6,7 +6,7 @@
   it finds no newer one.
 - **Removed: Publish on a semantic view.** Publish it in Fabric: right-click its folder in the lakehouse, then Publish.
   OneLake Studio still opens the view and the model Fabric makes of it.
-- **Removed: DuckDB's `h3` extension**, which nothing used.
+- **Removed: reading files inside a `.zip`**, and DuckDB's `zipfs` and `h3` extensions with it.
 - **Download File… on a semantic model, in place of Export YAML.** It saves the model's YAML to this computer.
   Nothing is written to the lakehouse.
 - **Removed: Open in Excel, and the command line's `serve`.** Both put a model in an Excel PivotTable through an XMLA

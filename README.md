@@ -20,7 +20,7 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
   the statement under the cursor, and the results show in that tab. Whatever you open gets a tab of its own.
 - **Look at a table in a click.** Columns, row count, first rows, and Delta or Iceberg stats and
   history.
-- **Open lakehouse files.** Parquet, CSV, JSON, Excel, DuckDB and SQLite, even inside a zip.
+- **Open lakehouse files.** Parquet, CSV, JSON, Excel, DuckDB and SQLite.
 - **Explore a semantic model.** Its tables and relationships, and a drag-and-drop pivot as a table
   or a chart, with the SQL behind it.
 - **Ask Claude Code or GitHub Copilot.** One command, and your assistant can list your data, read a

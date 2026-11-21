@@ -10,7 +10,7 @@ DuckDB fixes one, the workaround can go.
   write to. OneLake has to be readable (`abfss://`, `az://`, `https://`), so `COPY … TO 'abfss://…'` passes, and so
   does a write to an attached Iceberg, Delta or lake catalog. ATTACH has no read-only for a OneLake catalog.
 - **What DuckDB's lockdown does block** ([core/engine/engine-host.js](../core/engine/engine-host.js)):
-  - local disk outside the allowed folders, `..` escapes, plain `http`, and local `zip://`;
+  - local disk outside the allowed folders, `..` escapes, and plain `http`;
   - `COPY TO` outside the temp folder;
   - any later `LOAD` (autoload and autoinstall are off);
   - any change of a setting (`lock_configuration`).
@@ -134,8 +134,8 @@ OneLake names a table `workspace.lakehouse.schema.table`, and DuckDB's names hav
 
 ## Extensions and packaging
 
-- **A `LOAD` by path knows only the core signing keys.** The community extensions in the vsix (zipfs, nanoarrow)
-  need unsigned extensions allowed. Each is held to its hash when the vsix is built, and the lockdown refuses any
+- **A `LOAD` by path knows only the core signing keys.** The community extension in the vsix (nanoarrow)
+  needs unsigned extensions allowed. Each is held to its hash when the vsix is built, and the lockdown refuses any
   later `LOAD`.
 - **iceberg fetches avro and httpfs at its start.** They are loaded first, in order.
 - **There is no delta build for windows_arm64**, so there is no Windows on Arm package.
