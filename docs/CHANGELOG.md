@@ -6,6 +6,10 @@
   from disk and Create Semantic Model all named it `sales.ossie`, so SQL had to write `ws."sales.ossie_semanticmodel"`.
   It is `ws.sales_semanticmodel` now. A model this machine kept under the old name takes the new one on the next start,
   or goes when the new name is kept already.
+- **Fixed: last year's value on a month-end day could add a day.** With `SAMEPERIODLASTYEAR` or `DATEADD` by month,
+  quarter or year, February 28 2021 alone also counted February 29 2020, and April 30 alone back a month also counted
+  March 31. dax-sql 0.2.4 extends a month end to the end of the moved month only when the day before is in the filter
+  too, which is what Power BI does. Months and years were already right.
 - **Fixed: an Ossie `.yaml` that OneLake Studio couldn't open opened nothing at all.** A double-click gave "OverlayWebview
   has been disposed" and an error. Now the file opens, and if it can't open here it opens as text in VS Code's own
   editor, with a warning that says why.
