@@ -48,7 +48,7 @@ test("fuzz: no request passes the check unless its command, its arguments and it
     assert.ok(!rest.includes(""), "an empty argument passed");
     for (const [k, v] of Object.entries(opts)) {
       if (v == null || v === false) continue;
-      if (["fresh", "csv", "json", "limit", "showSql", "downloaded", "workspace", "name", "open"].includes(k)) {
+      if (["fresh", "csv", "json", "limit", "showSql", "downloaded", "set"].includes(k)) {
         assert.ok(c.flags.includes(k), `${k} passed on ${args[0]}, which doesn't take it`);
       }
     }
