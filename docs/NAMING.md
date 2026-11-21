@@ -149,9 +149,8 @@ file must use this name too, and it does not get a second one: if the name is ta
 newer model overwrites what we have under it. The name therefore identifies exactly one model at a time.
 
 **Opening and exporting never reach the Power BI item.** A model opened from a file replaces only our own view of
-that name, and an export replaces only our own copy and app. Only **Create Semantic Model** writes a semantic model
-item in Fabric, and it asks first. Until the Fabric item is downloaded again, `<workspace>.<model>_semanticmodel` is the one
-created last.
+that name, and an export replaces only our own copy and app. A semantic model
+item in Fabric is made only by Fabric, when a semantic view is published.
 
 Why two parts and not four:
 

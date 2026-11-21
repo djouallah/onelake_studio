@@ -31,9 +31,9 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`, or `/Context/` or `/SystemContext/` in place of `/Files/`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`page/semantic.js`](../page/semantic.js) |
-| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
+| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app) and Upload Files… each ask first; Save and Publish of a semantic view are the clicks themselves. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
-| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Create Semantic Model and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
+| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Upload Files…, and a semantic view's Save and Publish. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`core/host.js`](../core/host.js), [`extension/panel.js`](../extension/panel.js), [`core/engine/engine-client.js`](../core/engine/engine-client.js) |
 | **A table's Visual is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`page/app.js`](../page/app.js) |
 
@@ -626,8 +626,8 @@ holds those lakehouses, else the one workspace whose kept listing holds them, an
 
 A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
-- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Save (a model file it can write back, on YAML only) and Create
-  Semantic Model (a model file only) at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
+- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Save (a model file it can write back, or a
+  semantic view's one `.yaml`, on YAML only) and Publish (a semantic view) at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships. Double-click it, or its
@@ -857,20 +857,6 @@ A model file, an app's file or a `.sql` file on this machine opens in a tab, as 
   what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
   `.yaml`, `.yml`, `.bim`, `.fabricator`, `.fabricapp` or `.sql`, which opens without the file in an editor, so no SQL
   extension starts.
-
-## Create Semantic Model
-
-A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`extension/tree.js`](../extension/tree.js)), and
-the same button on Explore's Model page when it is open there (`fabric.createSemanticModel`, [`core/host.js`](../core/host.js)):
-**Create Semantic Model** makes the Power BI semantic model of it, named for the file, in the file's workspace, on Direct
-Lake, refreshed once made (`createSemanticModel` in
-[`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), and nothing else: no app, no zip, no Report. A new
-model is made with nothing asked. When a model of that name is there, a dialog asks first (*Update the semantic model …?*),
-and says the workspace and the file: its definition is replaced. The definition is TMSL made from the file
-([`fabric_app/export/pbimodel.js`](../fabric_app/export/pbimodel.js)), written over the Fabric API ([`fabric_app/export/fabricmodel.js`](../fabric_app/export/fabricmodel.js)).
-Direct Lake takes no calculated column: a model with one is refused before anything is written. The workspace's
-semantic models are listed again after. The command line's `semanticmodel <ws> <item> <Files/path>` is the same, and its
-question is asked in VS Code. Needs a connection, as Export does.
 
 ## Export to Fabric
 

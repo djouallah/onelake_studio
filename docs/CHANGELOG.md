@@ -2,6 +2,8 @@
 
 ## 0.2.29
 
+- **Removed: Create Semantic Model, and the command line's `semanticmodel`.** A semantic view's YAML in a lakehouse's
+  `Context/`, saved and then published, is how a model reaches Fabric.
 - **Removed: the desktop app.** OneLake Studio is the VS Code extension. An installed app stays on its last version;
   it finds no newer one.
 - **A semantic view's YAML can be edited and saved.** Open the view's `.yaml` in a lakehouse's
@@ -12,10 +14,10 @@
 - **Download File… on a semantic model, in place of Export YAML.** It saves the model's YAML to this computer.
   Nothing is written to the lakehouse.
 - **Removed: Open in Excel, and the command line's `serve`.** Both put a model in an Excel PivotTable through an XMLA
-  endpoint of our own, which answered only the MDX a PivotTable sends. For Excel on a model, Create Semantic Model
-  (or Export) puts it in Fabric, and Fabric's Analyze in Excel opens it there.
-- **Fixed: a model file named `*.ossie.yaml` kept `.ossie` in its model's name.** Opening it from disk and Create
-  Semantic Model both named it `sales.ossie`, so SQL had to write `ws."sales.ossie_semanticmodel"`.
+  endpoint of our own, which answered only the MDX a PivotTable sends. For Excel on a model, publish it as a semantic
+  view, and open Fabric's model in Excel with Analyze in Excel.
+- **Fixed: a model file named `*.ossie.yaml` kept `.ossie` in its model's name.** Opening it from disk named it
+  `sales.ossie`, so SQL had to write `ws."sales.ossie_semanticmodel"`.
   It is `ws.sales_semanticmodel` now. A model this machine kept under the old name takes the new one on the next start,
   or goes when the new name is kept already.
 - **Fixed: last year's value on a month-end day could add a day.** With `SAMEPERIODLASTYEAR` or `DATEADD` by month,
