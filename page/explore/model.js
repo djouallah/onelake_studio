@@ -121,16 +121,15 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
     svg.style.maxWidth = `${Math.round((width + 24) * 1.35)}px`;
   }
 
-  // The model in one line over the drawing: its name, what is in it, what it is about.
+  // The model in one line over the drawing: its name and what is in it. What it is about, on the name's hover.
   function summary() {
     const measures = tables.flatMap(x => x.measures), hidden = measures.filter(m => m.isHidden).length;
     const n = (k, word) => `${k} ${word}${k === 1 ? '' : 's'}`;
     const hint = `Drag a table to move it. Hover it to see what it reaches; click it for its columns, measures and relationships${openTable ? '; double-click it to open the table' : ''}. Esc closes the details.`;
     return el('div', { class: 'model-summary' },
-      el('strong', {}, title),
+      el('strong', model.description ? { title: model.description, class: 'm-has-about' } : {}, title),
       el('span', { class: 'm-counts' }, [n(tables.length, 'table'), n(rels.length, 'relationship'),
         `${n(measures.length, 'measure')}${hidden ? ` (${hidden} hidden)` : ''}`].join(' · ')),
-      ...(model.description ? [el('span', { class: 'm-about' }, lines(model.description))] : []),
       el('span', { class: 'm-help', tabindex: 0, title: hint, 'aria-label': hint }, '?'));
   }
 

@@ -41,7 +41,7 @@
   gives each table every column of its lakehouse table. OneLake Studio now does the same, reading the columns from the
   table's metadata. It used to fail with "the model has no column 'fact_sales'[sale_date]".
 - **The Model page gives the diagram the room.** The diagram takes the full width and fits the window, with no sideways
-  scroll. The model's name, counts and description sit in one line above it. A table's details open in a drawer beside it
+  scroll. The model's name and counts sit in one line above it, and its description shows when you hover the name. A table's details open in a drawer beside it
   when you click the table, and close with Esc, ×, or a click on empty space. A table of measures with no relationships
   goes under the facts, marked as measures, instead of standing alone at the top left. Cards no longer say
   "0 measures".

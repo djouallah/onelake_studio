@@ -82,7 +82,7 @@ section.modelOpen #chartBtn { display: none; }
 .model-page.m-open { grid-template-columns: minmax(0, 1fr) 380px; }
 .model-summary { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.9rem; font-size: 13px; color: var(--muted); }
 .model-summary strong { color: var(--text); font-weight: 700; }
-.model-summary .m-about { color: var(--faint); flex: 1 1 18rem; min-width: 0; }
+.model-summary .m-has-about { cursor: help; text-decoration: underline dotted var(--faint); text-underline-offset: 3px; }
 .model-summary .m-help { margin-left: auto; width: 1.25rem; height: 1.25rem; border: 1px solid var(--border); border-radius: 50%; text-align: center; line-height: 1.15rem; font-size: 11px; font-weight: 700; color: var(--faint); cursor: help; align-self: center; }
 .model-panel[hidden] { display: none; }
 .m-close { margin-left: auto; background: none; border: 0; color: var(--faint); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 0.2rem; }
