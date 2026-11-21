@@ -5,8 +5,8 @@
 //   1. shows a table's statistics from its Iceberg metadata — no data read,
 //   2. shows its first rows (kept by the host per snapshot),
 //   3. opens it as a read-only VIEW to run SQL against, read with iceberg_scan,
-//   4. opens a Files/ object — parquet, CSV, JSON, avro, xlsx, text, a zip's entries, a
-//      DuckDB or SQLite database — as views the same way.
+//   4. opens a Files/ object — parquet, CSV, JSON, avro, xlsx, text, a DuckDB or SQLite
+//      database — as views the same way.
 //
 // Every statement and every OneLake read is a call to the host (host.js); DuckDB runs
 // there, natively, and reads OneLake itself. This file decides WHAT to ask; the pure half
@@ -20,7 +20,7 @@
 // and Files/ objects by their abfss:// names with the host's own credential.
 import {
   basename, abfssUrl, fileSqlName, pathInArea, fileSource,
-  fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
+  fileExt, readerFor, PARQUET_EXTS, DB_EXTS, isSqliteHeader, isTextExt,
   dbCatalogSql, dbCountSql, dbCatalog,
   sqlStr, quoteIdent,
   tableKey, fileKey, sanitizeIdent,
@@ -50,7 +50,6 @@ export function createEngine({
   let host = null;                  // the channel to the extension host, set by init()
   let _seq = 0;
   let canXlsx = false;              // which optional formats the host's DuckDB loaded
-  let canZip = false;
 
   const loaded = new Map();         // cache key -> info
   const resources = new Map();      // cache key -> { names[], attachments[], ... }, for release()
@@ -99,7 +98,6 @@ export function createEngine({
     try {
       const { capabilities: caps } = await host.call("info");
       canXlsx = !!(caps && caps.excel);
-      canZip = !!(caps && caps.zipfs);
     } catch (e) { console.warn("[engine] capability probe failed:", e.message); }
     const ms = Date.now() - t0;
     console.log(`[engine] DuckDB ready — native (extension host), ${ms}ms`);
@@ -174,7 +172,7 @@ export function createEngine({
       // on the serial queue — iterating the live arrays here is how a superseded load
       // once dropped state its successor had just created.
       const gen = r.gen;
-      // The view of each file or zip entry, and the attached database files: letting go of one
+      // The view of each file, and the attached database files: letting go of one
       // releases its URL handle.
       try { await callHost("releaseFiles", [{ views: [...r.names], attached: [...r.attachments] }]); } catch (_) {}
       // A successor may have claimed the key while the drops above were queued; the
@@ -184,10 +182,7 @@ export function createEngine({
       resources.delete(key);
     }
     loaded.delete(key);
-    // Zip entry views register under "<key>::<entry>" owners so same-stem entries in one
-    // archive can't silently repoint each other's view — release them with their key.
-    for (const [name, owner] of [...viewNames])
-      if (owner === key || String(owner).startsWith(key + "::")) viewNames.delete(name);
+    for (const [name, owner] of [...viewNames]) if (owner === key) viewNames.delete(name);
   }
 
   // Called when the user switches lakehouse. Cache entries are keyed per lakehouse so a
@@ -247,13 +242,12 @@ export function createEngine({
     const label = file.name;
     const ext = fileExt(file.name);
     if (DB_EXTS.has(ext)) return loadDatabaseFile(lh, file, key, gen, check);
-    if (ZIP_EXTS.has(ext)) return loadZipFile(lh, file, key, gen, check);
     const reader = readerFor(ext);
     if (ext === "xlsx" && !canXlsx)
       throw new Error(`${file.name}: DuckDB's 'excel' extension is not available in this session, so .xlsx can't be read — OneLake Studio → Show Read Log says why.`);
     if (!reader)
       throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson, ` +
-                      `avro, xlsx, zip, database files (.duckdb/.db/.sqlite) and plain text ` +
+                      `avro, xlsx, database files (.duckdb/.db/.sqlite) and plain text ` +
                       `(sql, yml, md, log, …) are readable; text formats also read as .gz/.zst.`);
 
     const res = track(key);
@@ -273,71 +267,6 @@ export function createEngine({
       const sqlName = fileSqlName(lh.workspace, file.path);
       const info = { label, ident, source: sqlName && fileSource(ext, sqlName), columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
                      file: true, bytes: file.bytes, ext, warnings: [] };
-      loaded.set(key, info);
-      status(describeLoad(info));
-      return info;
-    } catch (e) {
-      await releaseOwned(key, gen);
-      if (e.cancelled) throw e;
-      throw new Error(`Could not read ${file.name}: ${e.message}`);
-    }
-  }
-
-  // Zip archives: the abfss:// name goes into zip_contents() and zip:// directly — the
-  // zipfs extension range-reads the central directory from the archive's tail and
-  // inflates only the entries actually queried, so a large archive costs what you read
-  // from it (checked against DuckDB 2.0 over abfss://). Each entry
-  // with a known reader becomes its own view; the archive itself has no rows to show.
-  const ZIP_MAX_VIEWS = 50;
-  async function loadZipFile(lh, file, key, gen, check) {
-    if (!canZip)
-      throw new Error(`${file.name}: this DuckDB build couldn't load the 'zipfs' extension, so zip archives can't be read.`);
-    const status = statusFor(gen);
-    const res = track(key);
-    res.gen = gen;
-    const url = abfssUrl(lh.workspace, file.path);
-    try {
-      const entries = (await q(
-        `SELECT file_name AS n FROM zip_contents(${sqlStr(url)})
-         WHERE NOT is_directory ORDER BY file_name`)).rows;
-      let readable = entries.filter(e => {
-        const x = fileExt(e.n);
-        return readerFor(x) && (x !== "xlsx" || canXlsx);
-      });
-      const warnings = [];
-      if (readable.length > ZIP_MAX_VIEWS) {
-        warnings.push(`only the first ${ZIP_MAX_VIEWS} of ${readable.length} readable entries were opened`);
-        readable = readable.slice(0, ZIP_MAX_VIEWS);
-      }
-      const views = [];
-      let firstEntry = null;   // the entry views[0] reads
-      for (const e of readable) {
-        // One view per entry, each inflating its entry to bind — the loop that most
-        // needs a way out.
-        check();
-        const reader = readerFor(fileExt(e.n));
-        // Owner "<key>::<entry>": two entries whose names sanitize to the same identifier
-        // must get distinct views, and uniqueView only dedupes across distinct owners.
-        const name = uniqueView(`${key}::${e.n}`, e.n);
-        try {
-          await fileView(name, `SELECT * FROM ${reader(sqlStr(`zip://${url}/${e.n}`))}`);
-          views.push(quoteIdent(name));
-          if (!firstEntry) firstEntry = e.n;
-          res.names.push(name);
-        } catch (err) {
-          if (err && err.cancelled) throw err;   // a stop is not a bad entry
-          warnings.push(`${e.n}: ${err.message}`);
-        }
-      }
-      const first = views[0] || null;
-      const columns = first ? await describe(first) : [];
-      const sqlName = fileSqlName(lh.workspace, file.path);
-      const info = { label: file.name, ident: first, source: firstEntry && sqlName ? readerFor(fileExt(firstEntry))(sqlStr(`zip://${sqlName}/${firstEntry}`)) : null,
-                     columns, fileCount: entries.length,
-                     posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: "zip",
-                     zip: true, zipViews: views, warnings };
-      if (!first && !warnings.length)
-        info.warnings.push(`no readable entries among ${entries.length} — parquet, csv, json, avro, xlsx and text formats are supported inside a zip`);
       loaded.set(key, info);
       status(describeLoad(info));
       return info;
@@ -611,7 +540,7 @@ export function createEngine({
   // not news — that is just correctness. Anything in `warnings` is a correctness caveat,
   // and rendering it as a warning rather than as success is the caller's job.
   function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords,
-                          db, dbAlias, dbTables, dbEngine, zip, zipViews, stage }) {
+                          db, dbAlias, dbTables, dbEngine, stage }) {
     // Tier 1. Say plainly that nothing has been read yet, because the whole point of
     // this state is that it cost nothing — and that the next click is what spends.
     if (stage === "stats") {
@@ -619,13 +548,6 @@ export function createEngine({
       if (totalRecords != null) s += `: ${totalRecords.toLocaleString("en")} row(s)`;
       if (fileCount != null) s += ` in ${fileCount} file(s)`;
       return s + ". Open Data for rows from one file";
-    }
-    if (zip) {
-      const n = (zipViews || []).length;
-      const list = n ? `: ${zipViews.slice(0, 5).join(", ")}${n > 5 ? ", …" : ""}` : "";
-      return `${label} — zip archive (${fmtBytes(bytes)}), ${fileCount} entr${fileCount === 1 ? "y" : "ies"}, ` +
-             `${n} opened as view${n === 1 ? "" : "s"}${list}` +
-             (n ? `. Entries decompress on demand` : "");
     }
     if (db) {
       const n = (dbTables || []).length;
@@ -683,8 +605,6 @@ export function createEngine({
   const semanticViews = () => callHost("semantic.views", [{}]);
   const semanticKeep = (name, path, schema, lakehouse = null) => callHost("semantic.keep", [{ name, path, schema, lakehouse }]);
   // A Fabric semantic view's .yaml files, from its lakehouse's Context/Semantic Views/<view>/: { files: [{ path, text }] }.
-  // Fabric's Publish of a semantic view (core.js publishView): what to say after.
-  const publishView = x => callHost("fabric.publishView", [x]);
   const semanticViewFiles = (lh, view) => callHost("onelake.semanticView", [{ workspace: lh.workspace, item: lh.item, view }]);
   // A lakehouse table's columns as its metadata lists them, [{ name, type }], with no rows read.
   const tableFields = async (lh, t) => (await callHost("onelake.table", [{
@@ -725,5 +645,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticViewFiles, publishView, tableFields, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticViewFiles, tableFields, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

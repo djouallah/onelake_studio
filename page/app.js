@@ -458,9 +458,6 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       createSemanticModel: fromOneLake && !file.systemView
         ? () => engine.createSemanticModel({ file: file.name, text: bim, workspace: lakehouse.workspace, path: file.path })
         : undefined,
-      // A Fabric semantic view: Fabric's Publish of it, from its lakehouse.
-      publishView: file.fabricView && lakehouse
-        ? () => engine.publishView({ workspace: lakehouse.workspace, item: lakehouse.item, view: file.modelName }) : undefined,
       // The Model page's table: the OneLake table behind it, in a tab of its own. Only a Direct Lake table has one.
       openTable: table => {
         const sqlName = m.lakeTables && m.lakeTables[String(table).toLowerCase()];

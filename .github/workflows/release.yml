@@ -4,9 +4,9 @@
 #
 #   git tag ext-v<version> && git push origin ext-v<version>
 #
-# on a commit of main whose full Extension run (workflow_dispatch: every platform, and the installer)
+# on a commit of main whose full Extension run (workflow_dispatch: every platform)
 # is green, and whose package.json says <version> (the version is bumped before that build, not
-# after: see extension.yml). A push's run builds two platforms and no installer, so it is not one. That run's artifacts are
+# after: see extension.yml). A push's run builds two platforms, so it is not one. That run's artifacts are
 # kept 14 days; past that, run the Extension workflow again on the commit (workflow_dispatch),
 # then push the tag again.
 #
@@ -108,10 +108,9 @@ jobs:
       - name: Publish
         run: npx --yes @vscode/vsce@3.9.2 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
 
-  # The desktop installer that run built and started, on the GitHub release. The website's Download
-  # button is releases/latest/download/OneLake-Studio-Setup.exe, so the name never changes. After the
-  # Marketplace: a release on GitHub means the version is out.
-  installer:
+  # The GitHub release, with its CHANGELOG notes. After the Marketplace: a release on GitHub means the
+  # version is out.
+  notes:
     needs: [build, publish]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
@@ -125,20 +124,12 @@ jobs:
             scripts/release-notes.mjs
             docs/CHANGELOG.md
           sparse-checkout-cone-mode: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: onelake-studio-setup
-          path: setup
-          run-id: ${{ needs.build.outputs.run }}
-          github-token: ${{ github.token }}
-      - name: Attach the installer to the release
+      - name: The release on GitHub
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          cp setup/*.exe "$RUNNER_TEMP/OneLake-Studio-Setup.exe"
           node scripts/release-notes.mjs "$VERSION" > "$RUNNER_TEMP/notes.md"
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "OneLake Studio $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
-          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/OneLake-Studio-Setup.exe" --clobber

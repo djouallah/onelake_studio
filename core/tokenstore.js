@@ -4,8 +4,7 @@
 // =============================================================================
 // VS Code keeps its own tokens. With no editor, the refresh token is this file's, so it is encrypted
 // for this Windows user with DPAPI. PowerShell does that: no
-// native module to ship. It takes a moment, so what was read is held until the file changes: the desktop
-// app and the command line keep one file, and a sign-out in one is a sign-out in the other.
+// native module to ship. It takes a moment, so what was read is held until the file changes.
 // A file that can't be read (another user's, another machine's) is no sign-in, not a failure.
 // =============================================================================
 
@@ -52,7 +51,7 @@ const dpapiUnprotect = base64 => throughDpapi('Unprotect', base64).then(b => Buf
 function createTokenStore(file, { protect = dpapiProtect, unprotect = dpapiUnprotect } = {}) {
   let held;   // undefined until the file has been read: then its text, or null with none
   let seen;   // the file as it was when `held` was read or written: another process may have changed it since
-  // The desktop app and the command line keep one file. What says it changed: its time, its size, or that it is gone.
+  // What says the file changed: its time, its size, or that it is gone.
   const stamp = async () => {
     const st = await fsp.stat(file).catch(() => null);
     return st ? `${st.mtimeMs}:${st.size}` : 'none';

@@ -215,13 +215,11 @@ test("a statement's tables are workspace.lakehouse.schema.table, any other item 
 test("filesReadBy: the OneLake files a statement reads, and not one that is only a value", () => {
   const { filesReadBy } = require("../../core/sql.js");
   const A = "abfss://w@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Files/a.parquet";
-  const Z = "abfss://w@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Files/a.zip";
   assert.deepEqual(filesReadBy(`SELECT * FROM '${A}'`), [A]);
   assert.deepEqual(filesReadBy(`SELECT * FROM read_parquet('${A}')`), [A]);
   assert.deepEqual(filesReadBy(`CREATE OR REPLACE VIEW "v" AS SELECT * FROM read_csv_auto('${A}')`), [A]);
   assert.deepEqual(filesReadBy(`ATTACH '${A}' AS x (READ_ONLY)`), [A]);
   assert.deepEqual(filesReadBy(`SELECT 1 FROM t JOIN '${A}' ON true JOIN '${A}' ON true`), [A], "once each");
-  assert.deepEqual(filesReadBy(`SELECT * FROM read_csv('zip://${Z}/b.csv')`), [Z], "a zip's entry is its zip");
   assert.deepEqual(filesReadBy(`SELECT * FROM read_csv('${A}/*.csv')`), [], "a wildcard names no one file");
   assert.deepEqual(filesReadBy(`SELECT '${A}' AS path`), [], "a value");
   assert.deepEqual(filesReadBy(`VALUES ('${A}')`), [], "a value");
@@ -269,7 +267,6 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
   assert.equal(anz.item, "gold-1");
   assert.equal(anz.path, "/Files/a/b c/*.csv");
   assert.equal(refs(`SELECT * FROM 'a.b/Files/it''s.csv'`)[0].path, "/Files/it's.csv");
-  assert.equal(refs(`SELECT * FROM 'zip://a.b/Files/a.zip/b.csv'`)[0].zip, "zip://");
   assert.equal(refs(`SELECT * FROM glob('a.b/Files')`)[0].path, "/Files");
   // Wrong, so never left to DuckDB, which would look on the disk or answer no rows.
   for (const [v, why] of [["aemo.data/x.parquet", /a file's name is/], ["other.a.b/Files/x", /a file's name is/],
@@ -371,7 +368,7 @@ test("a OneLake URL's scope is its workspace on OneLake's host, and no other URL
     assert.equal(scopeOfUrl(no), null, no);
   }
   assert.ok(ONELAKE_SCOPES.every(s => scopeOfUrl(s) === s), "the scopes always there are OneLake's host");
-  assert.deepEqual(oneLakeScopes(`SELECT * FROM read_csv('abfss://ws@${H}/i/Files/a.csv') JOIN 'zip://abfss://Other WS@${H}/i/Files/z.zip/b.csv' USING (k)
+  assert.deepEqual(oneLakeScopes(`SELECT * FROM read_csv('abfss://ws@${H}/i/Files/a.csv') JOIN 'abfss://Other WS@${H}/i/Files/b.csv' USING (k)
     WHERE note = 'abfss://x@evil.example.com/f' AND p = 'abfss://O''Brien@${H}/x'`),
     [`abfss://ws@${H}/`, `abfss://Other WS@${H}/`, `abfss://O'Brien@${H}/`]);
   // Put together from pieces, no URL is there to read a scope from: it gets no token.

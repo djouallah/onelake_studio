@@ -24,7 +24,7 @@ test("its files are VS Code's for this extension, Insiders' under Insiders", () 
   assert.match(insiders.home.replaceAll("\\", "/"), /Code - Insiders\/User\/globalStorage/);
 });
 
-test("the desktop app keeps its files in a folder of its own, VS Code or not: nothing is shared with the extension", () => {
+test("outside VS Code's extensions folder, its files are in a folder of their own", () => {
   const p = pathsOf("C:/Users/u/AppData/Local/OneLake Studio/app", { APPDATA: "C:/Roaming", LOCALAPPDATA: "C:/Local" });
   assert.match(p.home.replaceAll("\\", "/"), /^C:\/Local\/OneLake Studio\/data$/);
   assert.match(p.settingsFile.replaceAll("\\", "/"), /^C:\/Local\/OneLake Studio\/data\/settings\.json$/, "its own settings too");

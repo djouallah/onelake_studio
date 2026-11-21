@@ -201,7 +201,6 @@ async function show(context, { newTab = false, key = null, signIn = true, ...opt
         stamp: x => (modelReport ? modelReport.stamp(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
         save: x => (modelReport ? modelReport.save(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       },
-      publishView: x => (theCore ? theCore.publishView(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       setOffline: x => (keepOffline ? keepOffline.set(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -407,8 +406,6 @@ async function activateInner(context) {
     signIn, connectivity, settings, readLog,
     extensionDir: context.extensionUri.fsPath, storageDir: context.globalStorageUri.fsPath,
     production: context.extensionMode === vscode.ExtensionMode.Production,
-    // The desktop app's (desktop/node/main.js); VS Code gives none.
-    serverTag: context.serverTag || '',
     memento: context.globalState, secrets: context.secrets,
     httpProxy: () => vscode.workspace.getConfiguration('http').get('proxy', ''),
     readmePath: async () => (await webviewRoot(context.extensionUri, { dev })).readme.fsPath,
@@ -444,8 +441,7 @@ async function activateInner(context) {
     notify: (...a) => vscode.window.showInformationMessage(...a),
     warn: (...a) => vscode.window.showWarningMessage(...a),
     showError,
-    // The desktop app is one install at a time: nothing of it is left behind by an update.
-    reloadWindow: context.serverTag ? null : () => vscode.commands.executeCommand('workbench.action.reloadWindow'),
+    reloadWindow: () => vscode.commands.executeCommand('workbench.action.reloadWindow'),
     setContext: (name, value) => vscode.commands.executeCommand('setContext', name, value),
     onAccountChange: () => onAccountChange(),
     subscribe: disposable => context.subscriptions.push(disposable),
@@ -718,8 +714,7 @@ async function activateInner(context) {
       .catch(e => { if (out) out.appendLine(`${workspace}/${path} was saved, and its folder could not be listed again — ${(e && e.message) || e}`); });
   };
 
-  // A file from disk: VS Code's Explorer or an editor's title bar, an app file's editor, the desktop
-  // app's File > Open… or a double-click. An app's file (.fabricator, or an earlier .fabricapp) opens its model on the Report page, drawing this
+  // A file from disk: VS Code's Explorer or an editor's title bar, an app file's editor, or a double-click. An app's file (.fabricator, or an earlier .fabricapp) opens its model on the Report page, drawing this
   // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it; a .sql file
   // opens in the SQL box, its text not run, as a saved query does. `arg`: a Uri, a path, or nothing
   // (the active editor's file). `fallbackToText` (a double-click VS Code handed to this extension's editor):
@@ -900,10 +895,10 @@ async function activateInner(context) {
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
 
   // A .fabricator or .fabricapp, or a model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code, opens
-  // in OneLake Studio here, by openPath, even with the desktop app installed: VS Code is what was picked to open it.
+  // in OneLake Studio here, by openPath.
   // Its editor closes its own empty tab ("Reopen Editor With… Text Editor" still shows the text). A .sql file
   // is not taken: most have nothing to do with OneLake, so it opens as text, and Explorer's right-click opens it
-  // here. The desktop app's vscode has no custom editors: it opens files itself (desktop/node/main.js).
+  // here.
   if (vscode.window.registerCustomEditorProvider) {
     for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
       context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {
@@ -1206,29 +1201,6 @@ async function activateInner(context) {
         if (e && e.unsupported) { vscode.window.showInformationMessage(e.message); return; }
         showError(`Could not download ${name}: ${(e && e.message) || e}`);
       }
-    }),
-    // Fabric's Publish of a semantic view, from a .yaml of it (Context/Semantic Views/<view>/…): one request to Fabric,
-    // which makes the view's TMDL and model (fabric_app/export/publishview.js). In the status bar while it runs,
-    // blocking nothing; what Fabric said after, its diagnostics by file and line in the log too.
-    vscode.commands.registerCommand('onelakeStudio.publishSemanticView', n => {
-      // From its folder, or from a .yaml in it.
-      const view = n && n.area === 'Context' && (n.kind === 'dir' ? (/^Semantic Views\/([^/]+)$/.exec(String(n.dir)) || [])[1]
-        : n.kind === 'file' ? (/^[^/]+\/Context\/Semantic Views\/([^/]+)\/.+\.yaml$/.exec(String(n.path)) || [])[1] : null);
-      if (!view) return;
-      if (connectivity.offline()) { vscode.window.showInformationMessage('Publish needs a connection.'); return; }
-      const lakehouse = basename(String(n.item)).replace(/\.[^.]+$/, '');
-      vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Publishing ${view}` },
-        () => core.publishView({ workspace: n.workspace, item: n.item, view }))
-        .then(r => {
-          if (out) for (const w of r.warnings) out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view}: ${w}`);
-          vscode.window.showInformationMessage(`Published ${view}: Fabric made its model, ${view}` +
-            (r.warnings.length ? `, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'} (in the log).` : '.'));
-        }, e => {
-          if (out) {
-            out.appendLine(`Publish ${n.workspace}/${lakehouse}/${view} failed — ${(e && e.message) || e}`);
-          }
-          showError(`Publish ${view}: ${(e && e.message) || e}`);
-        });
     }),
     // Files from this computer into a folder of a lakehouse's Files/ (onelakewrite.js): a name already
     // there is asked about, each file is written beside and renamed into place, and the folder is
@@ -1558,16 +1530,14 @@ async function activateInner(context) {
   core.start();
 }
 
-// `stopEngine`: the desktop app, closing. Its engine is its own, with no other window on it, so it goes with the
-// app. A VS Code window leaves it to the others, and it stops a minute after the last one goes.
-async function deactivate({ stopEngine = false } = {}) {
+// A window leaves the engine to the others, and it stops a minute after the last one goes.
+async function deactivate() {
   stopReadLog();
   if (engines) for (const f of engines.catalogFiles.values()) f.close();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
   if (!engines) return;
-  if (stopEngine) await engines.resetEngine({ stop: true }).catch(() => {});
-  else if (engines.current()) await engines.current().close();
+  if (engines.current()) await engines.current().close();
 }
 
 module.exports = { activate, deactivate };

@@ -15,14 +15,6 @@ updates:
         update-types: ["version-update:semver-major"]
     groups:
       extension: { patterns: ["*"] }
-  - package-ecosystem: cargo
-    directory: /desktop/src-tauri
-    schedule: { interval: weekly }
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      desktop: { patterns: ["*"] }
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }

@@ -84,12 +84,6 @@ export const PARQUET_EXTS = new Set(["parquet", "parq", "pq"]);
 // .db and a real SQLite file both work — which matters because .db is common for both.
 export const DB_EXTS = new Set(["duckdb", "ddb", "db", "sqlite", "sqlite3"]);
 
-// Zip archives. Not in FILE_READERS because an archive isn't one dataset — the engine
-// (zipfs extension) lists the entries and opens each readable one as its own view over
-// a zip:// path. Range-read: the central directory sits at the archive's tail and
-// entries inflate only when queried, so a large archive costs what you read from it.
-export const ZIP_EXTS = new Set(["zip"]);
-
 // Image files. Not in FILE_READERS because DuckDB is never involved — the app fetches
 // the bytes itself (readFileBytes) and shows them as an <img> over a blob URL. The
 // value is the mime the Blob must carry: a typeless object URL renders nothing.

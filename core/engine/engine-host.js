@@ -165,7 +165,7 @@ function proxySettings(proxyUrl) {
 const FILE_CACHE_TRIM_MS = 60 * 60 * 1000;
 const TABLES_AT_ONCE = 4;
 // The community extensions the vsix ships, loaded by path.
-const COMMUNITY = ['h3', 'zipfs', 'nanoarrow'];
+const COMMUNITY = ['nanoarrow'];
 // In front of a statement that keeps a table in use: what Logs shows, and how the server tells it from
 // anyone's own. No % or _, as it goes in a LIKE.
 const KEEP_MARK = '/* OneLake Studio keeps this table on this machine */ ';
@@ -413,7 +413,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // comes, and a big write held it all in memory. A statement that wants an order says ORDER BY.
       config.preserve_insertion_order = 'false';
       if (extensionDir) config.extension_directory = extensionDir;
-      // The community extensions (h3, zipfs, nanoarrow) ship in the vsix and load by path, and a LOAD by
+      // The community extension (nanoarrow) ships in the vsix and loads by path, and a LOAD by
       // path knows only the core signing keys: so unsigned extensions are allowed when they are there.
       // Each is held to its hash when the vsix is built (scripts/pinned-downloads.mjs); the lockdown
       // below then refuses every LOAD, so nothing the page sends can load anything else.
@@ -572,12 +572,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // GLOBAL, for every connection: a write's Iceberg catalog is asked over https on a statement's own, and with
         // no bundle named there it looks for the system's, which the lockdown refuses.
         await conn.run(`SET GLOBAL ca_cert_file = ${sqlStr(ca)};`);
-        // zip:// only over a remote archive: an entry of a Files/ zip is read as
-        // zip://abfss://…, and a bare 'zip://' would open any local archive. Checked
-        // against DuckDB 2.0: zip://abfss:// reads, zip://C:/… is refused, and a `..`
-        // after abfss:// stays on the azure filesystem.
-        const dirs = [`${tmp}/`, 'https://', 'abfss://', 'abfs://', 'az://', 'azure://',
-                      'zip://abfss://', 'zip://https://'];
+        // A `..` after abfss:// stays on the azure filesystem (checked against DuckDB 2.0).
+        const dirs = [`${tmp}/`, 'https://', 'abfss://', 'abfs://', 'az://', 'azure://'];
         if (extensionDir) dirs.push(`${extensionDir.replace(/\\/g, '/')}/`);
         // The lake's metadata, a table's files and deletion vectors, and what the table read API answered.
         if (fileCacheDir) dirs.push(`${fileCacheDir.replace(/\\/g, '/')}/`);
@@ -619,7 +615,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const capabilities = {
-    excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
+    excel: false, avro: false, httpfs: false, sqlite_scanner: false,
     iceberg: false, azure: false, delta: false, ducklake: false, lake: false, quack: false, nanoarrow: false,
   };
 
@@ -1144,7 +1140,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       const area = ref.area || 'Files';
       const url = abfssUrl(workspace, `${item}/${area}`);
       const inQuotes = s => s.split(ref.quote).join(ref.quote + ref.quote);
-      statement += `${sql.slice(at, ref.start)}${ref.quote}${inQuotes(ref.zip + url + ref.path.slice(`/${area}`.length))}${ref.quote}`;
+      statement += `${sql.slice(at, ref.start)}${ref.quote}${inQuotes(url + ref.path.slice(`/${area}`.length))}${ref.quote}`;
       at = ref.end;
       written.push({ url: inQuotes(url), name: inQuotes(ref.written) });
     }
@@ -1156,7 +1152,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // here, rather than left to time out. A table nothing was ever written to reads no file, and needs no network.
   // A OneLake URL it reads: after FROM or JOIN, or as a function's argument. Not one that is only a
   // value, as a model's path is in what SHOW SEMANTIC VIEWS compiles to.
-  const READS_ONELAKE = /(?:\b(?:from|join)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(?:zip:\/\/)?(?:abfss?|az|azure):\/\//i;
+  const READS_ONELAKE = /(?:\b(?:from|join)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(?:abfss?|az|azure):\/\//i;
   function refuseOffline(sql) {
     const why = offlineReason();
     if (!why || !READS_ONELAKE.test(sql)) return;

@@ -75,7 +75,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, offlineState = null, setOffline = null, publishView = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, offlineState = null, setOffline = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveFileText = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -102,15 +102,6 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!x || !x.workspace || !x.path) throw new Error("Create Semantic Model needs a model file in a lakehouse's Files/");
       return createSemanticModel({ file: String(x.file || 'model'), text: String(x.text ?? ''),
                                    workspace: String(x.workspace), path: String(x.path) });
-    },
-    // Fabric's Publish of a semantic view (core.js publishView), from the Model tab of one: what to say after.
-    'fabric.publishView': async x => {
-      if (!publishView) throw new Error('Publish is not available here');
-      const view = String((x && x.view) ?? '');
-      if (!x || !x.workspace || !x.item || !view || /[/\\]/.test(view) || view === '.' || view === '..') throw new Error('Publish needs a semantic view of a lakehouse');
-      const r = await publishView({ workspace: String(x.workspace), item: String(x.item), view });
-      return `Published ${view}: Fabric made its model, ${view}` +
-        (r.warnings.length ? `, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'}: ${r.warnings.join('; ')}` : '.');
     },
     // The Report tab (exportflow.js reportOf): a model by its names.
     'model.report': async x => {

@@ -52,7 +52,7 @@ function createMsalSession({ tenant, store, openBrowser = openInBrowser, msal = 
       auth: { clientId: CLIENT_ID, authority },
       cache: {
         cachePlugin: {
-          // With no file, an empty cache: a sign-out in another process (the desktop app, the command line)
+          // With no file, an empty cache: a sign-out in another process (another command line)
           // is one here too, and what this one still held is not written back over it.
           beforeCacheAccess: async c => { c.tokenCache.deserialize((await store.read()) || '{}'); },
           afterCacheAccess: async c => { if (c.cacheHasChanged) await store.write(c.tokenCache.serialize()); },

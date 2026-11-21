@@ -216,13 +216,3 @@ test("saving goes through the host's save function: text as given, a OneLake fil
   await answer({ methods: none, engine: {} }, { id: 2, method: "host.saveFile", args: [{ name: "a", text: "" }] }, m => out.push(m));
   assert.equal(out[0].type, "error", "no save function, no save");
 });
-
-test("Publish: a page names a semantic view of a lakehouse, and is told what Fabric did", async () => {
-  const asked = [];
-  const methods = createHostMethods({ onelake: {}, engine: {}, publishView: async x => { asked.push(x); return { modelId: "m", warnings: ["w1"] }; } });
-  assert.equal(await methods["fabric.publishView"]({ workspace: "ws", item: "data.Lakehouse", view: "sales", extra: 1 }),
-    "Published sales: Fabric made its model, sales, with 1 warning: w1");
-  assert.deepEqual(asked, [{ workspace: "ws", item: "data.Lakehouse", view: "sales" }]);
-  await assert.rejects(methods["fabric.publishView"]({ workspace: "ws", item: "data.Lakehouse", view: "../x" }), /needs a semantic view/);
-  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["fabric.publishView"]({ workspace: "ws", item: "i", view: "v" }), /not available here/);
-});

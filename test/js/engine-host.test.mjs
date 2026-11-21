@@ -656,12 +656,6 @@ test("native engine host", async t => {
       /Permission|disabled by configuration|No files found/i, "dot-dot does not climb out");
   });
 
-  await t.test("zip:// reaches remote archives only, never a local one", async () => {
-    const zip = join(outside, "local.zip").replace(/\\/g, "/");
-    await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('zip://${zip}/x.csv')`]),
-      /Permission|disabled by configuration/i);
-  });
-
   await t.test("the lockdown cannot be turned off from SQL", async () => {
     await assert.rejects(engine.call("query", ["SET enable_external_access = true"]), /Not run|lock/i);
     await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /Not run|lock/i);
@@ -1047,17 +1041,21 @@ test("a table the lake holds is read as it is, with nothing asked of OneLake, af
 const first = e => String(e && e.message).split("\n")[0];
 const slash = p => p.replace(/\\/g, "/");
 
-// Why h3, zipfs and nanoarrow load as unsigned extensions (engine-host.js): DuckDB takes a community extension's
+// Why nanoarrow loads as an unsigned extension (engine-host.js): DuckDB takes a community extension's
 // signature only from its own repository. The day one of these loads from a file with unsigned ones refused, the
 // engine can refuse them too, and this test says so by failing.
-test("DuckDB refuses a community extension from a file, however it is offered, with unsigned extensions refused", { skip: !existsSync(join(BUNDLED, "h3.duckdb_extension")) }, async t => {
+test("DuckDB refuses a community extension from a file, however it is offered, with unsigned extensions refused", { skip: !existsSync(join(BUNDLED, "nanoarrow.duckdb_extension")) }, async t => {
   const { DuckDBInstance } = require("@duckdb/node-api");
-  const file = slash(join(BUNDLED, "h3.duckdb_extension"));
+  const file = slash(join(BUNDLED, "nanoarrow.duckdb_extension"));
   const attempt = async run => {
     const extDir = await mkdtemp(join(tmpdir(), "onelake-probe-"));
     const duck = await DuckDBInstance.create(":memory:", { allow_unsigned_extensions: "false", extension_directory: extDir });
     const c = await duck.connect();
-    try { await run(c); await c.run("SELECT h3_latlng_to_cell(0, 0, 1)"); return "loaded"; }
+    try {
+      await run(c);
+      const r = await c.runAndReadAll("SELECT count(*) AS n FROM duckdb_extensions() WHERE extension_name = 'nanoarrow' AND loaded");
+      return Number(r.getRowObjectsJson()[0].n) ? "loaded" : "not loaded";
+    }
     catch (e) { return first(e); }
     finally { c.closeSync(); duck.closeSync(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); }
   };
@@ -1068,27 +1066,27 @@ test("DuckDB refuses a community extension from a file, however it is offered, w
     const repo = await mkdtemp(join(tmpdir(), "onelake-repo-"));
     t.after(() => rm(repo, { recursive: true, force: true }).catch(() => {}));
     await mkdir(join(repo, version, platform), { recursive: true });
-    await writeFile(join(repo, version, platform, "h3.duckdb_extension"), await readFile(join(BUNDLED, "h3.duckdb_extension")));
+    await writeFile(join(repo, version, platform, "nanoarrow.duckdb_extension"), await readFile(join(BUNDLED, "nanoarrow.duckdb_extension")));
     return slash(repo);
   };
   const UNSIGNED = /signature/i;
   assert.match(await attempt(c => c.run(`LOAD '${file}'`)), UNSIGNED, "by its path");
-  assert.match(await attempt(async c => { await c.run(`INSTALL '${file}'`); await c.run("LOAD h3"); }), UNSIGNED, "installed from the file");
-  assert.match(await attempt(async c => { await c.run(`INSTALL h3 FROM '${await repository(c)}'`); await c.run("LOAD h3"); }), UNSIGNED, "from a folder laid out as a repository");
+  assert.match(await attempt(async c => { await c.run(`INSTALL '${file}'`); await c.run("LOAD nanoarrow"); }), UNSIGNED, "installed from the file");
+  assert.match(await attempt(async c => { await c.run(`INSTALL nanoarrow FROM '${await repository(c)}'`); await c.run("LOAD nanoarrow"); }), UNSIGNED, "from a folder laid out as a repository");
 });
 
-test("a community extension is the file this build ships or it is not there: nothing is downloaded in its place", { skip: !existsSync(join(BUNDLED, "h3.duckdb_extension")) }, async t => {
+test("a community extension is the file this build ships or it is not there: nothing is downloaded in its place", { skip: !existsSync(join(BUNDLED, "nanoarrow.duckdb_extension")) }, async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const bundle = await mkdtemp(join(tmpdir(), "onelake-bundle-"));
-  // The bundle as it is, but for h3: as a build for a platform with none would be.
-  for (const name of readdirSync(BUNDLED)) if (name !== "h3.duckdb_extension") cpSync(join(BUNDLED, name), join(bundle, name), { recursive: true });
+  // The bundle as it is, but for nanoarrow: as a build for a platform with none would be.
+  for (const name of readdirSync(BUNDLED)) if (name !== "nanoarrow.duckdb_extension") cpSync(join(BUNDLED, name), join(bundle, name), { recursive: true });
   const warned = [];
   const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: bundle, onWarn: w => warned.push(String(w)) });
   t.after(async () => { await engine.close(); for (const d of [extDir, bundle]) await rm(d, { recursive: true, force: true }).catch(() => {}); });
   assert.deepEqual((await engine.call("query", ["SELECT 1 AS a"])).rows, [{ a: 1 }], "the engine starts without it");
-  assert.equal(warned.filter(w => /'h3' unavailable — this build does not ship it/.test(w)).length, 1, warned.join(" | "));
-  await assert.rejects(engine.call("query", ["SELECT h3_latlng_to_cell(0, 0, 1)"]), /h3_latlng_to_cell/, "and its functions are not there");
-  assert.deepEqual((await engine.call("query", ["SELECT count(*) AS n FROM duckdb_extensions() WHERE extension_name = 'h3' AND (loaded OR installed)"])).rows, [{ n: 0 }],
+  assert.equal(warned.filter(w => /'nanoarrow' unavailable — this build does not ship it/.test(w)).length, 1, warned.join(" | "));
+  await assert.rejects(engine.call("query", ["SELECT * FROM read_arrow('x.arrow')"]), /read_arrow/, "and its functions are not there");
+  assert.deepEqual((await engine.call("query", ["SELECT count(*) AS n FROM duckdb_extensions() WHERE extension_name = 'nanoarrow' AND (loaded OR installed)"])).rows, [{ n: 0 }],
     "neither loaded nor installed from anywhere");
 });
 
@@ -1104,7 +1102,7 @@ test("the engine starts from what ships alone: no extension is fetched, and none
   assert.deepEqual((await engine.call("query", ["SELECT 1 AS a"])).rows, [{ a: 1 }]);
   assert.deepEqual(warned.filter(w => /would not load|unavailable|could not load/.test(w)), [], "every bundled extension loaded as it is");
   const loaded = (await engine.call("query", ["SELECT extension_name AS name FROM duckdb_extensions() WHERE loaded ORDER BY 1"])).rows.map(r => r.name);
-  for (const name of ["httpfs", "avro", "azure", "iceberg", "delta", "excel", "sqlite", "h3", "zipfs", "nanoarrow"]) {
+  for (const name of ["httpfs", "avro", "azure", "iceberg", "delta", "excel", "sqlite", "nanoarrow"]) {
     assert.ok(loaded.some(l => l.startsWith(name)), `${name} is loaded: ${loaded.join(", ")}`);
   }
   assert.deepEqual(readdirSync(extDir), [], "and nothing was installed into the extension folder");

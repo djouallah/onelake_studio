@@ -3,8 +3,7 @@
 // home.js — where this install keeps its files, and what it remembers there, with no editor
 // =============================================================================
 // VS Code hands the extension its storage folder, its settings and its globalState. The command line with
-// VS Code closed and the desktop app have none of that, and read their own install's places themselves. The
-// extension and the desktop app are separate products: neither reads the other's folder, settings or cache.
+// VS Code closed has none of that, and reads the extension's places itself.
 // No `vscode` import.
 // =============================================================================
 
@@ -16,8 +15,8 @@ const { stripBom } = require('./names');
 const EXTENSION_ID = 'djouallah.onelake-studio';
 
 // Where this install keeps its files. The extension's, under VS Code (its command line with VS Code closed reads
-// them too: it is the extension's): VS Code's folder for it. Anything else, the desktop app's: a folder of its
-// own, whether VS Code is here or not. Two engines on one folder fought over the lake, its log and its catalog.
+// them too: it is the extension's): VS Code's folder for it. Anything else (a checkout, say): a folder of its
+// own.
 // ONELAKE_STUDIO_HOME keeps it all somewhere else.
 function pathsOf(extensionDir, env = process.env) {
   if (env.ONELAKE_STUDIO_HOME) return { home: env.ONELAKE_STUDIO_HOME, settingsFile: join(env.ONELAKE_STUDIO_HOME, 'settings.json') };

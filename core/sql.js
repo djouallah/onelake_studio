@@ -504,7 +504,7 @@ function writeOf(sql) {
   let file;
   try { file = fileName(to.v); }
   catch (e) { notRun(e.message); }
-  if (!file || file.zip) notRun(FILE_SHAPE);
+  if (!file) notRun(FILE_SHAPE);
   const refused = areaWriteError(file.area);
   if (refused) notRun(`${refused.message}. ${FILE_SHAPE}`);
   return as('copy', { target: 'file', ref: file, start: to.start, end: to.end });
@@ -898,8 +898,7 @@ const NOT_FROM = new Set(['select', 'where', 'group', 'having', 'qualify', 'orde
 const FILE_PART = new RegExp(`"((?:[^"]|"")*)"|\`((?:[^\`]|\`\`)*)\`|([A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*)`, 'y');
 
 function fileName(value, kinds = SQL_KINDS) {
-  const zip = /^zip:\/\//i.test(value) ? value.slice(0, 6) : '';
-  const text = value.slice(zip.length);
+  const text = value;
   const parts = [];
   let i = 0;
   for (;;) {
@@ -929,12 +928,12 @@ function fileName(value, kinds = SQL_KINDS) {
   const area = AREA_NAMES.find(a => path === `/${a}` || path.startsWith(`/${a}/`));
   if (!area) throw wrong(shape);
   if (path.split('/').some(s => s === '.' || s === '..')) throw wrong("a file's path can't hold . or ..");
-  return { zip, workspace: parts[0], item: parts[1], area, path, written: `${text.slice(0, i)}/${area}` };
+  return { workspace: parts[0], item: parts[1], area, path, written: `${text.slice(0, i)}/${area}` };
 }
 
 /**
  * The file names `sql` reads, in order, each with where its string is. Throws on one that is wrong.
- * @returns {{start: number, end: number, quote: string, zip: string, workspace: string, item: string, path: string, written: string}[]}
+ * @returns {{start: number, end: number, quote: string, workspace: string, item: string, path: string, written: string}[]}
  */
 function fileRefs(sql, kinds = SQL_KINDS) {
   const s = String(sql);
@@ -1012,13 +1011,13 @@ function fileRefs(sql, kinds = SQL_KINDS) {
 
 // The OneLake files a statement reads, as DuckDB is given them: an abfss:// URL after FROM, JOIN or
 // ATTACH, or as a function's argument, and not one that is only a value, as a model's path can be. A
-// zip's entry is its zip, and a wildcard names no one file.
+// wildcard names no one file.
 function filesReadBy(sql) {
   const found = new Set();
-  const at = /(?:\b(?:from|join|attach)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(zip:\/\/)?(abfss:\/\/[^']+)'/gi;
-  for (const [, zip, url] of String(sql).matchAll(at)) {
+  const at = /(?:\b(?:from|join|attach)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(abfss:\/\/[^']+)'/gi;
+  for (const [, url] of String(sql).matchAll(at)) {
     if (/[*?[]/.test(url)) continue;
-    found.add(zip ? url.replace(/(\.zip)\/.*$/i, '$1') : url);
+    found.add(url);
   }
   return [...found];
 }

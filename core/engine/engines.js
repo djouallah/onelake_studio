@@ -222,9 +222,6 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
       // A lake can be open in one process only, and the standalone host has a server of its own.
       lakeFolder: serverTag ? `lake-${serverTag}` : 'lake',
       fileCacheMaxBytes: settings.diskCacheBytes(),
-      // The desktop app's engine is its own and goes when the app closes: closing it is the restart, with no
-      // check of its own that could stop it. A VS Code window's is shared, and nothing closes it but the checks.
-      selfCheck: serverTag !== 'desktop',
     };
   }
 

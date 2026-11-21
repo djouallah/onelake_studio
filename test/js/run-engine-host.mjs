@@ -51,8 +51,6 @@ console.log("--- engine-host ---");
   ok(caps.httpfs, "httpfs loaded — the https the Iceberg catalog and public URLs need");
   ok(caps.avro, "avro loaded — read_avro is the Iceberg manifest reader");
   ok(caps.excel, "excel loaded — gates whether .xlsx is offered");
-  ok(caps.zipfs, "zipfs loaded — gates whether .zip is offered");
-  ok(caps.h3, "h3 loaded");
   ok(boot && boot.totalMs >= 0, "…and the boot reported its stages");
   console.log(`   engine ready in ${boot ? boot.totalMs : "?"}ms ` +
               `(${(boot ? boot.stages : []).map(s => `${s.stage} ${s.ms}ms`).join(", ")})`);

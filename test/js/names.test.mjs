@@ -136,7 +136,6 @@ test("what DuckDB ran says a file by its name: a lakehouse's Files/ only, and ne
   const host = "onelake.dfs.fabric.microsoft.com";
   assert.equal(n.fileNamesIn(`SELECT * FROM 'abfss://ANZ Retail@${host}/data.Lakehouse/Files/a b.csv'`),
     `SELECT * FROM '"ANZ Retail".data/Files/a b.csv'`);
-  assert.equal(n.fileNamesIn(`FROM 'zip://abfss://ws@${host}/lh.Lakehouse/Files/a.zip/b.csv'`), "FROM 'zip://ws.lh/Files/a.zip/b.csv'");
   for (const same of [`abfss://ws@${host}/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json`, `abfss://ws@${host}/dw.Warehouse/Files/x`,
                       `abfss://11111111-0000@${host}/22222222-0000/Files/x`, `abfss://ws@${host}/lh.Lakehouse/Filesystem/x`])
     assert.equal(n.fileNamesIn(same), same);
