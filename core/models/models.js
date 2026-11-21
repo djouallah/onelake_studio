@@ -9,8 +9,7 @@ const fsp = require('node:fs/promises');
 const { walkCached } = require('../onelake/onelake');
 const { modelAccountDir, modelCopyPath } = require('./fabric');
 const { readFromOneLake } = require('./sqlendpoint');
-const { fmtBytes, sqlKind, displayName, MODEL_KIND, modelSqlName, stripBom, splitItem, sqlPart, hasFilesArea, itemKind } = require('../names');
-const { viewOf } = require('./semanticview');
+const { fmtBytes, sqlKind, displayName, MODEL_KIND, modelSqlName, stripBom, splitItem, sqlPart } = require('../names');
 
 // What Fabric says when asked for the definition of a model its Publish made of a semantic view (seen on
 // every such model, 2026-11-19): such a model never opens, and the tree marks it as that.
@@ -81,10 +80,6 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return path;
   };
 
-  // Fabric's own definition of a model, its model.bim as getDefinition gives it, kept beside the copy
-  // each time Fabric is read: Download's TMSL, offline too.
-  const modelBimPath = n => modelPath(n).replace(/\.ossie\.yaml$/, '.bim');
-
   // A model's local copy (fetchModel), when there is one: the tree's check mark.
   const modelKey = n => `${n.workspace}|${n.modelId}`;
   const cachedModel = n => (existsSync(modelPath(n)) ? modelPath(n) : null);
@@ -113,14 +108,6 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     await fsp.writeFile(partial, body);
     await fsp.rename(partial, to).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
   };
-  // Fabric's model.bim of a model, as Fabric gave it: the one kept beside the copy, else read from
-  // Fabric now (with the copy, as a Refresh reads it). A copy from before it was kept has none.
-  async function fetchModelBim(n, { say = () => {} } = {}) {
-    const kept = await fsp.readFile(modelBimPath(n)).catch(() => null);
-    if (kept) return kept;
-    await fetchModel(n, { fresh: true, say });
-    return fsp.readFile(modelBimPath(n));
-  }
   // The model Fabric's Publish made of a semantic view, from the TMDL it wrote: <lakehouse>/SystemContext/Semantic
   // Views/<model>/, in the lakehouse whose metadata.json there names this model (modelObjectId). As TMSL bytes, as
   // getBim answers; null when no lakehouse of the workspace has it.
@@ -167,7 +154,6 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         }
         log(`${n.workspace}/${n.model}: a semantic view's model, read from its TMDL in SystemContext/`);
       }
-      const bimBytes = Buffer.from(bim);
       let doc;
       try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }
       catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
@@ -212,7 +198,6 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       const text = compiler.stringifyYaml(ossie, { lineWidth: 0 });
       await fsp.mkdir(dirname(path), { recursive: true });
       // Whole or not at all: this file is what later opens trust, with nothing to say it was cut short.
-      await writeWhole(modelBimPath(n), bimBytes);
       await writeWhole(path, text);
       log(`downloaded ${n.workspace}/${n.model} -> ${path} (${fmtBytes(Buffer.byteLength(text))})`);
       onModelChanged(n);
@@ -380,33 +365,10 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return value;
   }
 
-  // A model as a Fabric semantic view (semanticview.js), for Export YAML: { workspace, item } (the lakehouse,
-  // as the tree names it), `name`, `doc`, `text` (the view's YAML) and `dropped`. Read from Fabric as it is now,
-  // and nothing kept: the local copy is not touched.
-  async function semanticViewOf(n) {
-    const bim = await fabric.getBim(n.workspace, n.modelId);
-    let doc;
-    try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }
-    catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
-    const read = await readFromOneLake(doc, n.workspace, { fabric, onelake });
-    if (read.refused) throw new Error(`${n.model} is ${read.refused}${read.why ? ` (${read.why})` : ''}`);
-    const { semantic, compiler } = await modules();
-    const view = viewOf(doc, n.model, semantic);
-    if (view.refused) throw Object.assign(new Error(view.refused), { refused: true });
-    const where = await fabric.itemOf(view.lake.workspace, view.lake.item);
-    if (!hasFilesArea(where.item)) {
-      throw Object.assign(new Error(`${n.model}'s tables are in ${displayName(where.item)}, a ${itemKind(where.item)}: Fabric makes semantic views in a lakehouse only`), { refused: true });
-    }
-    for (const note of read.notes) log(`${n.workspace}/${n.model}: ${note}`);
-    // `textAs(folder)`: the file, named as its folder is, which is the name Publish gives its model.
-    return { ...where, name: n.model, doc: view.doc, dropped: view.dropped,
-             textAs: folder => compiler.stringifyYaml({ ...view.doc, name: folder }, { lineWidth: 0 }) };
-  }
-
   return {
     adoptModels, adopted: () => modelsAdopted,
-    modelPath, modelBimPath, fetchModelBim, modelKey, cachedModel, unsupportedModels, unsupportedNote,
-    fetchModel, walkTables, openSqlModel, completionNames, modelFile, semanticViewOf,
+    modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
+    fetchModel, walkTables, openSqlModel, completionNames, modelFile,
     forgetNames: () => { namesKept = null; },
   };
 }

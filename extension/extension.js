@@ -36,7 +36,6 @@ const { dirBytes, treeBytes, removeDir } = require('../core/diskuse');
 const { SKILL_MARKER, skillFile, writeSkill, refreshSkill } = require('../cli/skill');
 const { createHostMethods } = require('../core/host');
 const { modelFileName, modelAccountDir } = require('../core/models/fabric');
-const { viewDir, viewFile, freeName } = require('../core/models/semanticview');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { firstClicks } = require('../core/doubleclick');
 const { webviewRoot } = require('./webview');
@@ -1192,16 +1191,19 @@ async function activateInner(context) {
       await vscode.env.clipboard.writeText(name);
       vscode.window.setStatusBarMessage(`Copied ${name}`, 3000);
     }),
-    // A file of the tree, as it is, or a semantic model in the format picked: Ossie, its local copy
-    // (read from Fabric first if there is none yet), or TMSL, Fabric's own model.bim, kept beside the
-    // copy (fetchModelBim). Saved where the save dialog says; a file is read from OneLake after it.
+    // A file of the tree, as it is, or a semantic model's YAML: its local copy, read from Fabric first if there is
+    // none yet. Saved where the save dialog says, and read after it, so a cancel reads nothing.
     vscode.commands.registerCommand('onelakeStudio.downloadFile', async n => {
-      if (!n || n.kind !== 'file') return;
-      const name = basename(String(n.path));
+      if (!n || (n.kind !== 'file' && n.kind !== 'semanticModel')) return;
+      const model = n.kind === 'semanticModel';
+      const name = model ? modelFileName(n.model) : basename(String(n.path));
       try {
-        const saved = await saveFile(name, () => onelake.readBytes(n.workspace, n.path));
+        const saved = await saveFile(name, model ? async () => Buffer.from((await fetchModel(n)).text, 'utf8')
+          : () => onelake.readBytes(n.workspace, n.path));
         if (saved) vscode.window.setStatusBarMessage(`Saved ${saved}`, 5000);
       } catch (e) {
+        // A model with no tables in OneLake is not a failure: say what the model is, as a click on it does.
+        if (e && e.unsupported) { vscode.window.showInformationMessage(e.message); return; }
         showError(`Could not download ${name}: ${(e && e.message) || e}`);
       }
     }),
@@ -1227,47 +1229,6 @@ async function activateInner(context) {
           }
           showError(`Publish ${view}: ${(e && e.message) || e}`);
         });
-    }),
-    // A semantic model as a Fabric semantic view: one YAML file, as Fabric's New semantic view writes one, in
-    // <lakehouse>/Context/Semantic Views/<model>/ of the lakehouse its tables are in (core/models/semanticview.js).
-    // A folder of that name already there is asked about, as a copy asks: Replace takes it whole, Keep Both writes
-    // this one beside it as <model> (2).
-    vscode.commands.registerCommand('onelakeStudio.exportSemanticView', async n => {
-      if (!n || n.kind !== 'semanticModel' || !n.model) return;
-      if (connectivity.offline()) { vscode.window.showInformationMessage('Export YAML needs a connection.'); return; }
-      try {
-        const view = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Export YAML: ${n.model}` },
-          () => core.models.semanticViewOf(n));
-        const lh = { workspace: view.workspace, item: view.item, area: 'Context' };
-        const lakehouse = basename(String(view.item)).replace(/\.[^.]+$/, '');
-        const views = await onelake.files(lh, 'Semantic Views', { fresh: true });
-        const taken = views.filter(e => e.isDir).map(e => e.name);
-        let folder = view.name;
-        if (taken.some(t => t.toLowerCase() === folder.toLowerCase())) {
-          const pick = await vscode.window.showWarningMessage(`${lakehouse}/Context/Semantic Views/${folder} already exists.`, {
-            modal: true,
-            detail: `Replace deletes that folder and everything in it, then writes ${n.model} there. Keep Both writes it beside it as ${freeName(folder, taken)}.`,
-          }, 'Replace', 'Keep Both');
-          if (!pick) return;
-          if (pick === 'Replace') await core.writer.removeDir(view.workspace, `${view.item}/Context/${viewDir(folder)}`);
-          else folder = freeName(folder, taken);
-        }
-        await core.writer.writeFile(view.workspace, `${view.item}/Context/${viewFile(folder)}`, Buffer.from(view.textAs(folder), 'utf8'));
-        // The tree shows the folder: Context/ itself is new on a lakehouse that had nothing in it.
-        await Promise.all(['', 'Semantic Views', viewDir(folder)].map(d => onelake.files(lh, d, { fresh: true }).catch(() => [])));
-        const where = `${lakehouse}/Context/Semantic Views/${folder}`;
-        if (out) {
-          out.appendLine(`Export YAML: ${view.workspace}/${n.model} -> ${view.workspace}/${view.item}/Context/${viewFile(folder)}`);
-          for (const d of view.dropped) out.appendLine(`  not in the view: ${d}`);
-        }
-        const note = view.dropped.length
-          ? ` Not in it, as a semantic view has no place for them: ${view.dropped.slice(0, 3).join('; ')}${view.dropped.length > 3 ? `, and ${view.dropped.length - 3} more (in the log)` : ''}.`
-          : '';
-        vscode.window.showInformationMessage(`Exported ${n.model} to ${where}.${note}`);
-      } catch (e) {
-        if (e && (e.unsupported || e.refused)) { vscode.window.showInformationMessage(`Export YAML: ${e.message}`); return; }
-        showError(`Export YAML of ${n.model} failed: ${(e && e.message) || e}`);
-      }
     }),
     // Files from this computer into a folder of a lakehouse's Files/ (onelakewrite.js): a name already
     // there is asked about, each file is written beside and renamed into place, and the folder is

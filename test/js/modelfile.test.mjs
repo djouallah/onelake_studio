@@ -94,19 +94,6 @@ test("a model that reads no lakehouse is refused", async () => {
   await done();
 });
 
-test("a semantic model's TMSL is Fabric's model.bim kept beside its Ossie copy, read with no request", async () => {
-  const { models, done } = await setup();
-  const n = { kind: "semanticModel", workspace: "aemo", model: "NEM Sales", modelId: "m1" };
-  assert.match(models.modelBimPath(n), /[\/]aemo[\/]NEM Sales\.bim$/);
-  assert.equal(models.modelBimPath(n), models.modelPath(n).replace(/\.ossie\.yaml$/, ".bim"), "beside the copy");
-  const { mkdir } = await import("node:fs/promises");
-  const { dirname } = await import("node:path");
-  await mkdir(dirname(models.modelBimPath(n)), { recursive: true });
-  await writeFile(models.modelBimPath(n), '{"model":{}}');
-  assert.equal((await models.fetchModelBim(n)).toString("utf8"), '{"model":{}}', "the kept file, as it is: fabric is {} here");
-  await done();
-});
-
 test("a local copy of an earlier Ossie spec is read as it is, never rewritten, with no request", async () => {
   // dax-sql's part, stood in for: it reads either spec and writes the one of now.
   let written = 0;
@@ -181,9 +168,6 @@ test("a semantic view's model is read from the TMDL Fabric wrote of the view, th
   const { text } = await models.fetchModel(n);
   assert.deepEqual(JSON.parse(text), { name: "v", tables: ["t"] });
   assert.equal(models.unsupportedModels.has(models.modelKey(n)), false);
-  const { readFile } = await import("node:fs/promises");
-  const kept = JSON.parse(await readFile(models.modelBimPath(n), "utf8"));
-  assert.equal(kept.model.tables[0].partitions[0].source.expressionSource, "E", "its TMSL kept beside the copy, as a model.bim is");
   await done();
 });
 

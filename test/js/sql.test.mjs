@@ -295,7 +295,7 @@ test("a file in Context/ or SystemContext/ is named as one in Files/ is, and is 
     assert.throws(() => fileRefs(`SELECT * FROM glob('${v}')`), /a file's name is/, v);
   }
   assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/SystemContext/x.csv'"), /SystemContext\/ is read-only: Fabric writes it/);
-  assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/Context/x.csv'"), /Context\/ gets a semantic view only from a semantic model's Export YAML/);
+  assert.throws(() => writeOf("COPY (SELECT 1) TO 'a.b/Context/x.csv'"), /only a lakehouse's Files\/ is written here: Context\/ holds the semantic views made in Fabric/);
   assert.equal(writeOf("COPY (SELECT 1) TO 'a.b/Files/x.csv'").ref.area, "Files");
 });
 

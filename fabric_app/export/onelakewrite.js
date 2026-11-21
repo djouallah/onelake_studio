@@ -106,16 +106,7 @@ function createOneLakeWriter({ getToken, dfsOrigin = DFS_ORIGIN, fetchImpl = (..
     } finally { await fh.close(); }
   }
 
-  // A folder and everything in it, gone: Export YAML's Replace, which takes a semantic view's folder whole.
-  // Nothing there is no failure.
-  async function removeDir(ws, path) {
-    const r = await call(`${urlOf(ws, path)}?recursive=true`, { method: 'DELETE' });
-    if (r.ok || r.status === 404) return;
-    const said = await oneLakeMessage(r);
-    throw Object.assign(new Error(`Deleting ${path} failed (HTTP ${r.status})` + (said ? ` — ${said}` : '')), { status: r.status });
-  }
-
-  return { stat, compare, writeFile, writeLocalFile, removeDir };
+  return { stat, compare, writeFile, writeLocalFile };
 }
 
 module.exports = { createOneLakeWriter };
