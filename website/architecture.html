@@ -243,7 +243,7 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
       <p>DuckDB runs in one separate process, the query server. The extension host checks each statement before sending it: it must read, or be a write to a lakehouse that its setting allows, and every name must resolve to a table.</p>
       <ul>
         <li>Statements go over Quack. Stop cancels only its own tab's statements.</li>
-        <li>The OneLake token, the offline switch, the sync worker's requests to sync a table, and the data for the Performance tab go over a separate OS pipe, because Quack logs everything it receives.</li>
+        <li>The OneLake token, the offline switch and the sync worker's requests to sync a table go over a separate OS pipe, because Quack logs everything it receives.</li>
         <li>The lake's file can be open in one process only, so the query server holds it. Keep offline is a client of the same server. It keeps a model's tables in the lake current and reads no rows, so their files come down as the model's queries open them.</li>
         <li>The command line, when VS Code isn't running, starts a server of its own, with its own lake folder, <code>lake-standalone</code>.</li>
         <li>The server runs in UTC, because OneLake stores timestamps in UTC. Otherwise dates wouldn't match between tables.</li>

@@ -231,7 +231,7 @@ every window is a client of it over DuckDB's Quack protocol ([`core/engine/engin
   comment and uses `quack_cancel`, since `interrupt()` doesn't reach the server. A stopped statement's attach
   isn't used again: its reads take time to wind down, and the next statement on it waited about 80s, then failed.
 - **The control pipe:** an OS pipe, signed in with the session token, that says a window is alive. The OneLake
-  token, the offline switch and what Performance asks for go this way rather than over Quack, which logs
+  token and the offline switch go this way rather than over Quack, which logs
   what it is sent.
   A Quack listener can stop while the process lives on: a statement that can't connect asks over this pipe, the
   server starts it again on the same port and tells every window to attach again, and the statement goes once more.
@@ -276,10 +276,6 @@ thousands of views at each start). DuckDB refuses a write to it, and so does the
 there as the SQL dax-sql compiled it to, with the query as written in a comment in front
 ([`page/semantic.js`](../page/semantic.js)).
 `SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory.
-
-**Performance** ([`extension/performance.js`](../extension/performance.js)), a node in the tree, with one tab per window. Live charts of
-memory, cores in use, queries per second and the disk cache, while the tab is on screen. Nothing is stored. It has no
-SQL box, no Stop and no Restart.
 
 ## OneLake security
 
@@ -422,8 +418,8 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 ## The explorer
 
 The tree ([`extension/tree.js`](../extension/tree.js)) lists workspaces, then lakehouses, warehouses, SQL and
-mirrored databases, their tables and files, semantic models and apps. *Queries*, **Logs** and
-**Performance** come after them, and stay there when a listing fails or finds nothing. Workspaces can be pinned, and the tree can be filtered to one type.
+mirrored databases, their tables and files, semantic models and apps. *Queries* and **Logs**
+come after them, and stay there when a listing fails or finds nothing. Workspaces can be pinned, and the tree can be filtered to one type.
 
 **A table's icon** says whether its data is on this machine: a check when every data file of its current snapshot is
 in the lake's copies, a cloud while any is only on OneLake. The lake says so (`localAll` in
@@ -1128,7 +1124,7 @@ offline in full, the tree draws the table as read at once, and neither waits for
 | **Switch Microsoft Account** | Asks which account to use, closes every tab and opens a new one, so the previous account's tables do not survive the switch. |
 | **Sign Out** | Signs out of OneLake Studio, closes every tab and stops the server. What is cached stays on show. In the explorer's "..." menu. |
 | **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
-| **Logs**, **Performance** | Nodes in the tree. See [The server](#the-server). |
+| **Logs** | A node in the tree. See [The server](#the-server). |
 | **Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. |
 | **Filter by Type** | The filter button on the explorer. Shows one type, and only the workspaces that hold it, which reads every workspace's listing, cache-first. The explorer's header names the filter. Not remembered. |
 | **Pin to Favorites** / **Unpin from Favorites** | Moves a workspace in or out of the tree's favorites group. |
@@ -1242,7 +1238,6 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | `extension.js` | Activation, commands, the tree's view, dialogs and the status bar. It hands the rest in. |
 | `tree.js` | The explorer. |
 | `panel.js`, `webview.js`, `html.js` | A tab's webview and its page. |
-| `performance.js` | The Performance tab. |
 
 ### page/
 
