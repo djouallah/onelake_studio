@@ -103,6 +103,11 @@ function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, 
       try { return { ...v, text: await readBim(v.path) }; }
       catch (e) { return { ...v, error: e.message }; }
     },
+    // Forgotten: the view of that name in that schema, whose file is gone.
+    async forget(name, schema) {
+      catalog().dropViews(v => sameView(v, name, schema));
+      onChange();
+    },
     // Remembered (replacing the one of that name in that schema); the text is read first, so a
     // path that does not read is never stored.
     // `lakehouse`: the one its schema.table tables are in, in `schema`, kept by its path (place).

@@ -46,6 +46,8 @@ const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED, statementsOf } = require('.
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 
 const SIGN_IN_TO_FABRIC = 'expand "Semantic models" in the OneLake tree once to sign in to Fabric';
+// A kept view's file that is not there any more: OneLake's 404, or no such file on this machine.
+const GONE = /\(HTTP 404\)|ENOENT/;
 
 const cell = v => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 function mdTable(cols, rows) {
@@ -942,7 +944,13 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     const { semantic, compiler } = await modules();
     const ref = semantic.modelNameParts(catalog);
     if (!ref) throw new Error(`${catalog} does not name a semantic model`);
-    const view = await semviews.text(ref.model, ref.workspace);
+    let view = await semviews.text(ref.model, ref.workspace);
+    // A view whose file is gone for good (deleted or moved, a model file once opened under this name): forgotten,
+    // and the model's own local copy read in its place. One that can't be read now (offline, say) is said.
+    if (view && view.error && GONE.test(view.error)) {
+      await semviews.forget(ref.model, ref.workspace);
+      view = null;
+    }
     if (view && view.error) throw new Error(`${catalog} could not be read: ${view.error}`);
     const path = view ? view.path : modelPath(ref.workspace, ref.model);
     if (!view && !await exists(path)) throw new Error(`${catalog} is not on this machine: open it in OneLake Studio first`);

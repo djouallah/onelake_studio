@@ -249,3 +249,18 @@ test("a view named <model>.ossie by an earlier version is <model>; its copy name
     assert.equal(await views.renameOssieViews(account), 0, "once");
   } finally { await done(dir); }
 });
+
+test("a view is forgotten by its name in its schema, and no other", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-forget-"));
+  try {
+    const a = join(dir, "a.bim"), b = join(dir, "b.bim");
+    await writeFile(a, "a");
+    await writeFile(b, "b");
+    const views = createSemViews({ catalogFor: catalogsIn(dir), onelake: {} });
+    await views.put("sales", a, "ws");
+    await views.put("sales", b, "other");
+    await views.put("ops", b, "ws");
+    await views.forget("SALES", "ws");
+    assert.deepEqual((await views.list()).map(v => `${v.schema}.${v.name}`).sort(), ["other.sales", "ws.ops"]);
+  } finally { await done(dir); }
+});
