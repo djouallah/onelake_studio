@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
 | **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`, or `/Context/` or `/SystemContext/` in place of `/Files/`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
-| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
+| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`page/semantic.js`](../page/semantic.js) |
 | **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Create Semantic Model and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
@@ -50,12 +50,12 @@ Results computed from a semantic model are not guaranteed to match Power BI.
 ## How the parts fit
 
 ```
- Tree            Tabs, Explore           Command line, agent skill     Excel
- (VS Code)       (webview, page/)        (cli/cli.mjs)                 (PivotTable)
-      |                 |                        |                         |
-      |          one message channel       local pipe or socket      XMLA on 127.0.0.1
-      |           (core/host.js)        (cli/bridge.js, cli/agent.js)    (xmla/)
-      v                 v                        v                         v
+ Tree            Tabs, Explore           Command line, agent skill
+ (VS Code)       (webview, page/)        (cli/cli.mjs)
+      |                 |                        |
+      |          one message channel       local pipe or socket
+      |           (core/host.js)        (cli/bridge.js, cli/agent.js)
+      v                 v                        v
  +-------------------------------------------------------------+
  |  Extension host (extension/, core/), one per window         |
  |  sign-in  |  cache-first OneLake  |  the read-only guard    |
@@ -635,17 +635,17 @@ Ossie's SQL alike, and from there the two are one. These files can be stored any
 Fabric or only for a Fabric app, must be named `<workspace>.<model>_semanticmodel`, and it overwrites
 whatever we have under that name. See [NAMING.md](NAMING.md#files).
 
-**`serve <file>`** reads a model file on this computer ([`core/models/models.js`](../core/models/models.js) `modelFile`). Its
+**A model file opened from disk** is read by `modelFile` ([`core/models/models.js`](../core/models/models.js)). Its
 tables are OneLake's. A Direct Lake expression says their workspace. Tables named `<lakehouse>.<schema>.<table>` are
-in the model's workspace, which the file doesn't say: the one it was served in before, while that workspace still
-holds those lakehouses, else `--workspace`, and the error names the workspaces whose kept listing holds them.
+in the model's workspace, which the file doesn't say: the one it was opened in before, while that workspace still
+holds those lakehouses, else the one workspace whose kept listing holds them, and the error names them when several do.
 
 ## Explore
 
 A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
-- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Save (a model file it can write back, on YAML only), Create
-  Semantic Model (a model file only) and Open in Excel at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
+- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Save (a model file it can write back, on YAML only) and Create
+  Semantic Model (a model file only) at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships. Double-click it, or its
@@ -1107,7 +1107,7 @@ command, menu, tab and message is the same code in both, and a change to the ext
   `postMessage`, as a webview does. The window's port refuses its requests, so only the window runs commands, changes
   settings or closes the app.
 - **What needs Windows** ([`desktop/node/dialogs.js`](../desktop/node/dialogs.js)): the save and folder dialogs, the clipboard
-  and Explorer, through PowerShell, as Open in Excel is.
+  and Explorer, through PowerShell.
 - **Sign-in** is the command line's: MSAL as the Azure CLI's public client, with the token cache under DPAPI, and the same
   `signin` for both. No app registration.
 - **Nothing shared with the extension:** the app keeps everything in a folder of its own,
@@ -1145,11 +1145,6 @@ local pipe or socket ([`cli/bridge.js`](../cli/bridge.js)). The extension answer
   local port, no more.
 - **Nothing stays running:** no sync and no idle job. The process ends with the answer, and its server a minute after.
 - **Not here:** `export`, which asks for an OK in VS Code. Exit code 3 says so.
-
-**`serve <model.yaml|.bim>`** is always that, as it stays running: Excel's endpoint ([Open in Excel](#open-in-excel)) on a
-model file, with no VS Code. The model takes the name `<workspace>.<model>_semanticmodel`, from where its tables are and the
-file's name, or `--workspace` and `--name`, as [NAMING.md](NAMING.md#files) says of a model made from a file. Excel's
-PivotTables are its only client. **`--open`** opens a new workbook on it.
 
 **The skill** is [`cli/SKILL.md`](../cli/SKILL.md). **Install Agent Skill** writes it to
 `~/.claude/skills/onelake/`, where Claude Code and GitHub Copilot in VS Code (agent mode) look for
@@ -1211,37 +1206,6 @@ file has come down.
 same once, for every table under it, or the one table: each kept whole, with a notification counting them, and Cancel leaving what came down. Refused
 when the tables are more than the disk cache. A Delta table's log state comes down with it, so Table Health answers
 offline in full, the tree draws the table as read at once, and neither waits for a query.
-
-## Open in Excel
-
-**Open in Excel**, a button on a semantic model's Model page, opens a new workbook with a PivotTable live on the model,
-on Windows and the Excel desktop app. Any model Explore opens has it, a local copy or a file in a lakehouse's
-`Files/`: the model is found by its SQL name, through its kept view. It opens with no fields placed, whatever the
-Visual's shelves hold. Excel's provider speaks XMLA over HTTP, so [`xmla/`](../xmla/) answers it from the window:
-
-```
-Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
-  Discover -> rowsets built from the model's TMSL
-  Execute  -> MDX -> model SELECTs -> dax-sql -> the guard -> the server -> a cell set
-```
-
-- **A model is one cube.** A table is a dimension, a column an attribute hierarchy, a measure a member of `[Measures]`.
-  What's hidden stays out, as in Power BI's field list ([`cube.js`](../xmla/cube.js)).
-- **Not an MDX engine.** A PivotTable writes a narrow, regular subset, and [`mdx.js`](../xmla/mdx.js) reads only that:
-  the statements captured from Excel are its tests. Anything else is refused by name, never guessed at. That covers
-  calculated members written in Excel, Show Details, value and Top 10 filters, and "show items with no data".
-- **One model SELECT per grain.** Totals and subtotals are computed by dax-sql at their own grain, not added up, so a
-  distinct count or a ratio is right on every line ([`cellset.js`](../xmla/cellset.js)). The price is a query per
-  combination of subtotals, capped at 256.
-- **The port.** The one port the extension opens, and only once **Open in Excel** has been used. It binds `127.0.0.1`,
-  and a request must name a token kept in VS Code's secret storage. A browser can still send a request there, so anything
-  with an `Origin` is refused, and a `Host` that isn't this address, which is what DNS rebinding would show.
-- **A saved workbook** keeps its port and token, so it refreshes whenever VS Code is open, in any window: one
-  window serves at a time, as with the command line's bridge. With VS Code closed it fails with a connection error.
-  On another machine it doesn't refresh, since the token belongs to this install.
-- **Number formats** aren't applied: Excel doesn't ask this server for them (`CELL PROPERTIES VALUE` only).
-- **A model with no measures** still opens, with a hidden placeholder measure, since Excel refuses a cube with none. Its
-  fields list their values, and there are no numbers: Excel adds up a model's measures, never its columns.
 
 ## Commands
 
@@ -1328,14 +1292,13 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | [`cli/`](../cli/) | The command line and the agent skill. |
 | [`desktop/`](../desktop/) | The desktop app. |
 | [`fabric_app/`](../fabric_app/) | Export to Fabric, and the app it exports. |
-| [`xmla/`](../xmla/) | Excel's XMLA endpoint. |
 | [`test/`](../test/), [`scripts/`](../scripts/), `docs/`, [`website/`](../website/), [`media/`](../media/) | Tests, packaging, these documents, the public website, icons. |
 
 ### core/
 
 | File | What it holds |
 | --- | --- |
-| `core.js` | What a window builds that isn't about how it looks: the store, the catalog, the command line, Excel, and what happens when the account moves. |
+| `core.js` | What a window builds that isn't about how it looks: the store, the catalog, the command line, and what happens when the account moves. |
 | `host.js` | What a tab's page may ask over its channel. |
 | `names.js` | What items hold tables, and how a table or model is named. |
 | `sql.js` | The read-only guard, `tableRefs`, `SHOW` rewriting, and which hosts are OneLake's. |

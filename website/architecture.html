@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Architecture: OneLake Studio</title>
-  <meta name="description" content="How OneLake Studio is built and why: one SQL name for every object, SQL only, on your machine and offline, then each part and what it does: the window, the Node process, the local catalog and its sync, the query server and its local lake, Excel's XMLA endpoint, the command line and the exported Fabric app.">
+  <meta name="description" content="How OneLake Studio is built and why: one SQL name for every object, SQL only, on your machine and offline, then each part and what it does: the window, the Node process, the local catalog and its sync, the query server and its local lake, the command line and the exported Fabric app.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -96,7 +96,7 @@ GROUP BY ALL;</code></pre>
       <figure class="diagram wide">
         <svg viewBox="0 0 680 566" role="img" aria-labelledby="parts-title parts-desc">
           <title id="parts-title">The parts of the OneLake Studio app</title>
-          <desc id="parts-desc">On this machine, the app window, Excel and the command line talk to the Node process: the window over HTTP on 127.0.0.1, Excel over XMLA on 127.0.0.1, the command line over a local pipe. The Node process sends statements to the query server over Quack and a control pipe, its sync worker asks the query server to sync a table whose snapshot moved, and it reads and writes the local catalog, a SQLite file. The query server holds the local lake, a DuckLake catalog of the tables read here with copies of their files, and runs the table service. A query reads the files already copied from disk, and the rest from OneLake. The table service downloads each file a query opened, whole, from OneLake. The sync worker reads listings and metadata from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
+          <desc id="parts-desc">On this machine, the app window and the command line talk to the Node process: the window over HTTP on 127.0.0.1, the command line over a local pipe. The Node process sends statements to the query server over Quack and a control pipe, its sync worker asks the query server to sync a table whose snapshot moved, and it reads and writes the local catalog, a SQLite file. The query server holds the local lake, a DuckLake catalog of the tables read here with copies of their files, and runs the table service. A query reads the files already copied from disk, and the rest from OneLake. The table service downloads each file a query opened, whole, from OneLake. The sync worker reads listings and metadata from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
           <defs>
             <marker id="head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
               <path class="head" d="M0 0 8 4 0 8z"/>
@@ -106,27 +106,22 @@ GROUP BY ALL;</code></pre>
           <rect class="boundary" x="1" y="1" width="678" height="470" rx="6"/>
           <text class="note" x="15" y="22">This machine</text>
 
-          <rect class="node" x="15" y="34" width="200" height="56" rx="5"/>
-          <text class="title" x="115" y="58" text-anchor="middle">App window</text>
-          <text class="note" x="115" y="77" text-anchor="middle">Tauri, WebView2</text>
-          <rect class="node" x="235" y="34" width="210" height="56" rx="5"/>
-          <text class="title" x="340" y="58" text-anchor="middle">Excel</text>
-          <text class="note" x="340" y="77" text-anchor="middle">PivotTable</text>
-          <rect class="node" x="465" y="34" width="200" height="56" rx="5"/>
-          <text class="title" x="565" y="58" text-anchor="middle">Command line</text>
-          <text class="note" x="565" y="77" text-anchor="middle">agents, scripts</text>
+          <rect class="node" x="15" y="34" width="315" height="56" rx="5"/>
+          <text class="title" x="172" y="58" text-anchor="middle">App window</text>
+          <text class="note" x="172" y="77" text-anchor="middle">Tauri, WebView2</text>
+          <rect class="node" x="350" y="34" width="315" height="56" rx="5"/>
+          <text class="title" x="507" y="58" text-anchor="middle">Command line</text>
+          <text class="note" x="507" y="77" text-anchor="middle">agents, scripts</text>
 
-          <path class="edge" d="M115 90V139" marker-end="url(#head)"/>
-          <text class="note" x="123" y="120">HTTP, 127.0.0.1</text>
-          <path class="edge" d="M340 90V139" marker-end="url(#head)"/>
-          <text class="note" x="348" y="120">XMLA, 127.0.0.1</text>
-          <path class="edge" d="M565 90V139" marker-end="url(#head)"/>
-          <text class="note" x="573" y="120">local pipe</text>
+          <path class="edge" d="M172 90V139" marker-end="url(#head)"/>
+          <text class="note" x="180" y="120">HTTP, 127.0.0.1</text>
+          <path class="edge" d="M507 90V139" marker-end="url(#head)"/>
+          <text class="note" x="515" y="120">local pipe</text>
 
           <rect class="node" x="15" y="140" width="650" height="80" rx="5"/>
           <text class="title" x="340" y="170" text-anchor="middle">Node process: the extension</text>
           <text class="note" x="340" y="194" text-anchor="middle">sign-in · statement check · names · sync worker</text>
-          <text class="note" x="340" y="210" text-anchor="middle">Excel's XMLA endpoint · Export to Fabric</text>
+          <text class="note" x="340" y="210" text-anchor="middle">Export to Fabric</text>
 
           <path class="edge" d="M125 220V289" marker-end="url(#head)"/>
           <text class="note" x="133" y="250">Quack,</text>
@@ -188,12 +183,11 @@ GROUP BY ALL;</code></pre>
           <tbody>
             <tr><td>Shell</td><td>Starts the Node process and opens the window. Remembers the window's size and position. If you start the app twice, it shows the window that is already open.</td><td><code>onelake-studio.exe</code>, Tauri</td><td>None</td></tr>
             <tr><td>Window</td><td>Draws the tree, tabs, menus, dialogs and status bar. Each tab is the extension's page inside an iframe. It does not have the OneLake token.</td><td>WebView2, which is Edge</td><td>127.0.0.1 only</td></tr>
-            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, checks every statement and lets a write run only when its setting is on, turns names into tables, keeps the local catalog up to date, serves Excel, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
+            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, checks every statement and lets a write run only when its setting is on, turns names into tables, keeps the local catalog up to date, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
             <tr><td>Local catalog</td><td>A SQLite file on your machine. It stores all metadata: lists of workspaces, items and tables, table metadata, Delta history, opened models, and what was read. The tree reads it, even before you sign in.</td><td>A SQLite file, read with <code>node:sqlite</code></td><td>None</td></tr>
             <tr><td>Query server</td><td>Runs the SQL from every tab, the command line and Keep offline. Tabs connect to it with DuckDB's Quack protocol, and share one memory limit and the data already read. It is the one process that holds the local lake.</td><td>DuckDB 2.0, in a separate process</td><td>OneLake: table logs, and files not copied yet</td></tr>
             <tr><td>Local lake</td><td>A DuckLake catalog of every OneLake table read on this machine, made from the table's own Delta log or Iceberg metadata, and copies of its files. A query on a table it holds reads it at once and asks OneLake nothing. One per Microsoft account.</td><td><code>lake\meta.ducklake</code>, a DuckDB file, and <code>lake\files\</code>, in the account's cache folder</td><td>None</td></tr>
             <tr><td>Table service</td><td>Downloads each file a query opened, whole, in the background, then points the lake at the copy. Only files that queries opened come down. A copy no snapshot names any more is deleted after 15 minutes, and past the disk cache size (256 GB by default) the least recently read go.</td><td>The query server</td><td>OneLake: whole files, over HTTPS</td></tr>
-            <tr><td>Excel's endpoint</td><td>Lets Excel PivotTables query a semantic model over XMLA. The queries run on the query server.</td><td>The Node process, HTTP on 127.0.0.1</td><td>None</td></tr>
             <tr><td>Command line</td><td>Sends its command to the running app, which answers with its own sign-in, cache and engine. If the app isn't running, the command line starts its own process, with a query server and a lake of its own.</td><td><code>cli/cli.mjs</code></td><td>Through the app</td></tr>
             <tr><td>Fabric app</td><td>A model's Report, published with Export to Fabric. It runs in the browser after a Fabric sign-in and reads the model's tables there.</td><td>Fabric, and the browser</td><td>OneLake</td></tr>
           </tbody>
@@ -259,20 +253,6 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
     </section>
 
     <section>
-      <h2 id="xmla">Excel's XMLA endpoint</h2>
-      <p>Excel talks to a semantic model using XMLA over HTTP, and the Node process answers. Excel sees the model as one cube: each table is a dimension, each column a hierarchy, and each measure is in <code>[Measures]</code>.</p>
-<pre><code>Excel (MSOLAP) --XMLA over http://127.0.0.1--> Node process
-  Discover -> the model's tables, columns and measures, as a cube
-  Execute  -> MDX -> model SQL -> dax-sql -> statement check -> query server</code></pre>
-      <ul>
-        <li>It understands only the MDX that Excel PivotTables send. Anything else gets an error that says what isn't supported.</li>
-        <li>Subtotals and totals are calculated, not summed, so distinct counts and ratios are correct on every row.</li>
-        <li>The port opens the first time you use Open in Excel. It listens on 127.0.0.1 only and needs a token. Requests from a browser are refused.</li>
-      </ul>
-      <p class="more"><a href="reference.html#open-in-excel">Open in Excel in detail</a></p>
-    </section>
-
-    <section>
       <h2 id="export">Export to Fabric</h2>
       <p>Export to Fabric asks before writing anything. It publishes the app with the Fabric REST API. Nothing is written to a semantic model.</p>
       <ul>
@@ -294,7 +274,6 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
           <tbody>
             <tr><td>Window</td><td>HTTP: events from the app, POST requests back</td><td>The token from the first request is kept in an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Requests with a different <code>Host</code> or <code>Origin</code> are refused.</td></tr>
             <tr><td>Query server</td><td>Quack, on a local port</td><td>Each server gets a new random session token. Without it, the server runs nothing.</td></tr>
-            <tr><td>Excel</td><td>XMLA over HTTP</td><td>A token in the address. Requests with an <code>Origin</code> header are refused.</td></tr>
             <tr><td>Command line</td><td>A local pipe</td><td>No network port.</td></tr>
           </tbody>
         </table>

@@ -23,8 +23,8 @@ out of the port.
   *Writes* settings allow it. DuckDB may touch the disk only in its own temp and cache folders.
 - **Content from OneLake.** Table names, column names, cell values, file names and documents are shown as text,
   never run. A table's own metadata may name files only on OneLake.
-- **A web page in your browser.** Excel's endpoint and the desktop app's server listen on `127.0.0.1`, need a
-  token, and refuse a request with an `Origin` or another `Host`.
+- **A web page in your browser.** The desktop app's server listens on `127.0.0.1`, needs a
+  token, and refuses a request with an `Origin` or another `Host`.
 - **A file someone sends you.** A `.fabricator`, `.fabricapp`, `.bim`, `.yaml` or `.sql` file is read as data. Publishing an
   app's file asks first unless this computer published that app from that same file. The question shows the
   sign-in redirects the file would add. It is a question to read, not a proof of where a file came from.

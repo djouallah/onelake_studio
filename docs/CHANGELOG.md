@@ -2,8 +2,11 @@
 
 ## 0.2.29
 
-- **Fixed: a model file named `*.ossie.yaml` kept `.ossie` in its model's name.** `serve sales.ossie.yaml`, opening it
-  from disk and Create Semantic Model all named it `sales.ossie`, so SQL had to write `ws."sales.ossie_semanticmodel"`.
+- **Removed: Open in Excel, and the command line's `serve`.** Both put a model in an Excel PivotTable through an XMLA
+  endpoint of our own, which answered only the MDX a PivotTable sends. For Excel on a model, Create Semantic Model
+  (or Export) puts it in Fabric, and Fabric's Analyze in Excel opens it there.
+- **Fixed: a model file named `*.ossie.yaml` kept `.ossie` in its model's name.** Opening it from disk and Create
+  Semantic Model both named it `sales.ossie`, so SQL had to write `ws."sales.ossie_semanticmodel"`.
   It is `ws.sales_semanticmodel` now. A model this machine kept under the old name takes the new one on the next start,
   or goes when the new name is kept already.
 - **Fixed: last year's value on a month-end day could add a day.** With `SAMEPERIODLASTYEAR` or `DATEADD` by month,
@@ -20,7 +23,7 @@
   them (`source: dbo.sales`), and Fabric reads them in the lakehouse the YAML sits in. From disk, OneLake Studio uses the
   one lakehouse it has listed that holds every table. When several do, or none, it asks, with the lakehouses holding them
   all first. The answer is kept for that file. Right-click the file > **Pick the Lakehouse It Reads…** to change it.
-  The same file in a lakehouse's `Files/` reads that lakehouse. The command line's `serve` takes `--lakehouse`.
+  The same file in a lakehouse's `Files/` reads that lakehouse.
 - **A TMDL script opens from disk**, by double-click, Explorer's right-click, or the editor's title bar, as a `.bim` does.
   A `.tmdl` that is one file of a Power BI project's `definition/` folder is no model, and opens as text.
 - **An Ossie model whose datasets list no `fields` opens.** A Fabric semantic view's YAML can leave them out, and Fabric
