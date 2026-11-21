@@ -190,7 +190,7 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive. Nothing loads after it: every extension is loaded before, and autoload is off. They load from the
   files that ship, `httpfs` and `avro` before `iceberg`, which asks for both as it starts, so a first start fetches
-  nothing. DuckDB 2.0 takes a community extension's signature only from its own repository, so the shipped `h3`,
+  nothing. DuckDB 2.0 takes a community extension's signature only from its own repository, so the shipped
   `zipfs` and `nanoarrow` load as unsigned, each held to its hash at build time. With unsigned loading on DuckDB checks
   no signature at all, so in a packaged build no extension is ever fetched, a core one included: one whose shipped
   file is missing or won't load is not there, and the engine doesn't start without one it needs.
@@ -358,7 +358,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   goes back to its OneLake name, and its copy goes the same slow way. At `0` nothing comes here.
 - **One process holds the lake:** its metadata file can be open in one only. So the server holds it, a window asks it
   for a table over the control pipe (`lakeTable`, `lakeSync`, `lakeTables`), and Keep offline's reads are a client of the same server. The
-  standalone host's server has a lake of its own, `lake-standalone`, and the desktop app's `lake-desktop`.
+  standalone host's server has a lake of its own, `lake-standalone`.
 - **Only through the lake:** a table is never read past it. An engine that can't open the lake doesn't start, and one
   with no cache folder (no account) refuses a table.
 - **What a statement can't do to it:** DuckLake's own functions write, and one deletes files from a `SELECT`. The guard
@@ -415,7 +415,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 - **The OneLake token and other hosts:** the guard refuses an Azure URL whose host isn't OneLake's, as a statement
   writes it. A URL joined up from pieces at run time gets past that check, and nothing behind it refuses it yet.
 - **What a build downloads is held to its hash:** the libraries and DuckDB's extensions, against
-  `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions `h3`,
+  `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions
   `zipfs` and `nanoarrow` ship in the vsix too, and load as unsigned extensions, as a load by path knows only DuckDB's own
   signing keys. `ducklake` ships with the rest.
 
@@ -528,15 +528,8 @@ once and counts, though the answer still comes through the host.
     of the model the view opens as, so the view still opens: a query source, a name given again, a relationship of
     more columns or to a dataset left out, a metric named as a dataset. As in any model's YAML, an expression in a
     dialect other than Ossie SQL (DAX, say) and an extensions block are amber.
-  - **A view's folder** (`Context/Semantic Views/<view>`, `semanticViewDir`) **and its `.yaml`** (`semanticViewFile`):
-    **Publish** beside them, as Fabric's own right-click has it. It is one request to Fabric's beta API, made in the background with the status bar saying
-    so ([`fabric_app/export/publishview.js`](../fabric_app/export/publishview.js)). A Publish of a view while one of
-    it is under way joins it: Fabric finds the view's model by its name and makes one when there is none, so two at
-    once made two models, and Fabric then refused every Publish of the view (`DuplicateDatasetNamesInWorkspace`, said
-    in plain words). Fabric compiles the view into
-    its TMDL in `SystemContext/` and the model of the view's name. Studio says what Fabric answered: the model's
-    name, or Fabric's diagnostics, each by file and line, also in the log. It then lists `SystemContext/` and the
-    workspace's semantic models again. Fabric refuses the definition of the model Publish makes to everyone
+  - **A view is published in Fabric** (right-click its folder > Publish, in the lakehouse): Fabric compiles it into
+    its TMDL in `SystemContext/` and the model of the view's name. Fabric refuses the definition of that model to everyone
     ("configured by service apps"), so a click on it in the tree reads it from that TMDL: in the workspace's lakehouse
     whose `SystemContext/Semantic Views/<model>/metadata.json` names it (`modelObjectId`), as if Fabric had given it
     (`publishedTmsl` in [`core/models/models.js`](../core/models/models.js)). With no such TMDL, the tree marks it a
@@ -856,26 +849,11 @@ A model file, an app's file or a `.sql` file on this machine opens in a tab, as 
 - **A file named `<name>.ossie.yaml`** is a model by its name: the Apache Ossie spec names no extension, and Ossie's own
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
 - **In VS Code**, a `.fabricator`, a `.fabricapp` and a `*.ossie.yaml` open in OneLake Studio by default (custom editors
-  that hand them over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). They open in
-  the extension even when the desktop app is installed: VS Code is what was picked to open them, and it can't tell
-  *Open with > Visual Studio Code* from a double-click whose default is VS Code. A `.sql` file opens as text: most
+  that hand them over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). A `.sql` file opens as text: most
   have nothing to do with OneLake. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
   what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
   `.yaml`, `.yml`, `.bim`, `.fabricator`, `.fabricapp` or `.sql`, which opens without the file in an editor, so no SQL
   extension starts.
-- **In the desktop app**, File › Open… (Ctrl+O) opens a `.fabricator` too, and a double-click on a `.fabricapp`, `.yaml`, `.yml` or `.bim`:
-  the installer makes the app their default ([`desktop/src-tauri/hooks.nsh`](../desktop/src-tauri/hooks.nsh)), by
-  each extension's own default value, which Windows uses while the person has picked no program. A `.sql` file has
-  the app in *Open with* only, and an earlier install's default for it is put back. A program picked
-  with *Open with › Always*, before the install or after it, is kept over it: the app never takes a file from the
-  program the person picked. Uninstalling puts back the default each had. A file the app is started with reaches the Node
-  process as a line on its stdin, `{"open":"<path>"}`, also when the app is already running (its single instance).
-  A YAML starts the app's exe, which reads it before a window shows: a model (`*.ossie.yaml`, or a top-level
-  `version:` and `datasets:`) opens in the app, and any other YAML goes on to the program that opened it before, VS
-  Code first among `.yaml`'s other "Open with" programs, else Windows' own Open with dialog (`open_elsewhere` in
-  [`desktop/src-tauri/src/main.rs`](../desktop/src-tauri/src/main.rs)).
-  A file dropped on the window is not opened: the window gets no path for it. A double-click on a `.fabricator` is
-  Fabricator's: it is that app's project file, and the installer does not make OneLake Studio its default.
 
 ## Create Semantic Model
 
@@ -900,7 +878,7 @@ Rayfin project, so Fabricator (or the Rayfin CLI) can grow it and publish it too
 
 **The local copy is one file**, `<model>.fabricator`: a zip of a Rayfin project, laid out as the Rayfin CLI lays one out.
 `.fabricator` is Fabricator's project file, so a double-click there imports it, installs its packages, previews it and
-publishes it; VS Code and the desktop app open it too (Opening files from disk, above). It holds:
+publishes it; VS Code opens it too (Opening files from disk, above). It holds:
 - `package.json`: the Rayfin CLI and `@microsoft/rayfin-core`, which Fabricator and rayfin-local run
   (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The page, `site`, and
   the function, `rayfin/functions`, are its workspaces. OneLake Studio needs none of them. Every `@microsoft/rayfin-*`
@@ -1058,57 +1036,6 @@ in the same order, with the user's Fabric-audience token:
 The function's deploy package (an esbuild bundle plus its metadata) is built once, at package time, by
 [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's own packager, from
 `fabric_app/rayfin`. It ships in the vsix under `fabric-function/`.
-
-## The desktop app
-
-**The app is the extension.** Its Node process ([`desktop/node/main.js`](../desktop/node/main.js)) runs
-[`extension/extension.js`](../extension/extension.js) as it is, bundled with `vscode` pointing at
-[`desktop/node/vscode.js`](../desktop/node/vscode.js): the part of VS Code's API the extension uses, and no more. So every
-command, menu, tab and message is the same code in both, and a change to the extension is a change to the app.
-
-- **The window** ([`desktop/ui/`](../desktop/ui/)) draws what VS Code otherwise would: the tree, the tab strip, menus,
-  dialogs, Go To, Settings and the status bar. What it shows comes from the extension and its `package.json`: the tree's
-  nodes, the tabs' pages, the menus and their `when` clauses, the settings.
-- **It behaves as a Windows app does**: a menu bar (File, View, Help, About), the tree put away with Ctrl+B or its
-  button on the left, a tab's right-click (Close Others, Close All), Ctrl+Tab. A tab's page hands every key to the
-  window first, so a shortcut works wherever the focus is, and the browser's own (F5, Ctrl+P, Ctrl+F) do nothing.
-  The tree's width, whether it shows, and the zoom are kept in `window-state.json` in the data folder, not in the
-  page's storage, whose origin's port is new each start.
-- **The tree** has a tree's keys: up and down, Home and End, right to open a node and then to its first child, left
-  to close it and then to its parent. A node opens at once and says Loading… until its listing answers. Moving the
-  selection draws no row again.
-- **Tabs:** closing the one on screen shows its neighbour. Ctrl+W or Ctrl+F4 closes it, the wheel moves the strip
-  sideways, and a double-click on its empty part is a New Query. The keys go to the tab on screen, never to one left
-  behind, and a dialog that closes gives them back to where they were. **Read Log** has one tab, shown again at its
-  end.
-- **Work that can be cancelled** (Upload Files…) has Cancel on its message: `withProgress`'s `cancellable`, and the
-  click is the task's token (`progress.cancel`). A message that goes by itself stays while the pointer is on it.
-- **Settings** draws a description's `code` and bold as elements. Help › Open Data Folder opens the data folder.
-- **A tab** is the same page as the extension's, in an iframe, with `acquireVsCodeApi` and VS Code's theme variables given
-  to it in its own CSP.
-- **The connection** is an HTTP server on `127.0.0.1` ([`desktop/node/server.js`](../desktop/node/server.js)): messages out
-  as server-sent events, back as POSTs. The first request's token becomes an `HttpOnly`, `SameSite=Strict` cookie, and
-  anything without it, with another `Host` or another `Origin`, is refused. A tab's page is served from a second port,
-  another origin: it reaches only its own files, can't reach into the window's page, and talks to the window by
-  `postMessage`, as a webview does. The window's port refuses its requests, so only the window runs commands, changes
-  settings or closes the app.
-- **What needs Windows** ([`desktop/node/dialogs.js`](../desktop/node/dialogs.js)): the save and folder dialogs, the clipboard
-  and Explorer, through PowerShell.
-- **Sign-in** is the command line's: MSAL as the Azure CLI's public client, with the token cache under DPAPI, and the same
-  `signin` for both. No app registration.
-- **Nothing shared with the extension:** the app keeps everything in a folder of its own,
-  `%LOCALAPPDATA%\OneLake Studio\data` (`pathsOf` in [`core/home.js`](../core/home.js)), whether VS Code is on the
-  machine or not: its settings, sign-in, catalog, log, cache and lake (`lake-desktop`), and its engine is a server of its
-  own. Two engines on one folder wrote one log and one catalog, and the second couldn't open the lake.
-- **The shell** is Tauri ([`desktop/src-tauri/`](../desktop/src-tauri/)): it shows a splash, starts the Node process, and
-  opens the page it names. Each line the process says after that is something only the shell can do: exit, zoom.
-  Closing the window closes the process's stdin, and it ends; if the process ends first, the splash comes back with
-  Restart. A second start shows the first window, and the window's size and place are kept. The installer is per user.
-- **Updates:** at start, and on Help › Check for Updates, the latest release's tag is compared with this version
-  ([`desktop/node/update.js`](../desktop/node/update.js)). A newer one is said in the status bar, with a link to the
-  installer. Offline, nothing is said. The app downloads and installs nothing itself.
-- **CI's `desktop` job** drives the window in Edge, which is what WebView2 is, on the real engine, then builds the
-  installer, installs it and starts it once. Its screenshots and the installer are the run's artifacts.
 
 ## The command line and the agent skill
 
@@ -1276,7 +1203,6 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | [`extension/`](../extension/) | What is VS Code's. |
 | [`page/`](../page/) | A tab's page, and Explore in `page/explore/`, shared with the Fabric app. |
 | [`cli/`](../cli/) | The command line and the agent skill. |
-| [`desktop/`](../desktop/) | The desktop app. |
 | [`fabric_app/`](../fabric_app/) | Export to Fabric, and the app it exports. |
 | [`test/`](../test/), [`scripts/`](../scripts/), `docs/`, [`website/`](../website/), [`media/`](../media/) | Tests, packaging, these documents, the public website, icons. |
 
@@ -1337,17 +1263,9 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | File | What it holds |
 | --- | --- |
 | `cli.mjs` | The command line: what an agent runs. |
-| `bridge.js`, `agent.js` | The pipe it asks the running app over, and the answers. |
+| `bridge.js`, `agent.js` | The pipe it asks VS Code over, and the answers. |
 | `standalone.js` | The command line with VS Code closed: `core.js` with no editor. |
 | `skill.js`, `SKILL.md` | The agent skill, and what installs it. |
-
-### desktop/
-
-| Folder | What it holds |
-| --- | --- |
-| `node/` | The app's Node process: VS Code's API for the extension, its server, dialogs, theme and update check. |
-| `ui/` | The window: tree, tabs and menus. |
-| `splash/`, `src-tauri/` | The Tauri shell and its installer. |
 
 ### fabric_app/
 
@@ -1362,9 +1280,9 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 - **`test/js/`** is the `node --test` suite and browser runners. Its `cli*.test.mjs` run `cli/cli.mjs` as a process.
 - **`test/sql/`** is SQL statements and their answers (sqllogictest), run through the agent's `sql`.
 - **`test/e2e/`** is the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet.
-- **`scripts/`** is packaging (bundle, bundle-desktop, stage-webview, vendor, function-bundle, site-bundle, fetch-extensions,
+- **`scripts/`** is packaging (bundle, stage-webview, vendor, function-bundle, site-bundle, fetch-extensions,
   check-binding, fetch-binding, fetch-retry, pinned-downloads, release-notes, make-icon) and the website
-  (build-website, and website-shots, which takes its screenshots in the installed app).
+  (build-website).
 
 `dist/`, `webview/`, `vendor/`, `duckdb-extensions/`, `fabric-function/`, `fabric-site/` and `blog/` are ignored by git.
 The first six are build output or fetched at package time, so do not edit them.

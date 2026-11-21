@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Architecture: OneLake Studio</title>
-  <meta name="description" content="How OneLake Studio is built and why: one SQL name for every object, SQL only, on your machine and offline, then each part and what it does: the window, the Node process, the local catalog and its sync, the query server and its local lake, the command line and the exported Fabric app.">
+  <meta name="description" content="How OneLake Studio is built and why: one SQL name for every object, SQL only, on your machine and offline, then each part and what it does: VS Code's window, the extension host, the local catalog and its sync, the query server and its local lake, the command line and the exported Fabric app.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -27,7 +27,7 @@
   <main class="wrap">
     <section class="intro">
       <h1>Architecture</h1>
-      <p class="lead">How OneLake Studio is built, and why. First the decisions behind it, then the parts: the app is the VS Code extension running in its own window, and it runs several processes on your machine. This page shows what each one does and how they connect.</p>
+      <p class="lead">How OneLake Studio is built, and why. First the decisions behind it, then the parts: OneLake Studio is a VS Code extension, and it runs several processes on your machine. This page shows what each one does and how they connect.</p>
     </section>
 
     <section>
@@ -87,7 +87,7 @@ GROUP BY ALL;</code></pre>
       <p>Why: you can work on a plane or a slow connection, and a query on data you have read doesn't wait for the network.</p>
 
       <h3 id="agents">Agents</h3>
-      <p>Claude Code and GitHub Copilot use OneLake Studio through its command line, with the same access you have. <strong>Install Agent Skill</strong>, in the app or in VS Code, sets it up. The command line asks the running app or VS Code, and if neither is open, it runs on its own.</p>
+      <p>Claude Code and GitHub Copilot use OneLake Studio through its command line, with the same access you have. <strong>Install Agent Skill</strong> in VS Code sets it up. The command line asks VS Code, and if it isn't open, it runs on its own.</p>
       <p>The answer goes to stdout and notes go to stderr. <code>--json</code> gives a structured answer, and exit codes say what happened, such as <code>3</code> for not signed in and <code>4</code> for data that isn't cached.</p>
     </section>
 
@@ -95,8 +95,8 @@ GROUP BY ALL;</code></pre>
       <h2 id="parts">The parts</h2>
       <figure class="diagram wide">
         <svg viewBox="0 0 680 566" role="img" aria-labelledby="parts-title parts-desc">
-          <title id="parts-title">The parts of the OneLake Studio app</title>
-          <desc id="parts-desc">On this machine, the app window and the command line talk to the Node process: the window over HTTP on 127.0.0.1, the command line over a local pipe. The Node process sends statements to the query server over Quack and a control pipe, its sync worker asks the query server to sync a table whose snapshot moved, and it reads and writes the local catalog, a SQLite file. The query server holds the local lake, a DuckLake catalog of the tables read here with copies of their files, and runs the table service. A query reads the files already copied from disk, and the rest from OneLake. The table service downloads each file a query opened, whole, from OneLake. The sync worker reads listings and metadata from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
+          <title id="parts-title">The parts of OneLake Studio</title>
+          <desc id="parts-desc">On this machine, VS Code's tabs and the command line talk to the extension host: the tabs over VS Code's message channel, the command line over a local pipe. The extension host sends statements to the query server over Quack and a control pipe, its sync worker asks the query server to sync a table whose snapshot moved, and it reads and writes the local catalog, a SQLite file. The query server holds the local lake, a DuckLake catalog of the tables read here with copies of their files, and runs the table service. A query reads the files already copied from disk, and the rest from OneLake. The table service downloads each file a query opened, whole, from OneLake. The sync worker reads listings and metadata from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
           <defs>
             <marker id="head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
               <path class="head" d="M0 0 8 4 0 8z"/>
@@ -107,19 +107,19 @@ GROUP BY ALL;</code></pre>
           <text class="note" x="15" y="22">This machine</text>
 
           <rect class="node" x="15" y="34" width="315" height="56" rx="5"/>
-          <text class="title" x="172" y="58" text-anchor="middle">App window</text>
-          <text class="note" x="172" y="77" text-anchor="middle">Tauri, WebView2</text>
+          <text class="title" x="172" y="58" text-anchor="middle">VS Code</text>
+          <text class="note" x="172" y="77" text-anchor="middle">the tree, tabs (webviews)</text>
           <rect class="node" x="350" y="34" width="315" height="56" rx="5"/>
           <text class="title" x="507" y="58" text-anchor="middle">Command line</text>
           <text class="note" x="507" y="77" text-anchor="middle">agents, scripts</text>
 
           <path class="edge" d="M172 90V139" marker-end="url(#head)"/>
-          <text class="note" x="180" y="120">HTTP, 127.0.0.1</text>
+          <text class="note" x="180" y="120">message channel</text>
           <path class="edge" d="M507 90V139" marker-end="url(#head)"/>
           <text class="note" x="515" y="120">local pipe</text>
 
           <rect class="node" x="15" y="140" width="650" height="80" rx="5"/>
-          <text class="title" x="340" y="170" text-anchor="middle">Node process: the extension</text>
+          <text class="title" x="340" y="170" text-anchor="middle">Extension host</text>
           <text class="note" x="340" y="194" text-anchor="middle">sign-in · statement check · names · sync worker</text>
           <text class="note" x="340" y="210" text-anchor="middle">Export to Fabric</text>
 
@@ -181,14 +181,13 @@ GROUP BY ALL;</code></pre>
             <tr><th>Part</th><th>What it does</th><th>Runs in</th><th>Network</th></tr>
           </thead>
           <tbody>
-            <tr><td>Shell</td><td>Starts the Node process and opens the window. Remembers the window's size and position. If you start the app twice, it shows the window that is already open.</td><td><code>onelake-studio.exe</code>, Tauri</td><td>None</td></tr>
-            <tr><td>Window</td><td>Draws the tree, tabs, menus, dialogs and status bar. Each tab is the extension's page inside an iframe. It does not have the OneLake token.</td><td>WebView2, which is Edge</td><td>127.0.0.1 only</td></tr>
-            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, checks every statement and lets a write run only when its setting is on, turns names into tables, keeps the local catalog up to date, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
+            <tr><td>VS Code's window</td><td>Draws the tree, tabs, menus and status bar. Each tab is a webview holding the extension's page. It does not have the OneLake token.</td><td>VS Code</td><td>None</td></tr>
+            <tr><td>Extension host</td><td>The extension's code. It handles sign-in, checks every statement and lets a write run only when its setting is on, turns names into tables, keeps the local catalog up to date, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td>VS Code's extension host, <code>dist/extension.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
             <tr><td>Local catalog</td><td>A SQLite file on your machine. It stores all metadata: lists of workspaces, items and tables, table metadata, Delta history, opened models, and what was read. The tree reads it, even before you sign in.</td><td>A SQLite file, read with <code>node:sqlite</code></td><td>None</td></tr>
             <tr><td>Query server</td><td>Runs the SQL from every tab, the command line and Keep offline. Tabs connect to it with DuckDB's Quack protocol, and share one memory limit and the data already read. It is the one process that holds the local lake.</td><td>DuckDB 2.0, in a separate process</td><td>OneLake: table logs, and files not copied yet</td></tr>
             <tr><td>Local lake</td><td>A DuckLake catalog of every OneLake table read on this machine, made from the table's own Delta log or Iceberg metadata, and copies of its files. A query on a table it holds reads it at once and asks OneLake nothing. One per Microsoft account.</td><td><code>lake\meta.ducklake</code>, a DuckDB file, and <code>lake\files\</code>, in the account's cache folder</td><td>None</td></tr>
             <tr><td>Table service</td><td>Downloads each file a query opened, whole, in the background, then points the lake at the copy. Only files that queries opened come down. A copy no snapshot names any more is deleted after 15 minutes, and past the disk cache size (256 GB by default) the least recently read go.</td><td>The query server</td><td>OneLake: whole files, over HTTPS</td></tr>
-            <tr><td>Command line</td><td>Sends its command to the running app, which answers with its own sign-in, cache and engine. If the app isn't running, the command line starts its own process, with a query server and a lake of its own.</td><td><code>cli/cli.mjs</code></td><td>Through the app</td></tr>
+            <tr><td>Command line</td><td>Sends its command to VS Code, which answers with its own sign-in, cache and engine. If VS Code isn't running, the command line starts its own process, with a query server and a lake of its own.</td><td><code>cli/cli.mjs</code></td><td>Through VS Code</td></tr>
             <tr><td>Fabric app</td><td>A model's Report, published with Export to Fabric. It runs in the browser after a Fabric sign-in and reads the model's tables there.</td><td>Fabric, and the browser</td><td>OneLake</td></tr>
           </tbody>
         </table>
@@ -200,7 +199,7 @@ GROUP BY ALL;</code></pre>
       <ol>
         <li>Each semantic model the query names is opened from its local copy. The first time, its definition is read from Fabric.</li>
         <li><a href="https://github.com/djouallah/dax-sql">dax-sql</a> rewrites a query on a model as plain SQL over table names. A query that names no model is left as it is.</li>
-        <li>The Node process refuses more than one statement, and anything that neither reads nor is a write its setting allows, using DuckDB's own parser to tell (<a href="write-to-onelake.html">Write to OneLake</a>).</li>
+        <li>The extension host refuses more than one statement, and anything that neither reads nor is a write its setting allows, using DuckDB's own parser to tell (<a href="write-to-onelake.html">Write to OneLake</a>).</li>
         <li>Each table name is found in the local catalog and becomes a view over that table in the local lake. A table the lake doesn't hold yet is added from its log first, once. Each file name becomes its <code>abfss://</code> address. A name that doesn't exist fails here.</li>
         <li>The query runs on the query server. It reads the files already copied from disk, and the rest from OneLake, and the table service then copies those. Stop cancels only that tab's queries. A result over <code>maxResultRows</code> (200,000 by default) is counted, and only the first rows go to the tab.</li>
       </ol>
@@ -241,12 +240,12 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
 
     <section>
       <h2 id="servers">The servers</h2>
-      <p>DuckDB runs in one separate process, the query server. The Node process checks each statement before sending it: it must read, or be a write to a lakehouse that its setting allows, and every name must resolve to a table.</p>
+      <p>DuckDB runs in one separate process, the query server. The extension host checks each statement before sending it: it must read, or be a write to a lakehouse that its setting allows, and every name must resolve to a table.</p>
       <ul>
         <li>Statements go over Quack. Stop cancels only its own tab's statements.</li>
         <li>The OneLake token, the offline switch, the sync worker's requests to sync a table, and the data for the Performance tab go over a separate OS pipe, because Quack logs everything it receives.</li>
         <li>The lake's file can be open in one process only, so the query server holds it. Keep offline is a client of the same server. It keeps a model's tables in the lake current and reads no rows, so their files come down as the model's queries open them.</li>
-        <li>The command line, when no app is running, starts a server of its own, with its own lake folder, <code>lake-standalone</code>.</li>
+        <li>The command line, when VS Code isn't running, starts a server of its own, with its own lake folder, <code>lake-standalone</code>.</li>
         <li>The server runs in UTC, because OneLake stores timestamps in UTC. Otherwise dates wouldn't match between tables.</li>
       </ul>
       <p class="more"><a href="reference.html#the-server">The server</a> and <a href="reference.html#keep-offline">Keep offline</a> in detail</p>
@@ -265,25 +264,20 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
 
     <section>
       <h2 id="ports">Ports and tokens</h2>
-      <p>Everything listens on 127.0.0.1 only, and every connection needs a token.</p>
+      <p>Every port listens on 127.0.0.1 only and needs a token.</p>
       <div class="table-box">
         <table>
           <thead>
             <tr><th>Who</th><th>How</th><th>Protection</th></tr>
           </thead>
           <tbody>
-            <tr><td>Window</td><td>HTTP: events from the app, POST requests back</td><td>The token from the first request is kept in an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Requests with a different <code>Host</code> or <code>Origin</code> are refused.</td></tr>
+            <tr><td>Tabs</td><td>VS Code's message channel</td><td>No network port.</td></tr>
             <tr><td>Query server</td><td>Quack, on a local port</td><td>Each server gets a new random session token. Without it, the server runs nothing.</td></tr>
             <tr><td>Command line</td><td>A local pipe</td><td>No network port.</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Sign-in uses MSAL with the Azure CLI's public client ID, so no app registration is needed. The token cache is encrypted for your Windows user. DuckDB gets the OneLake token as a storage secret.</p>
-    </section>
-
-    <section>
-      <h2 id="vscode">In VS Code</h2>
-      <p>The parts are the same, except VS Code is the window and its Microsoft account provider does the sign-in. The app and the extension are separate: on one machine, each keeps its own settings, catalog, cache and engine.</p>
+      <p>In VS Code, sign-in is VS Code's own Microsoft account. With VS Code closed, the command line signs in with MSAL and the Azure CLI's public client ID, so no app registration is needed, and keeps its token cache encrypted for your Windows user. DuckDB gets the OneLake token as a storage secret.</p>
     </section>
 
     <section>

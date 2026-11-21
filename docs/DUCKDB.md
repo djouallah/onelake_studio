@@ -134,7 +134,7 @@ OneLake names a table `workspace.lakehouse.schema.table`, and DuckDB's names hav
 
 ## Extensions and packaging
 
-- **A `LOAD` by path knows only the core signing keys.** The community extensions in the vsix (h3, zipfs, nanoarrow)
+- **A `LOAD` by path knows only the core signing keys.** The community extensions in the vsix (zipfs, nanoarrow)
   need unsigned extensions allowed. Each is held to its hash when the vsix is built, and the lockdown refuses any
   later `LOAD`.
 - **iceberg fetches avro and httpfs at its start.** They are loaded first, in order.
