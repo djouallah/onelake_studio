@@ -1,50 +1,63 @@
 # Changelog
 
-## 0.2.29
+## 0.3.0
 
-- **Removed: Create Semantic Model, and the command line's `semanticmodel`.** A semantic view's YAML in a lakehouse's
-  `Context/`, saved and then published, is how a model reaches Fabric.
-- **Removed: the desktop app.** OneLake Studio is the VS Code extension. An installed app stays on its last version;
-  it finds no newer one.
-- **A semantic view's YAML can be edited and saved.** Open the view's `.yaml` in a lakehouse's
-  `Context/Semantic Views/`, edit it on the Model page's YAML tab, then **Save** and **Publish**. Fabric's published
-  model is read-only, so the YAML is where a change goes. A view whose folder holds several `.yaml` files stays read-only.
-- **Removed: the Performance tab** and its live charts. Logs still shows what the engine ran.
-- **Removed: reading files inside a `.zip`**, and DuckDB's `zipfs` and `h3` extensions with it.
-- **Download File… on a semantic model, in place of Export YAML.** It saves the model's YAML to this computer.
-  Nothing is written to the lakehouse.
-- **Removed: Open in Excel, and the command line's `serve`.** Both put a model in an Excel PivotTable through an XMLA
-  endpoint of our own, which answered only the MDX a PivotTable sends. For Excel on a model, publish it as a semantic
-  view, and open Fabric's model in Excel with Analyze in Excel.
-- **Fixed: a model file named `*.ossie.yaml` kept `.ossie` in its model's name.** Opening it from disk named it
-  `sales.ossie`, so SQL had to write `ws."sales.ossie_semanticmodel"`.
-  It is `ws.sales_semanticmodel` now. A model this machine kept under the old name takes the new one on the next start,
-  or goes when the new name is kept already.
-- **Fixed: last year's value on a month-end day could add a day.** With `SAMEPERIODLASTYEAR` or `DATEADD` by month,
-  quarter or year, February 28 2021 alone also counted February 29 2020, and April 30 alone back a month also counted
-  March 31. dax-sql 0.2.4 extends a month end to the end of the moved month only when the day before is in the filter
-  too, which is what Power BI does. Months and years were already right.
-- **Fixed: an Ossie `.yaml` that OneLake Studio couldn't open opened nothing at all.** A double-click gave "OverlayWebview
-  has been disposed" and an error. Now the file opens, and if it can't open here it opens as text in VS Code's own
-  editor, with a warning that says why.
-- **An Ossie model with a metric in another engine's dialect only (a Databricks window measure, say) opens.** dax-sql
-  0.2.3 leaves out a metric or field it can't say in DAX instead of refusing the whole model. The status line names
-  each one left out.
+This version removes features, so it is 0.3. OneLake Studio is now a VS Code extension only, and the one way it puts a model in Fabric is a semantic view: its YAML in a lakehouse's `Context/`, saved, then published.
+
+### Removed
+
+- **The desktop app.** OneLake Studio is the VS Code extension. An installed app stays on its last version; it finds no
+  newer one.
+- **Open in Excel, and the command line's `serve`.** Both put a model in an Excel PivotTable through an XMLA endpoint of
+  our own, which answered only the MDX a PivotTable sends. For Excel on a model, publish it as a semantic view, and open
+  Fabric's model in Excel with Analyze in Excel.
+- **Create Semantic Model, and the command line's `semanticmodel`.** A semantic view's YAML in a lakehouse's `Context/`,
+  saved and then published, is how a model reaches Fabric.
+- **Export YAML on a semantic model.** It wrote a semantic view into the lakehouse. Download File… takes its place.
+- **The Performance tab** and its live charts. Logs still shows what the engine ran.
+- **Reading files inside a `.zip`**, and DuckDB's `zipfs` and `h3` extensions with it.
+
+### Added
+
+- **A semantic view's YAML is edited, saved and published here.** Open the view's `.yaml` in a lakehouse's
+  `Context/Semantic Views/`, edit it on the Model page's YAML tab, then **Save** and **Publish**. Save first checks that
+  the YAML still opens as a view. Fabric's published model is read-only, so the YAML is where a change goes. A view whose
+  folder holds several `.yaml` files stays read-only.
+- **Download File… on a semantic model.** It saves the model's YAML to this computer. Nothing is written to the
+  lakehouse.
+- **A TMDL script opens from disk**, by double-click, Explorer's right-click, or the editor's title bar, as a `.bim` does.
+  A `.tmdl` that is one file of a Power BI project's `definition/` folder is no model, and opens as text.
 - **A model file that names its tables `schema.table` opens from disk.** That is how a Fabric semantic view's YAML names
   them (`source: dbo.sales`), and Fabric reads them in the lakehouse the YAML sits in. From disk, OneLake Studio uses the
   one lakehouse it has listed that holds every table. When several do, or none, it asks, with the lakehouses holding them
   all first. The answer is kept for that file. Right-click the file > **Pick the Lakehouse It Reads…** to change it.
   The same file in a lakehouse's `Files/` reads that lakehouse.
-- **A TMDL script opens from disk**, by double-click, Explorer's right-click, or the editor's title bar, as a `.bim` does.
-  A `.tmdl` that is one file of a Power BI project's `definition/` folder is no model, and opens as text.
 - **An Ossie model whose datasets list no `fields` opens.** A Fabric semantic view's YAML can leave them out, and Fabric
   gives each table every column of its lakehouse table. OneLake Studio now does the same, reading the columns from the
   table's metadata. It used to fail with "the model has no column 'fact_sales'[sale_date]".
+- **An Ossie model with a metric in another engine's dialect only (a Databricks window measure, say) opens.** dax-sql
+  0.2.3 leaves out a metric or field it can't say in DAX instead of refusing the whole model. The status line names
+  each one left out.
 - **The Model page gives the diagram the room.** The diagram takes the full width and fits the window, with no sideways
-  scroll. The model's name and counts sit in one line above it, and its description shows when you hover the name. A table's details open in a drawer beside it
-  when you click the table, and close with Esc, ×, or a click on empty space. A table of measures with no relationships
-  goes under the facts, marked as measures, instead of standing alone at the top left. Cards no longer say
-  "0 measures".
+  scroll. The model's name and counts sit in one line above it, and its description shows when you hover the name. A
+  table's details open in a drawer beside it when you click the table, and close with Esc, ×, or a click on empty space.
+  A table of measures with no relationships goes under the facts, marked as measures, instead of standing alone at the
+  top left. Cards no longer say "0 measures".
+
+### Fixed
+
+- **A model file named `*.ossie.yaml` kept `.ossie` in its model's name.** Opening it from disk named it `sales.ossie`,
+  so SQL had to write `ws."sales.ossie_semanticmodel"`. It is `ws.sales_semanticmodel` now. A model this machine kept
+  under the old name takes the new one on the next start, or goes when the new name is kept already.
+- **Last year's value on a month-end day could add a day.** With `SAMEPERIODLASTYEAR` or `DATEADD` by month, quarter or
+  year, February 28 2021 alone also counted February 29 2020, and April 30 alone back a month also counted March 31.
+  dax-sql 0.2.4 extends a month end to the end of the moved month only when the day before is in the filter too, which is
+  what Power BI does. Months and years were already right.
+- **A model kept here whose file was deleted said it "could not be read" with an HTTP 404.** Its entry is now forgotten,
+  and the model's own local copy is read instead.
+- **An Ossie `.yaml` that OneLake Studio couldn't open opened nothing at all.** A double-click gave "OverlayWebview has
+  been disposed" and an error. Now the file opens, and if it can't open here it opens as text in VS Code's own editor,
+  with a warning that says why.
 
 ## 0.2.28
 
