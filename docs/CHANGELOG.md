@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- **Export to Fabric, and the command line's `export`.** The Fabric app it published, DuckDB in the browser over
+  OneLake, is gone, and so is its `.fabricator` file: OneLake Studio no longer opens one. An app already published
+  stays in its workspace, and the tree still lists it under Apps.
+- **The Report page, and the command line's `report`.** Explore is Model and Pivot. Add to report, the Report's
+  pages, tiles, filter bar and Theme, and the Slicer mark go with it.
+
+### Changed
+
+- **Visual is called Pivot**, on a model's Explore and on a table's tab.
+
 ## 0.3.0
 
 This version removes features, so it is 0.3. OneLake Studio is now a VS Code extension only, and the one way it puts a model in Fabric is a semantic view: its YAML in a lakehouse's `Context/`, saved, then published.

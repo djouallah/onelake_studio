@@ -109,7 +109,6 @@ function page(doc) {
       <nav class="site-nav" aria-label="Main">
         <a href="features.html">Features</a>
         <a href="write-to-onelake.html">Write to OneLake</a>
-        <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html">Architecture</a>
         <a href="dax-sql.html">dax-sql</a>
         <a href="changelog.html"${current("changelog.html")}>Changelog</a>

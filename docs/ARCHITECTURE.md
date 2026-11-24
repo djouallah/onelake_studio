@@ -14,7 +14,7 @@ queried with SQL.
 - **Runs on your machine.** DuckDB in a process of its own reads OneLake directly, with your own token.
   What DuckDB makes us work around is in [DUCKDB.md](DUCKDB.md).
 - **Works offline.** This is a must, not a fallback. Everything you have read keeps working with no
-  internet and no sign-in: browsing, SQL, a model's Explore and its Visual.
+  internet and no sign-in: browsing, SQL, a model's Explore and its Pivot.
 - **Agents get the same access.** An agent asks through the command line, on the same sign-in, cache
   and engine as a person in the editor.
 
@@ -31,11 +31,11 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`, or `/Context/` or `/SystemContext/` in place of `/Files/`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`page/semantic.js`](../page/semantic.js) |
-| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app) and Upload Files… each ask first; Save and Publish of a semantic view are the clicks themselves. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
+| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Upload Files… asks first; Save and Publish of a semantic view are the clicks themselves. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
-| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Upload Files…, and a semantic view's Save and Publish. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
+| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Upload Files…, and a semantic view's Save and Publish. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`core/host.js`](../core/host.js), [`extension/panel.js`](../extension/panel.js), [`core/engine/engine-client.js`](../core/engine/engine-client.js) |
-| **A table's Visual is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`page/app.js`](../page/app.js) |
+| **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`page/app.js`](../page/app.js) |
 
 ## Out of scope
 
@@ -129,7 +129,7 @@ semantic model or saved query is named after it instead, as a file's tab is in a
 ## Offline
 
 Offline is a requirement for every feature of the extension that reads data, so a new one has to work here
-too. The exported Fabric app is online by design.
+too.
 
 Nothing turns this on. The extension is offline when there is no internet or no session, says which in
 the status bar, and comes back by itself ([`core/onelake/connectivity.js`](../core/onelake/connectivity.js)).
@@ -138,7 +138,7 @@ the status bar, and comes back by itself ([`core/onelake/connectivity.js`](../co
   probe got none either. Any HTTP status is an answer, so a slow connection counts as online. Offline, the
   probe repeats every 30 seconds.
 - **No request is sent.** `authedFetch` refuses first ([`core/onelake/http.js`](../core/onelake/http.js)), so nothing waits
-  on a timeout. Export to Fabric is refused too.
+  on a timeout.
 - **What is kept is the answer,** however old ([`core/onelake/onelake.js`](../core/onelake/onelake.js)), with no background
   refresh or prefetch. Anything not held says so at once.
 - **No session:** the tree and the tabs open on the cache of the last account signed in on this machine,
@@ -149,7 +149,7 @@ the status bar, and comes back by itself ([`core/onelake/connectivity.js`](../co
 | The tree, `SHOW ALL TABLES`, `information_schema`, Go To | A table's file no statement has opened here, or a file never read |
 | A table's Stats and History, and first rows already read | A wildcard over files |
 | Semantic models: opening them, Explore's Model page, `SHOW SEMANTIC …` | A table whose metadata was never read |
-| Table rows, a model's queries and its Visual, for what was read | Export to Fabric |
+| Table rows, a model's queries and its Pivot, for what was read | |
 | `Files/` objects read before | |
 
 **How rows are read offline:** a table's files that statements have read are on this machine, whole, and its
@@ -431,7 +431,7 @@ rewritten in OneLake goes back to the cloud. A wildcard marks no one file. **A f
 Delta log nor Iceberg metadata has a warning and says *not a valid table*. That is kept like any table's metadata, so it
 shows offline, and it is asked again when the table is opened or its Tables node is, so a folder that becomes a table stops saying so.
 
-**Clicking a table** opens it in a new tab, or brings forward the tab that shows it: Data, Stats, History and Visual. The SQL box gets
+**Clicking a table** opens it in a new tab, or brings forward the tab that shows it: Data, Stats, History and Pivot. The SQL box gets
 `SELECT * FROM <its name> LIMIT <selectTopRows>` to start from, not run. A file does the same with what its preview runs.
 - **Data** is hidden offline on a table with none of its rows read here, since all it could show is an error. The status
   line says why. It comes back with the connection.
@@ -439,7 +439,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
   also has its own log read for what Iceberg has no word for ([`core/lake/deltalog.js`](../core/lake/deltalog.js)).
 - **Time travel:** on an Iceberg table, History's Query puts a snapshot's rows in the SQL box, and
   each snapshot says how its row count and columns differ from the table now.
-- **Visual** is the SQL starter described under the rules above.
+- **Pivot** is the SQL starter described under the rules above.
 
 **Clicking a file** opens it in a new tab, or brings forward the tab that shows it: Parquet, CSV, JSON, Excel, DuckDB and SQLite.
 - **A database file** is recognised by its header, never its extension. A DuckDB file is attached
@@ -449,7 +449,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
     columns beside the SQL box, with a filter, and an overview of the file. This comes from DuckDB's catalog, so no
     table's rows are read. The tree stays while queries run in that tab.
   - **A table or view** opens as a table in OneLake does: Stats (columns, keys, indexes, its definition), Data and
-    Visual. It has no History.
+    Pivot. It has no History.
   - **Row counts:** a DuckDB file's are its own estimate, which still counts deleted rows, and say so. A SQLite file's
     are counted from its copy, for up to 200 tables, since its estimate means nothing.
 - **CSV, JSON, avro, xlsx and plain text** have no block structure, so DuckDB pulls them whole.
@@ -499,9 +499,9 @@ once and counts, though the answer still comes through the host.
   - **A semantic model:** Download File… and Copy SQL Name. Download File… saves the model's YAML (Apache Ossie, its
     local copy, `<model>.ossie.yaml`) to this computer, and works offline once the model has been opened.
   - **A folder** (Files/ itself, or one under it): **Upload Files…**, Copy SQL Name and Refresh. Upload picks files on
-    this computer and writes each into that folder ([`fabric_app/export/onelakewrite.js`](../fabric_app/export/onelakewrite.js)): a name already
+    this computer and writes each into that folder ([`core/onelake/onelakewrite.js`](../core/onelake/onelakewrite.js)): a name already
     there asks Replace or Skip, each file is written beside the target in 32 MB pieces and renamed into place, so a
-    cancel or a failure leaves what was there, and the folder is listed again. It needs a connection, as Export does,
+    cancel or a failure leaves what was there, and the folder is listed again. It needs a connection,
     and OneLake's own refusal is shown when the lakehouse is read-only to you.
   - **A folder of `Context/` or `SystemContext/`** (`dirReadOnly`): Copy SQL Name and Refresh. A lakehouse shows
     both after Files, closed, and drawing them asks nothing. `Context/` holds a semantic view's YAML, and
@@ -525,7 +525,7 @@ once and counts, though the answer still comes through the host.
     dialect other than Ossie SQL (DAX, say) and an extensions block are amber.
   - **A view's folder** (`Context/Semantic Views/<view>`, `semanticViewDir`) **and its `.yaml`** (`semanticViewFile`):
     **Publish** beside them, as Fabric's own right-click has it. It is one request to Fabric's beta API, made in the background with the status bar saying
-    so ([`fabric_app/export/publishview.js`](../fabric_app/export/publishview.js)). A Publish of a view while one of
+    so ([`core/onelake/publishview.js`](../core/onelake/publishview.js)). A Publish of a view while one of
     it is under way joins it: Fabric finds the view's model by its name and makes one when there is none, so two at
     once made two models, and Fabric then refused every Publish of the view (`DuplicateDatasetNamesInWorkspace`, said
     in plain words). Fabric compiles the view into
@@ -613,8 +613,7 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN ws.sales_semanticmodel) WHERE ...;
 **A model file is a file.** A `.bim` under `Files/`, or an [Apache Ossie](https://github.com/apache/ossie)
 `.yaml` or `.yml` whose top level has `version:` and `datasets:`, opens in the model view in place of
 the SQL box. dax-sql's `formats/ossie.js` turns Ossie into the `.bim` it stands for, metrics in DAX or in
-Ossie's SQL alike, and from there the two are one. These files can be stored anywhere and have no model name. A model created from one, for
-Fabric or only for a Fabric app, must be named `<workspace>.<model>_semanticmodel`, and it overwrites
+Ossie's SQL alike, and from there the two are one. These files can be stored anywhere and have no model name. A model created from one must be named `<workspace>.<model>_semanticmodel`, and it overwrites
 whatever we have under that name. See [NAMING.md](NAMING.md#files).
 
 **A model file opened from disk** is read by `modelFile` ([`core/models/models.js`](../core/models/models.js)). Its
@@ -624,16 +623,16 @@ holds those lakehouses, else the one workspace whose kept listing holds them, an
 
 ## Explore
 
-A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on three pages: Model, Visual and Report
-(Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
+A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on two pages: Model and Pivot. It opens
+on Model.
 - **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Save (a model file it can write back, or a
-  semantic view's one `.yaml`, on YAML only) and Publish (a semantic view) at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
+  semantic view's one `.yaml`, on YAML only) and Publish (a semantic view) at the right; Pivot's Show plan and Download CSV.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships. Double-click it, or its
   panel's Open table, for the OneLake table behind it in a tab of its own, as the tree opens it (`host.openTable`, by
   its SQL name, placed in the tree's kept listings by `place` in [`core/sqltables.js`](../core/sqltables.js)).
-- **Visual:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
+- **Pivot:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
   a chart.
   - It is as tall as the tab, in flat panes: the fields; then the tools (swap, sort, totals, clear, Format) over the
     Filters card and the Show as card, which holds the mark and Values; then Columns and Rows over the view; and a status
@@ -644,8 +643,8 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
     counted, and its chip switches to average, min, max, count or distinct count.
   - Totals are off until turned on, and a view cut at the row limit (maxResultRows) leaves them out.
   - Every view is one `SELECT … FROM <model>` in dax-sql's SQL (`modelSql`): columns, `AGG("measure")`,
-    summarised columns and `ROLLUP` totals. Its query is always generated from the shelves: nothing else writes a
-    Visual's or a Report tile's SQL.
+    summarised columns and `ROLLUP` totals. Its query is always generated from the shelves: nothing else writes
+    Pivot's SQL.
   - **Top** keeps the first n rows as they are sorted, ties kept (`FETCH FIRST n ROWS WITH TIES`; picking one sorts by
     the first measure, largest first, when the sort was by fields). A measure dropped on Filters filters the figures
     shown: a range of them, a `HAVING` (by its name when it is on Values, else as `AGG("measure")`).
@@ -654,110 +653,28 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
     measure; a map is a latitude, a longitude and a name on Rows, each point sized by the first measure and coloured by
     a column on Columns, over the world's outline (ECharts 4's `world.json`, vendored and pinned like ECharts, read the
     first time a map is drawn: `ctx.worldMap`).
-  - Visual has no SQL box: its query is its shelves' (a JSON visual query, kept as the shelves), and the SQL is made
-    from it behind the scenes. Nobody, a person or an agent, writes SQL into a Visual or a Report tile.
-  - **Slicer** is a mark like the others (`slicerView`): the values of the first Rows field, those the query answers
-    (with a measure on Values, only those with a figure, shown beside each; a filter narrows them too), drawn as a list,
-    buttons, a dropdown of the list, or a range for a date or a number, picked by a switch over it (`state.slicer`). On
-    Visual it only shows; on the Report it filters. A table's Visual has no Slicer: it only builds SQL.
+  - Pivot has no SQL box: its query is its shelves' (a JSON visual query, kept as the shelves), and the SQL is made
+    from it behind the scenes. Nobody, a person or an agent, writes SQL into Pivot.
   - **Card** is a mark too (`cardView`): each field on Values as one figure, in its format string, over every row its
     filters keep. Its query leaves Columns out (`buildQuery`); a field on Rows (a date) is its trend, a line under the
-    figure, and the figure is then the query's total row. Automatic picks it when only Values has fields. On the Report
-    the other tiles' picks filter it, a click on it picks nothing, and its format can show a second measure as its change
-    (▲ or ▼, coloured good or bad).
-  - **Format** opens a pane at the right of the view: how the Visual is drawn, kept with its shelves as their
-    `format` ([`format.js`](../page/explore/format.js)), so a Report tile made from it, or edited with ✎, draws the same.
+    figure, and the figure is then the query's total row. Automatic picks it when only Values has fields. Its format can
+    show a second measure as its change (▲ or ▼, coloured good or bad).
+  - **Format** opens a pane at the right of the view: how the view is drawn, kept with its shelves as their
+    `format` ([`format.js`](../page/explore/format.js)).
     What it offers follows the mark: a chart's series colours, data labels, legend, axis titles and value range, its
     measures in one plot (each a bar, a line, an area or a dashed line, on the left axis or the right), each measure's
     total as a line (`totalLine`: the query asks for its totals), the highest point labelled, a zoom slider; a
     table's colours by value (a tint, or a bar) and banded rows; a card's figures' size and colour and a measure as its
     change (▲/▼, good when it goes `goodWhen`); and each number's style (`NUMBER_STYLES`, each a format string:
     `#,##0.0a` writes 1.2K, `0%` a percent). A change is drawn at once from the rows there are (`formatChart` over a
-    chart's ECharts option, the rest through `formatLook` into Visual's own drawing); the total line runs the query
-    again. A tile from before kept its format on the tile: it is read as its Visual's (`tileOf` in
-    [`report.js`](../page/explore/report.js)), and the first save writes it there.
+    chart's ECharts option, the rest through `formatLook` into Pivot's own drawing); the total line runs the query
+    again.
   - **Show plan** puts, in place of the view, the shelves' query: its SQL, shown and never written (the model's SQL
     the shelves make, and the SQL it compiles to, each with Copy), its profile (`profile.js`: DuckDB's `EXPLAIN
     ANALYZE` as totals, a timeline and the costly operators) and its plan tree.
-  - **Add to report** puts the view on the Report, as a tile (Report, below).
-- **Report:** pages of tiles, each tile a Visual (`pivot`, its shelves) or text, drawn as Visual draws it or as
-  Markdown ([`report.js`](../page/explore/report.js)). No tile holds SQL: a tile's query is Visual's, from its shelves.
-  A tile of an older report that holds SQL (`kpi`, `bar`, `line`, `table`) says it is not a Visual tile, to be built
-  again in Visual. A tile that fails says so in its box, and the rest still draw.
-  - **Filter bar:** the report's `filters` (`[{ field, style }]`), over the pages' names on every page (`drawBar` in
-    [`view.js`](../page/explore/view.js)): a dropdown of one value, a list to tick (searched, 150 shown), or dates from
-    and to with 3d, 7d, 30d, 1y and All back from the latest day the column has. A filter's values are a query of their
-    own, as the Filters shelf lists them (`valuesSql`). What is picked is a condition of every tile's query
-    (`ctx.where`), but those that do not follow it (a tile's `ignore`, set in the Theme pane); a pick draws
-    every page again, and the picks in its tiles go. The viewer's picks are this visit's only. Studio's + Filter adds
-    one (a column and its style) and a filter's ✕ takes it out, saved like every other edit.
-  - **Pages:** the report is `{ pages: [{ name, tiles }] }`; one written before pages, `{ tiles }`, is one page, Page 1
-    (`reportPages`), and the first save writes it as pages (`withPages`). Their names sit over the tiles and one page is
-    on screen (`reportAt` in [`view.js`](../page/explore/view.js)); each page is drawn the first time it is shown and kept,
-    hidden, with its picks, until the Report is drawn again. Its tiles wait while it is not on screen, and a tile running
-    on a page left is stopped and runs again when it is back. A click on a name shows it, a double-click renames it,
-    dragged onto another name it moves there, its ✕ deletes it (a page with tiles asks first; the last page has none),
-    and + adds Page n after the others, its name ready to rename. A tile's grip dropped on another page's name moves the
-    tile to the end of that page, as big as it was. Add to report and Add text add to the page on screen. The Fabric
-    app's Report shows the names only with two pages or more, and only to switch.
-  - **While a tile runs again** (a pick, the filter bar): it keeps what it shows, dimmed (`rp-stale`), until its
-    new answer is drawn. A chart is drawn over, not made again, so its bars and lines move to their new values. Only a
-    tile with nothing drawn yet says Waiting… or Running….
-  - **Over the tiles:** the report's `title` (a double-click writes it) and the time every tile last had its
-    answer (`drawTop` in [`view.js`](../page/explore/view.js), told by the page's `done`). A tile has a `title`
-    and, under it, a `subtitle`: a double-click on either edits both.
-  - **Text:** `{ title, kind: 'text', text }`, `text` a few lines of Markdown (`markdownBlocks`: `#` to `###`
-    headings, `**bold**`, `*italic*`, http(s) links, `-` lists, paragraphs), built as elements, never as HTML. A
-    double-click edits it in a box in place, kept by Done or Ctrl+Enter. Picks don't touch it.
-  - **Theme:** the Report bar's **Theme** opens a pane at the right of the tiles (`drawTheme` in
-    [`view.js`](../page/explore/view.js); over them on a narrow window). It writes the report's `theme`: `style`
-    (`STYLES` in [`theme.js`](../page/explore/theme.js): Paper, Midnight or Slate, the whole look at once, a class on
-    the report's page that sets its colours, its tiles' corners and its titles' font, with its own palette and its
-    charts' extras, `styleChart`; left out, Studio), `background` (for a report with no style: the Report's own dark
-    or light colours, on its page and in its charts, in any editor theme; left out, the editor's), `palette`
-    (`PALETTES` in [`theme.js`](../page/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's
-    values, picked in the pane) that every tile draws that value in: a series, a bar, a treemap's box, a map's points. A
-    Visual's own colours win over it. Under it, each tile of the page on screen: its title shown or not
-    (`showTitle`) and its size (`titleSize`), and the filter bar's filters it follows (`ignore` lists those it does
-    not). Each change is saved, and the page drawn again. A tile's look is its Visual's (Format, above), edited by ✎.
-  - **Which tiles:** the model's Export to Fabric zip's `site/public/report.json`, when it has one (the zip its last export was
-    approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
-    workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
-    the zip. Studio's file stays as its copy of the zip's Report, written when the zip's is read or saved: a zip that
-    is deleted or moved takes no Report with it, and the Report is drawn from the copy, and saved there.
-  - **Add to report, ✕ and the grip:** Visual's **Add to report** puts the shelves on screen after the tiles, as a
-    `pivot` tile (a slicer too); a tile's ✕ takes it out, and its grip ⠿ drags it anywhere on the grid and its ◢ drags its size (or the arrow keys, on
-    either), drawn there at once with nothing run again. ⧉ adds a copy after the tiles, as big as the tile, in the first
-    place it fits, and a double-click on a title renames it in place. A tile's tools show only while the pointer or the
-    keyboard is on it. All write where the tiles are kept, one save after another (`reportSave` in
-    [`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
-    edit to its file) is refused and drawn again. The pages' +, ✕, renames and moves save the same way. The Fabric app's
-    Report only reads, so it has none of them.
-  - **Editing a tile:** a pivot tile's ✎ opens its shelves in Visual (`editTile` in [`view.js`](../page/explore/view.js)),
-    under a strip with its title, **Update tile** and **Cancel**. Update writes the shelves and the title into that tile,
-    its layout kept; a title that was its shelves' own follows the new ones. Either way Visual's shelves from before come
-    back, and the Report is on screen again. Add to report still adds a new tile from there.
-  - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
-  - A tile is `{ title, kind: 'pivot', pivot, layout?, wide?, showTitle?, titleSize?, ignore? }`, `pivot` the shelves as Visual keeps them; its SQL
-    is Visual's (`pivotQuery`), and it is drawn by Visual's own code (`pivotView` in [`explore.js`](../page/explore/explore.js)),
-    so it keeps every mark. A slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are laid out on 12 columns and rows of 10px:
-    `layout` (`{ x, y, w, h }`) is where a tile's grip and ◢ put it. `arrange` places them: the tile moved stays where
-    it is put, every other tile floats up as far as it can and down past what it would overlap, and then all float up
-    once more, so a gap under a short tile is filled. A tile with no layout goes in the first place it fits, as big as
-    its kind is (a slicer 3 columns, a chart 6, figures and tables 12). The tiles are kept top to bottom.
-  - **Cross filtering:** a click on a bar, a point, a row or a day picks the tile's first Rows field's value (else
-    Columns'; a map's, its points' name), and every other tile runs again with it as a condition of its own query, as its
-    Filters shelf writes one (`pickWhere`, then `sqlWith`: `= value`, `IS NULL` for a blank, the literal typed by the
-    model's column). A slicer's pick is its values, `IN (…)` (`IS NULL` for a blank among them), or its range, `>=` and
-    `<=` (a date's last day kept whole); it does not run again when other picks change. The tile clicked stays whole, its pick bright and the rest dim. The same click
-    again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A card takes no
-    clicks, nor does a treemap (a click zooms into its box). The tiles still run one at a time (in a Fabric app, side by side: its engines take a query each), and a pick stops the tile running when it changes it. A pick filters only
-    the tiles of its own page.
 
 `view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts comes
-from. **A tab** runs it on the native engine. **The Fabric app** runs the
-same files on DuckDB-WASM. Its page ([`fabric_app/site/index.html`](../fabric_app/site/index.html)) names the model in
-its header and is black, always; the chrome is the text's colour, and colour is for the data.
+from. A tab runs it on the native engine.
 
 ## SQL writes
 
@@ -827,204 +744,33 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 - **Each statement is its own commit.** A write is never sent twice: a failure is said, not retried.
 - **Afterwards:** the lakehouse's table listing is read again, and a table's new snapshot is synced into the lake, so
   the tree and the next read show it. After a `COPY`, its folder is listed again.
-- **Offline:** a write is refused at once. It needs a connection, as Export does.
+- **Offline:** a write is refused at once. It needs a connection.
 
 ## Opening files from disk
 
-A model file, an app's file or a `.sql` file on this machine opens in a tab, as one from the tree does (`openPath` in
+A model file or a `.sql` file on this machine opens in a tab, as one from the tree does (`openPath` in
 [`extension/extension.js`](../extension/extension.js), the command `onelakeStudio.openPath`).
 - **A `.sql` file** opens in the SQL box, not run, in a tab named after it, as a saved query does. A file open already
   brings its tab forward. A `.sql` file in a lakehouse's `Files/` opens in the box the same way, from the tree.
 - **Save** (Ctrl+S) writes a file back where it was opened from: a `.sql` file's box, and a model file's text on Model's
   YAML (or BIM), which is written in there (`host.saveFileText`). On this machine, only a file `openPath` opened, and
   offline too. In a lakehouse's `Files/`, it is written beside the file and renamed into place, as Upload writes
-  ([`fabric_app/export/onelakewrite.js`](../fabric_app/export/onelakewrite.js)), and its folder is listed again; that
+  ([`core/onelake/onelakewrite.js`](../core/onelake/onelakewrite.js)), and its folder is listed again; that
   needs a connection. A model's text that doesn't open as a model is not written, and says why. Once saved, the
-  model opens again from the new text. A semantic model's local copy and an app's file are read only: Fabric's copy
+  model opens again from the new text. A semantic model's local copy is read only: Fabric's copy
   is the model, and Refresh reads it again.
 - **A model file**, a `.bim`, or a `.yaml`/`.yml` that is an Ossie model (a top-level `version:` and `datasets:`): its
   model, its tables OneLake's by the names in it, in the workspace that holds them (`modelFile` in
   [`core/models/models.js`](../core/models/models.js)). One whose tables more than one workspace could hold says so, and is opened from
   its lakehouse's `Files/` instead. Another YAML is a document, and says it is not a model.
-- **An app's file**, `.fabricator`, or an earlier export's `.fabricapp` (`openApp` in [`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)): on the Report page, which
-  draws this file; its Add to report writes here, and its next export saves here. It opens on its own `model.ossie.yaml`, the app as it is, and Export to
-  Fabric there publishes this file as it is: no Save dialog, and no question about its changes.
 - **A file named `<name>.ossie.yaml`** is a model by its name: the Apache Ossie spec names no extension, and Ossie's own
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
-- **In VS Code**, a `.fabricator`, a `.fabricapp` and a `*.ossie.yaml` open in OneLake Studio by default (custom editors
-  that hand them over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). A `.sql` file opens as text: most
+- **In VS Code**, a `*.ossie.yaml` opens in OneLake Studio by default (a custom editor
+  that hands it over and closes its own tab; *Reopen Editor With… > Text Editor* shows the text). A `.sql` file opens as text: most
   have nothing to do with OneLake. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
   what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
-  `.yaml`, `.yml`, `.bim`, `.fabricator`, `.fabricapp` or `.sql`, which opens without the file in an editor, so no SQL
+  `.yaml`, `.yml`, `.bim` or `.sql`, which opens without the file in an editor, so no SQL
   extension starts.
-
-## Export to Fabric
-
-One of two writes, with Upload (above). The Report's **Export to Fabric** button, or the command line's `export`, publishes
-the model's Report as a Fabric app, and nothing else of Explore (item type `AppBackend`, named
-`<model>`, its name in lower case with dashes). VS Code and the extension are all it needs: no CLI, no Node, no GitHub. The file it saves is a
-Rayfin project, so Fabricator (or the Rayfin CLI) can grow it and publish it too, over the same app.
-
-**The local copy is one file**, `<model>.fabricator`: a zip of a Rayfin project, laid out as the Rayfin CLI lays one out.
-`.fabricator` is Fabricator's project file, so a double-click there imports it, installs its packages, previews it and
-publishes it; VS Code opens it too (Opening files from disk, above). It holds:
-- `package.json`: the Rayfin CLI and `@microsoft/rayfin-core`, which Fabricator and rayfin-local run
-  (`PROJECT_PACKAGES` in [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js)). The page, `site`, and
-  the function, `rayfin/functions`, are its workspaces. OneLake Studio needs none of them. Every `@microsoft/rayfin-*`
-  package is on its `~X.Y.0` line, as the Rayfin CLI's templates have them and Fabricator's checks ask.
-- `package-lock.json`: [`fabric_app/project/package-lock.json`](../fabric_app/project/package-lock.json), named for the app (with
-  `-app` when the app has the name of a package the project installs, which npm refuses: `packageName`), so
-  Fabricator's `npm ci` resolves nothing (without it, an import spent over a minute asking the registry about each
-  package). The "Refresh extension lockfile" workflow makes it (`scripts/fabric-lock.mjs`) against the public
-  registry; run it after changing any package the project names.
-- `scripts/validate-report.mjs` ([`fabric_app/project/validate-report.mjs`](../fabric_app/project/validate-report.mjs)),
-  `npm run validate`: the Report checked with the page's own modules (`page/explore/reportcheck.js` on Explore's
-  `modelFields`, `pivotQuery` and the Report's `reportPages`, then dax-sql), in Node, with no browser and no data.
-  `-- --fields` lists the model's fields.
-  `AGENTS.md` tells an agent to run it after every change to the Report.
-- `.agents/skills/`, `.mcp.json`, `rayfin/.lockfile.json`: Rayfin's agent files, as `rayfin init ai-files install` writes
-  them at the project's CLI version. `scripts/function-bundle.mjs` makes them at package time, into
-  `fabric-function/agent-files.json`, and every export writes them. The CLI's own `AGENTS.md` is not written: the
-  export writes its own.
-- `site/`: the page, a Vite project. `site/package.json` names the packages it imports (the Rayfin SDK, ECharts,
-  DuckDB-WASM and Arrow), Vite and Rayfin's local-dev plugin.
-  `site/index.html` and `site/src/` are the page: `app.js`, its data source (`storage/data.js`: DuckDB in the
-  browser), Studio's Explore (`explore/`) and dax-sql
-  (`semantic/`). `npm run build` makes `site/dist/`, which `rayfin.yml` uploads (`staticHosting`: `path: site`,
-  `folder: dist`, `buildCommand: npm run build`); `site/vite.config.mjs` is its build, and serves it locally.
-- `site/public/`: the site's own files, which Vite copies into the build as they are: the Report, the model, the page's
-  settings (`settings.json`: the most rows a visual asks for), and what npm has not, the world's outline (`world.json`) and DuckDB's signed extensions
-  (`duckdb-ext/`), the extension's own, written again by every export. DuckDB-WASM itself is a
-  package, installed where the project is unpacked.
-- `rayfin/`: `rayfin.yml` and the function's source. Once published, `rayfin/.deployments.json` records the app as
-  `rayfin up` records one (keyed by the workspace's name as the CLI keys it), and `site/public/rayfin.config.json` is
-  its backend, so a publish from Fabricator or `rayfin up` updates this app, not a new one.
-  `rayfin/.env.secrets` and `rayfin/functions/local.settings.json` hold the function's two settings, `CATALOG_URL` and
-  `TABLES`: a URL and table names, no credential.
-- `AGENTS.md`, the app's model, `.fabricator/export.json` (what Fabricator's Import window shows: the
-  project's name, when it was exported, the workspace it publishes to) and `.onelake-studio/export.json`, our record of
-  what was published, with its `format` number. A file with a later format is refused, never written over.
-
-Its report, `site/public/report.json`, is the Report tab's (Explore, above). No export writes that entry again, and it
-is not one of the local changes an export asks about, so a person or an agent grows it in the file and exports again to
-publish it. The command line's `report <ws> <model>` (or `report <ws> <item> <Files/path>`) reads a model's Report wherever it is
-kept, the zip's or Studio's file before an export, with the fields a tile can name; `--set` writes one there after the
-same checks, `reportcheck.js` and each pivot tile's query compiled as Explore compiles it, and refuses one with problems,
-each named. The Report tab draws what it writes. The Save dialog first offers the model file's own name, its model extension (`.ossie.yaml`, `.yaml`, `.bim`)
-made `.fabricator`: `sales.ossie.yaml` is `sales.fabricator`.
-After that it offers where the app was saved last. The app's name in Fabric is the model's; one published as `<model>-explore` by an earlier build keeps that name. One an earlier
-export saved as `<model>-explore.zip` or `<model>.fabricapp` is offered under its new name, and renamed when saved
-there; an earlier `.fabricapp` opened from disk and exported is renamed `.fabricator` first. Either is read laid out as
-a `.fabricator` is (its `site/` is `site/public/`, its root `export.json` our record) and written so.
-
-**OneLake Studio publishes its own build of the page.** It runs no npm, so the page is built when the extension is
-packaged ([`scripts/site-bundle.mjs`](../scripts/site-bundle.mjs)): the project an export writes, installed from its
-lock file and built by its own Vite, into `fabric-site/`.
-A publish uploads it, its `index.html` stamped with the build, with the file's `site/public/` and this
-publish's `rayfin.config.json` (`buildDist`): what `npm run build` makes of the project. CI builds an exported project
-and compares the two, file for file (`test/js/run-fabricator-project.mjs`). So a change to the Report or the model is
-published by OneLake Studio, Fabricator or `rayfin up` alike. A change to the page's code (`site/src/`,
-`site/index.html`) is published only by one that builds the project: an app's file opened from disk whose page was
-changed is asked about first, since OneLake Studio would upload its own page, and the file then keeps its page
-(its record says `page: 'own'`, and it is asked about at each publish). An earlier export's file had its page in
-`site/public/`, served as it was with its packages in `vendor/`: its next export, as it is too, lays it out as above
-(`setPage`).
-
-**The app runs on the model as exported**, never on the lakehouse's file as it is now. The file holds its model,
-`model.ossie.yaml` (`model.bim` for a .bim; `model.yaml` from an earlier export still reads), and each publish makes the site's
-`model.json` from it, which the page reads. The function never reads a model: the export gives it the tables it may
-sign for (its `TABLES` secret). An export from Explore rewrites `model.ossie.yaml` from Explore's model; an agent's edit to
-it is published by opening the `.fabricator` and exporting there. A change to the lakehouse's file reaches the app
-when it is exported again.
-
-**The app is made from a model file** (a `.bim` or Ossie `.yaml` in a lakehouse's `Files/`): DuckDB in the browser
-reads its lakehouse's tables. A model file opened from disk (a download, say) is
-exported the same way, in the workspace its tables are in, when it names one lakehouse: the app carries its own copy,
-so no OneLake path is needed, and our record names it `<workspace>/<file name>`. A Power BI semantic model opened from
-the tree is exported the same way, by its local copy, in its own workspace: the app reads the lakehouse's tables, never
-the semantic model, and nothing is written to it.
-
-**What it writes**
-- **The app**, in Fabric.
-- **A local copy of the app**, one file, `<model>.fabricator`, where you save it. An earlier export's
-  `<model>-explore/` folder is no longer written; the app it published stays the zip's.
-
-**What the model file needs**
-- **It names exactly one lakehouse** in its Direct Lake expression. Without that, the button is not
-  shown.
-- **Every table names its source as `schema.table`**, with a table name of letters, digits and `_`.
-- **The workspace allows OneLake user-delegated SAS tokens.**
-
-**How it behaves**
-- **It asks one thing: where to save the app.** A Save dialog named for it, opened where this app was saved last, else
-  in Documents; *Export* there exports, and saving over the file is the dialog's own question. The other questions
-  come only when one applies (below), and all of them before anything is written, locally or in Fabric.
-- **Protected:** the site loads only for people who may open the app item.
-- **The app reads the model's tables, not the lakehouse:** its function signs a read-only SAS for each table the model
-  names, and refuses any other.
-- **The tables are read as the app's owner.** Fabric Apps gives a function one identity, the app item's
-  owner, and no way to the viewer's own OneLake token. So anyone who may open the app reads the model's tables with
-  the owner's rights.
-- **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
-  local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
-- **A file from another computer asks first.** The local copy names the app it is published over, and the sign-in
-  redirects that app keeps. Both are taken at its word only for an app this computer published from that same file (each app's id
-  and its file's path are kept in the window's own state, `exportedItems`). Any other file is asked about before it is
-  published, with the redirects it would add shown: it would replace an app of yours with its own pages. So is a file
-  that names no app yet and carries redirects. Asked once: published, the app and the file are this computer's. An app exported by a version from before this is asked about once too.
-- **Saving over the file rewrites it**, from this Explore, its report kept: nothing is asked about what changed in it.
-  An edit made in the file (by a person or an agent) is published by opening the `.fabricator` and exporting there,
-  which publishes it as it is.
-- **`site/public/settings.json` is in every site**, with or without a `maxRows`: the hosting
-  answers a file a site lacks with its `index.html`, so the page reads its JSON files as missing when they aren't JSON.
-- **A name in the recycle bin:** a deleted app keeps its name there, and Fabric refuses a new app of that name. The
-  export says so: delete it there for good, or restore it, and export again.
-- **A newer deploy is never overwritten unasked.** Our record keeps the app's last deploy time, by
-  Fabric's clock. If the app was deployed again since, the export asks.
-- **A folder the export did not write** is refused.
-
-**The template** ([`fabric_app/`](../fabric_app/))
-- **`site/`:** the page, black always: `index.html` and `src/`. Its data source (`src/storage/`) signs in with Rayfin's Fabric SSO,
-  takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
-  what the Report reads of the tables into the browser, where DuckDB-WASM (DuckDB 2.0), the project's own package,
-  reads them as `v_<table>` views. The Rayfin SDK is imported as the page starts, so its Fabric provider reads how the
-  page was opened (inside the Fabric portal or not) before sign-in is asked for. A table of 32 MB or less comes down whole. Of a larger one, only each file's footer
-  and the columns a query names come down, before it runs ([`storage/ranges.js`](../fabric_app/site/src/storage/ranges.js)):
-  each file's chunks of them are one request where they are less than 8 MB apart, since OneLake takes about 0.6 s per
-  request whatever its size. Measured on 2026-11-10, a Report over 2 of 22 columns of a 4 GB table came down in
-  12–19 s instead of 123 s. If DuckDB reads bytes the store lacks, the store says which, and the page downloads them with
-  their columns and runs the query again.
-  DuckDB-WASM runs one thread an engine, so the page starts several (half the machine's cores, two at least and four
-  at most), and a query over a table of ten million rows or more is shared out between them
-  ([`storage/split.js`](../fabric_app/site/src/storage/split.js)). dax-sql reads a fact table in a CTE of its own, a
-  GROUP BY of keys and aggregates; each engine runs that CTE over its share of the table's files, the answers cross
-  as Parquet (a few KB), and one engine adds them up and runs the rest of the statement. Only what adds up is
-  shared out: sums, counts, minimums and maximums. A distinct count, an average, or a measure the compiler wrote as a
-  subquery runs whole on one engine, as does any query whose sharing out fails. Measured on 2026-11-11 on a 3.6 GB
-  table with four engines: 5.1 s to 1.2 s for a sum by a column. On a table of 4 million rows sharing out cost more than it saved, about
-  0.1 s a query: hence the ten million. `?split=0` in the address runs every query whole.
-- **`project/`:** the project around the page: its Vite config, its lock file, its ignore lists and the Report's checker.
-- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`).
-
-[`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js) writes the local copy from `fabric_app/`, Studio's
-`page/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is put together in memory
-(`buildDist`): the page as Vite built it (`fabric-site/`), the file's `site/public/`, and `rayfin.config.json`, zipped
-in-process.
-
-**Publishing** ([`fabric_app/export/fabricapp.js`](../fabric_app/export/fabricapp.js)) is the REST sequence that `rayfin up` runs,
-in the same order, with the user's Fabric-audience token:
-
-1. Find the item, or create it.
-2. Wait for its backend, then fetch the publishable key.
-3. Apply the runtime settings.
-4. Set the `CATALOG_URL` and `TABLES` secrets.
-5. Upload the site.
-6. Deploy the function and poll it until it is done.
-7. Add the hosting URL to the sign-in redirects.
-
-The function's deploy package (an esbuild bundle plus its metadata) is built once, at package time, by
-[`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's own packager, from
-`fabric_app/rayfin`. It ships in the vsix under `fabric-function/`.
 
 ## The command line and the agent skill
 
@@ -1046,7 +792,6 @@ local pipe or socket ([`cli/bridge.js`](../cli/bridge.js)). The extension answer
   `lake-standalone`, beside VS Code's in the same cache folder. Its token is in a plain file in this user's profile, and opens a
   local port, no more.
 - **Nothing stays running:** no sync and no idle job. The process ends with the answer, and its server a minute after.
-- **Not here:** `export`, which asks for an OK in VS Code. Exit code 3 says so.
 
 **The skill** is [`cli/SKILL.md`](../cli/SKILL.md). **Install Agent Skill** writes it to
 `~/.claude/skills/onelake/`, where Claude Code and GitHub Copilot in VS Code (agent mode) look for
@@ -1059,9 +804,8 @@ personal skills, and it follows the extension through updates.
 | 0 | Answered. With `--json`, `complete` and `truncated` say how much. |
 | 1 | Failed. |
 | 2 | Wrong call. |
-| 3 | Not signed in, or `export` with VS Code closed. |
+| 3 | Not signed in. |
 | 4 | Not cached. `--fresh` asks OneLake or Fabric now, unless offline, when it fails the same way. |
-| 5 | You declined an export. |
 | 6 | Timed out. |
 
 - **Output:** the answer alone goes to stdout and notes go to stderr.
@@ -1078,7 +822,6 @@ personal skills, and it follows the extension through updates.
   table. `ls` and `find` say so, `exists` says no, and `SHOW ALL TABLES` leaves it out.
 - **`sql`** writes to a lakehouse as a tab does ([SQL writes](#sql-writes)), with nothing asked. Several statements run
   in turn: the first that fails stops them, and the last one's rows are the answer.
-- **`export`** is the same code path as Explore's button, with the same questions asked in VS Code.
 
 ## Keep offline
 
@@ -1174,7 +917,7 @@ every window. The rest apply at once.
   and **Export…** writes every row.
 - **Tabs don't come back after a window reload.** Only the box's last text does (see
   [The SQL box and results](#the-sql-box-and-results)).
-- **A Visual's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
+- **Pivot's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
 - **OneLake's table read API is in preview,** so how a table with OneLake security is read may change. It doesn't
   serve a table behind a shortcut to another region, and a very large table can fail with *Stream was too long*.
 - **Requires desktop VS Code 1.101+** on Windows x64, macOS on Apple silicon, or Linux on x64 or arm64, for its built-in SQLite. Windows on arm64 has no build of DuckDB's `delta`, so no package, and macOS on Intel has none either.
@@ -1190,9 +933,8 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | --- | --- |
 | [`core/`](../core/) | What reads OneLake, with no editor. |
 | [`extension/`](../extension/) | What is VS Code's. |
-| [`page/`](../page/) | A tab's page, and Explore in `page/explore/`, shared with the Fabric app. |
+| [`page/`](../page/) | A tab's page, and Explore in `page/explore/`. |
 | [`cli/`](../cli/) | The command line and the agent skill. |
-| [`fabric_app/`](../fabric_app/) | Export to Fabric, and the app it exports. |
 | [`test/`](../test/), [`scripts/`](../scripts/), `docs/`, [`website/`](../website/), [`media/`](../media/) | Tests, packaging, these documents, the public website, icons. |
 
 ### core/
@@ -1244,7 +986,7 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | `querytext.js` | The SQL box's statements, error positions and variables. |
 | `paths.js`, `semantic.js` | Names and paths, and semantic views. The command line loads these two as well. |
 | `cdn.js` | Where the pinned third-party code is loaded from. |
-| `explore/` | Explore: Model, Visual and Report. Copied into an exported Fabric app. |
+| `explore/` | Explore: Model and Pivot. |
 
 ### cli/
 
@@ -1255,22 +997,14 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | `standalone.js` | The command line with VS Code closed: `core.js` with no editor. |
 | `skill.js`, `SKILL.md` | The agent skill, and what installs it. |
 
-### fabric_app/
-
-| Folder | What it holds |
-| --- | --- |
-| `export/` | Export to Fabric, from its first question to the published app (`exportflow.js`, `exportapp.js`, `fabricapp.js`), a semantic view's Publish (`publishview.js`), and writes to OneLake (`onelakewrite.js`). |
-| `site/` | The exported app's page, and its two data sources in `storage/`. |
-| `rayfin/` | The app's project and its function. |
-
 ### test/ and scripts/
 
 - **`test/js/`** is the `node --test` suite and browser runners. Its `cli*.test.mjs` run `cli/cli.mjs` as a process.
 - **`test/sql/`** is SQL statements and their answers (sqllogictest), run through the agent's `sql`.
 - **`test/e2e/`** is the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet.
-- **`scripts/`** is packaging (bundle, stage-webview, vendor, function-bundle, site-bundle, fetch-extensions,
+- **`scripts/`** is packaging (bundle, stage-webview, vendor, fetch-extensions,
   check-binding, fetch-binding, fetch-retry, pinned-downloads, release-notes, make-icon) and the website
   (build-website).
 
-`dist/`, `webview/`, `vendor/`, `duckdb-extensions/`, `fabric-function/`, `fabric-site/` and `blog/` are ignored by git.
-The first six are build output or fetched at package time, so do not edit them.
+`dist/`, `webview/`, `vendor/`, `duckdb-extensions/` and `blog/` are ignored by git.
+The first four are build output or fetched at package time, so do not edit them.

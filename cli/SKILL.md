@@ -7,7 +7,7 @@ description: Answer questions about Microsoft Fabric OneLake data and Power BI s
 
 # OneLake and semantic models, from the shell
 
-One command, read only but for `export`. It asks the OneLake Studio extension running in VS Code, which answers
+One command. It asks the OneLake Studio extension running in VS Code, which answers
 with its own sign-in and cache. With VS Code closed, on Windows with Node 22.5 or later, it answers by itself from the
 same cache, after one `signin` (exit code 3 says so). Needs Node.js on PATH:
 
@@ -31,66 +31,13 @@ node --no-warnings "{{cli}}" <command>
 | `sql "<sql>"` | read-only SQL. A lakehouse table is `workspace.lakehouse.schema.table` — `aemo.data.dbo.dim_duid`, as Fabric's Spark names it (`aemo.data_lakehouse.dbo.dim_duid` reads it too); any other item has its kind after its name, `_warehouse`, `_sqldatabase` or `_mirroreddatabase` (`aemo.gold_warehouse.sales.orders`, any case), or `"<workspace id>"."<item id>".schema.table` by GUIDs, a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` or in backticks; `USE <ws>.<lakehouse>.<schema>;` first lets the statements after it in that `sql` name its tables alone — any table, any workspace, joined freely. Every semantic model is a table too, `<ws>.<model>_semanticmodel`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql -` | the SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does not survive every shell, PowerShell's above all |
 | `sql "SELECT * FROM '<ws>.<lakehouse>/Files/x.parquet'"` | a file is `'<ws>.<lakehouse>/Files/<path>'`, in single quotes, with its workspace and item spelled as in a table's name. Wildcards go in the path: `read_csv('aemo.data/Files/raw/*.csv', header=true)` |
-| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Report as a Fabric app, which reads the model's tables with DuckDB in the browser; nothing is written to the model. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`) |
-| `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
-| `report <ws> <model>` | a model's Report, the pages of tiles its Report tab draws, as JSON: where it is kept (*not written yet* when none is), and every field a tile can name. `report <ws> <item> <Files/path>` is a model file's (`.bim`, Ossie `.yaml`) in a lakehouse's Files/. `--set <file.json>` (or `--set -`, stdin) writes one: checked first with the page's own code, and refused with each problem named (exit 1, `error.problems` in `--json`) when the tab could not draw it. See *Building a Report* below |
 | `status` | this window on itself, for debugging the extension: its build, session, startup timeline, catalog, sync, and where its files are. Answers signed out too |
 | `log [<text>]` | this window's own log, the lines holding `<text>` if given, newest last. Prefixes: `start:`, `session:`, `move:`, `catalog:`, `sync:`. Default 200 lines, `--limit N` for more |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--json`, `--fresh` (ask OneLake/Fabric instead of the cache — see below),
 `--show-sql` (print the SQL a model query compiles to — the answer to "is this SQL right?"),
-`--timeout SEC` (give up and stop the query; default 600, `0` waits; `export` waits unless told otherwise),
+`--timeout SEC` (give up and stop the query; default 600, `0` waits),
 `--` (what follows is not an option: `find -- -x`). `<command> --help` says what one command takes.
-
-## Building a Report
-
-A model's Report is the one its Report tab in OneLake Studio draws, and the one Export to Fabric publishes. It is data, not
-code: a person edits every tile of it in that tab (move, resize, rename, ✎ opens a tile in Visual), so write only what this
-format says. A tile's query is generated from its shelves; there is no SQL in a Report. When it can't show something asked
-for, say what is missing rather than faking it with a text tile.
-
-1. `report <ws> <model>` (or `report <ws> <item> <Files/path>`): the Report as it is, and the fields. Use those ids exactly.
-2. Write the whole Report to a file, then `report … --set <file.json>`. Fix whatever it names and set it again. Each set
-   replaces the Report; the tab draws it at once.
-
-```json
-{
-  "theme": { "style": "midnight", "textSize": "S" },
-  "filters": [{ "field": "dim_date.year", "style": "list" }],
-  "pages": [{ "name": "Overview", "tiles": [
-    { "kind": "text", "text": "# Sales\nWhat sold, where.", "layout": { "x": 0, "y": 0, "w": 12, "h": 8 } },
-    { "kind": "pivot", "title": "Sales", "layout": { "x": 0, "y": 8, "w": 3, "h": 10 },
-      "pivot": { "values": ["Total Sales"], "mark": "card" } },
-    { "kind": "pivot", "title": "Sales by region", "subtitle": "Top 10", "layout": { "x": 3, "y": 8, "w": 9, "h": 32 },
-      "pivot": { "rows": ["dim_customer.Region"], "values": ["Total Sales"], "mark": "bar", "sort": "desc", "top": 10,
-                 "format": { "labels": true, "numbers": { "Total Sales": "short" } } } }
-  ] }]
-}
-```
-
-- **Report**: `pages` (each `{ name, tiles }`); `filters`, the filter bar over every page: model columns, `style` `dropdown`,
-  `list` or `dates`; `theme`: `style` (`paper`, `midnight`, `slate`), `palette` (`studio`, `ocean`, `warm`, `mono`, or a style's),
-  `textSize` (`S`, `L`), `colors` (`{ "a value as shown": "#rrggbb" }`, that value's colour in every tile).
-- **Tile**: `kind` `pivot` or `text`; `title`, `subtitle`, `showTitle: false`, `titleSize` (`S`, `L`); `layout`
-  `{ x, y, w, h }`: 12 columns, rows of 10 px (`h` 6 at least), `x + w` at most 12; tiles float up and never overlap;
-  `ignore`: filter-bar fields the tile doesn't follow. A `text` tile's `text` is Markdown: `#`–`###`, `**bold**`,
-  `*italic*`, `[link](https://…)`, `- lists`.
-- **Shelves** (`pivot`): `rows`, `cols` (columns, `table.column`), `values` (measures by name, or a column summarised as
-  `"\u0000sum\u0000table.column"`: `sum`, `avg`, `min`, `max`, `count`, `distinct`), `filters`
-  (`{ field, op, ... }`: `in`/`notIn` with `values`, `range` with `min`/`max`, `last` with `n` days, `blank`, `notBlank`;
-  a measure's has `"measure": true` and filters the figures), `sort` (`fields`, or `desc`: the first value, largest first), `top` (first n rows),
-  `totals`, `mark`.
-- **Marks**: `auto`, `table`, `highlight` (a table coloured by value), `bar`, `stacked`, `line`, `area` (Rows across,
-  Columns as series), `heatmap` (a field on Rows and one on Columns), `scatter` (two measures), `treemap` (one or two
-  Rows), `calendar` (a date column on Rows), `map` (latitude, longitude, then a name, on Rows), `card` (its Values'
-  totals; a date on Rows draws its trend under them), `slicer` (its first Rows field filters every other tile on the page;
-  `slicer` `list`, `buttons`, `dropdown`, or `range` for a date or a number). A click on a bar, point or row filters the
-  other tiles too.
-- **Format** (`pivot.format`): `numbers` (`{ "field as shown": "int"|"dec2"|"short"|"pct"|"usd" }`), `labels`, `legend`
-  (`top`, `bottom`, `right`, `off`), `xTitle`, `yTitle`, `yMin`, `yMax`, `zoom`, `maxLabel`, `totalLine`, `colors`
-  (`{ series: "#rrggbb" }`), `measures` (`{ measure: { "as": "bar"|"line"|"area"|"dashed", "axis": "right" } }`: several
-  measures in one plot), a table's `byValue` (`{ "measure as shown": "background"|"bar" }`) and `banded`, a card's `figureSize`
-  (`S`, `L`), `figureColor`, `change` (a measure on Values shown as the first figure's ▲/▼) and `goodWhen: "down"`.
 
 ## Reading the answer
 
@@ -101,9 +48,8 @@ Branch on the exit code, never on the wording:
 | 0 | `OK` | answered, though perhaps not all of it: see below | use it |
 | 1 | `FAILED` | the query or OneLake failed, a `--csv` had more rows than a query keeps, `exists` or `table` found no such table in a listing, or it is *not a valid table*: a folder under `Tables/` with neither a Delta log nor Iceberg metadata, which can't be read | fix the query, or report it |
 | 2 | `USAGE` | a wrong command, option or argument | fix the call |
-| 3 | `UNAVAILABLE` | Not signed in, Fabric refused the sign-in, or `export` with VS Code closed | ask the user to run `signin`, or open VS Code for `export` |
+| 3 | `UNAVAILABLE` | Not signed in, or Fabric refused the sign-in | ask the user to run `signin` |
 | 4 | `NOT_CACHED` | not in the cache; offline (no internet, or nobody signed in), `--fresh` and a table or file never read end here too, and `retry` is absent | ask, or add `--fresh` unless offline |
-| 5 | `DECLINED` | the user said no to an export | stop |
 | 6 | `TIMEOUT` | `--timeout` reached, and the query stopped | narrow it, or give it longer |
 
 A failure leaves stdout empty and says why on stderr. What each format gives you:
@@ -173,7 +119,7 @@ VS Code extension); nothing is written to Fabric or OneLake.
 - Listings and metadata (`ls`, `models`, `items`, `find`, `table`, `model`) come only from what the
   extension has already cached — what the user has opened in its tree — and never from
   OneLake or Fabric; stderr says how old the answer is. Something not cached says so: tell the
-  user, and add `--fresh` (which reads OneLake/Fabric now, and exports a model not downloaded
+  user, and add `--fresh` (which reads OneLake/Fabric now, and downloads a model not downloaded
   yet) only when they agree or say the data just changed.
 - A query (`sql`) reads OneLake, cached on disk too: a first query over a big table can
   take a minute or two, the next is seconds.
@@ -192,15 +138,5 @@ VS Code extension); nothing is written to Fabric or OneLake.
   not in a lakehouse. Write only when the user asks for it.
 - Several statements, separated by `;`, run in turn: the first that fails stops them, and the last one's rows are
   the answer.
-- `export` runs only when the user asks for it. VS Code then asks the user where the local copy goes and
-  waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why
-  nothing was published. The app is one file, `<model>.fabricator` (a zip of a Rayfin project, which Fabricator
-  imports), and is the model's Report alone.
-- To grow a Report before its export, or after (it is then the zip's), use `report … --set`. Or edit `site/public/report.json` in the file (its `AGENTS.md` says how: unzip, edit, zip again). A
-  app's model is `model.ossie.yaml` beside it, the model the app runs on.
-  Each tile is a Visual, `{ title, kind: "pivot", pivot }`, its `pivot` Explore's shelves (fields, measures, filters,
-  mark, sort, top), or `{ kind: "text", text }`: never SQL, the tile's query is generated from its shelves. The report
-  is `{ pages: [{ name, tiles }] }`. OneLake Studio's Report tab draws the zip's report as it changes; `export` again publishes it.
-  No export rewrites that file.
 - The same downloads are shared with the OneLake Studio VS Code extension
   (in the extension's cache folder, under `models/<account>/<ws>/<model>.ossie.yaml`).

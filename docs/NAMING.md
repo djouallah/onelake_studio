@@ -148,8 +148,8 @@ workspace of a name in the tenant and one semantic model of a name in a workspac
 file must use this name too, and it does not get a second one: if the name is taken in that workspace, the
 newer model overwrites what we have under it. The name therefore identifies exactly one model at a time.
 
-**Opening and exporting never reach the Power BI item.** A model opened from a file replaces only our own view of
-that name, and an export replaces only our own copy and app. A semantic model
+**Opening never reaches the Power BI item.** A model opened from a file replaces only our own view of
+that name. A semantic model
 item in Fabric is made only by Fabric, when a semantic view is published.
 
 Why two parts and not four:
@@ -224,10 +224,8 @@ file as it was written.
 anywhere, and a lakehouse can hold thousands of them across its subfolders, even with the same file
 name. A file has no model name.
 
-**Creating a model from a file is what takes a name.** The model, whether for Fabric or only for a Fabric
-app, must be `<workspace>.<model>_semanticmodel`, wherever the file was stored. An export overwrites
-whatever we have under that name. It asks first when that means replacing a different file at the model's
-path in `Files/`, or an app no export created.
+**Creating a model from a file is what takes a name.** The model must be
+`<workspace>.<model>_semanticmodel`, wherever the file was stored.
 
 **A database file is still a file.** Once attached, its tables are `<name>.<schema>.<table>`, which is not
 a OneLake table's name. A file whose name is a workspace's is attached as `<name>_file`, so that the
@@ -307,8 +305,7 @@ model is refused for the same reason.
 
 These do not meet the contract yet:
 
-- **Two features read outside these names.** An app from Export to Fabric uses its own `v_<table>` views
-  (`fabric_app/site/src/app.js`), and Time travel writes `iceberg_scan` directly (`page/app.js`).
+- **Time travel reads outside these names.** It writes `iceberg_scan` directly (`page/app.js`).
 - **A write names its table by display names only.** A GUID name reads, but is not a write's target, and
   neither is a lakehouse whose own name ends in `_warehouse` or another kind.
 

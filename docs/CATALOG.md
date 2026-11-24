@@ -326,7 +326,7 @@ vectors or column mapping.
 | Answered from | What |
 | --- | --- |
 | The catalog alone | The tree, Go To, `SHOW ALL TABLES`, Stats, History, a wildcard's list of files, the command line's metadata |
-| The catalog and the lake | Rows, Visual and a model's queries, for the files that have been read |
+| The catalog and the lake | Rows, Pivot and a model's queries, for the files that have been read |
 
 Whatever isn't held says so at once.
 
@@ -345,7 +345,6 @@ the newest metadata held.
 | The tree's wait for the server | NAMING.md's names |
 | | The `prefetchMetadata` walk, and `onelake.js` as the way to a listing, which a click still takes |
 | | `azure`, `httpfs`, and `ducklake` in place of the `cache_httpfs` fork |
-| | Export to Fabric and the Fabric app, both untouched |
 
 **ARCHITECTURE.md changes when this ships:** *The host does the work* no longer covers listings and metadata, *The
 cache* and *Offline* describe the catalog, and the tree no longer waits for the server.

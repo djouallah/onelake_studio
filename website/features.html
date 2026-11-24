@@ -15,7 +15,6 @@
       <nav class="site-nav" aria-label="Main">
         <a href="features.html" aria-current="page">Features</a>
         <a href="write-to-onelake.html">Write to OneLake</a>
-        <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html">Architecture</a>
         <a href="dax-sql.html">dax-sql</a>
         <a href="changelog.html">Changelog</a>
@@ -47,18 +46,8 @@ FROM demo.DL_semanticmodel GROUP BY ALL;</code></pre>
         <p>See a model's tables and relationships. Drag fields to build a table or a chart, and see the SQL behind it.</p>
       </div>
       <div class="shots">
-        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="OneLake Studio with a semantic model's Visual open: its fields on the left, and an area chart of Mwh by date for each region." width="2720" height="1720" loading="lazy"></a>
+        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="OneLake Studio with a semantic model's Pivot open: its fields on the left, and an area chart of Mwh by date for each region." width="2720" height="1720" loading="lazy"></a>
         <a class="shot" href="img/model.png"><img src="img/model.png" alt="The model's diagram: a summary fact table joined to its calendar, duid and mstime dimensions." width="1062" height="358" loading="lazy"></a>
-      </div>
-    </section>
-
-    <section class="feature stacked">
-      <div>
-        <h2>Export to Fabric</h2>
-        <p>Publishes a model's Report as a Fabric app. People open it in the browser after signing in to Fabric, and use its tiles and slicers there with nothing to install.</p>
-        <p>The app runs DuckDB in the browser, which reads the lakehouse's tables. Nothing is written to the model.</p>
-        <p>The app is saved on your computer as one .fabricator file, a Fabricator project. Open it again in OneLake Studio, on its Report page, or in Fabricator to keep building it. A model file, an Ossie .yaml or a .bim, opens from your computer too.</p>
-        <p class="more"><a href="export-to-fabric.html">Export to Fabric is experimental and will change</a></p>
       </div>
     </section>
 
@@ -86,7 +75,7 @@ FROM demo.DL_semanticmodel GROUP BY ALL;</code></pre>
       <p>It works offline. Anything you have read can be browsed, queried and pivoted without internet.</p>
     </section>
 
-    <p class="more read-only">SQL writes to a lakehouse's tables only once you turn on Allow Table Writes: see <a href="write-to-onelake.html">Write to OneLake</a>. Export to Fabric, which is experimental, and Upload Files both ask you first.</p>
+    <p class="more read-only">SQL writes to a lakehouse's tables only once you turn on Allow Table Writes: see <a href="write-to-onelake.html">Write to OneLake</a>. Upload Files asks you first.</p>
   </main>
 
   <footer class="site-footer">

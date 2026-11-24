@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Architecture: OneLake Studio</title>
-  <meta name="description" content="How OneLake Studio is built and why: one SQL name for every object, SQL only, on your machine and offline, then each part and what it does: VS Code's window, the extension host, the local catalog and its sync, the query server and its local lake, the command line and the exported Fabric app.">
+  <meta name="description" content="How OneLake Studio is built and why: one SQL name for every object, SQL only, on your machine and offline, then each part and what it does: VS Code's window, the extension host, the local catalog and its sync, the query server and its local lake, and the command line.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -15,7 +15,6 @@
       <nav class="site-nav" aria-label="Main">
         <a href="features.html">Features</a>
         <a href="write-to-onelake.html">Write to OneLake</a>
-        <a href="export-to-fabric.html">Export to Fabric</a>
         <a href="architecture.html" aria-current="page">Architecture</a>
         <a href="dax-sql.html">dax-sql</a>
         <a href="changelog.html">Changelog</a>
@@ -60,7 +59,7 @@ GROUP BY ALL;</code></pre>
       <p>Opening a model reads its definition from the Fabric REST API once and keeps it on your machine. Only Direct Lake models are supported, over a lakehouse or a SQL endpoint, and their tables are read from OneLake. Reading a model's definition needs the Contributor role or higher on the workspace, or write permission on the model.</p>
 
       <h3 id="read-only">Reads, unless you turn writes on</h3>
-      <p>OneLake Studio doesn't change a table unless you turn on Allow Table Writes in its settings, which is off by default. Every statement is checked before it runs: one statement at a time, and a write only to a lakehouse, only where its text says, and only when its setting is on. <code>COPY</code> to a lakehouse's Files/ is on by default. Export to Fabric and Upload Files write too, and both ask you first. See <a href="write-to-onelake.html">Write to OneLake</a>.</p>
+      <p>OneLake Studio doesn't change a table unless you turn on Allow Table Writes in its settings, which is off by default. Every statement is checked before it runs: one statement at a time, and a write only to a lakehouse, only where its text says, and only when its setting is on. <code>COPY</code> to a lakehouse's Files/ is on by default. Upload Files writes too, and asks you first. See <a href="write-to-onelake.html">Write to OneLake</a>.</p>
       <p>Why: you can point it at production data without risk, and so can an agent, until you choose to write.</p>
 
       <h3 id="local">Runs on your machine</h3>
@@ -78,8 +77,8 @@ GROUP BY ALL;</code></pre>
             <tr><td>The tree, <code>SHOW ALL TABLES</code>, <code>information_schema</code>, Go To</td><td>A table's file no query has opened here, or a file never read</td></tr>
             <tr><td>A table's Stats and History, and first rows already read</td><td>A wildcard over files</td></tr>
             <tr><td>Semantic models: opening them, the Model page, <code>SHOW SEMANTIC …</code></td><td>A table whose metadata was never read</td></tr>
-            <tr><td>Table rows, model queries and the Visual, for data already read</td><td>Export to Fabric</td></tr>
-            <tr><td><code>Files/</code> objects read before</td><td>Upload Files</td></tr>
+            <tr><td>Table rows, model queries and Pivot, for data already read</td><td>Upload Files</td></tr>
+            <tr><td><code>Files/</code> objects read before</td><td></td></tr>
           </tbody>
         </table>
       </div>
@@ -96,7 +95,7 @@ GROUP BY ALL;</code></pre>
       <figure class="diagram wide">
         <svg viewBox="0 0 680 566" role="img" aria-labelledby="parts-title parts-desc">
           <title id="parts-title">The parts of OneLake Studio</title>
-          <desc id="parts-desc">On this machine, VS Code's tabs and the command line talk to the extension host: the tabs over VS Code's message channel, the command line over a local pipe. The extension host sends statements to the query server over Quack and a control pipe, its sync worker asks the query server to sync a table whose snapshot moved, and it reads and writes the local catalog, a SQLite file. The query server holds the local lake, a DuckLake catalog of the tables read here with copies of their files, and runs the table service. A query reads the files already copied from disk, and the rest from OneLake. The table service downloads each file a query opened, whole, from OneLake. The sync worker reads listings and metadata from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
+          <desc id="parts-desc">On this machine, VS Code's tabs and the command line talk to the extension host: the tabs over VS Code's message channel, the command line over a local pipe. The extension host sends statements to the query server over Quack and a control pipe, its sync worker asks the query server to sync a table whose snapshot moved, and it reads and writes the local catalog, a SQLite file. The query server holds the local lake, a DuckLake catalog of the tables read here with copies of their files, and runs the table service. A query reads the files already copied from disk, and the rest from OneLake. The table service downloads each file a query opened, whole, from OneLake. The sync worker reads listings and metadata from the Fabric REST API and OneLake.</desc>
           <defs>
             <marker id="head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
               <path class="head" d="M0 0 8 4 0 8z"/>
@@ -121,7 +120,6 @@ GROUP BY ALL;</code></pre>
           <rect class="node" x="15" y="140" width="650" height="80" rx="5"/>
           <text class="title" x="340" y="170" text-anchor="middle">Extension host</text>
           <text class="note" x="340" y="194" text-anchor="middle">sign-in · statement check · names · sync worker</text>
-          <text class="note" x="340" y="210" text-anchor="middle">Export to Fabric</text>
 
           <path class="edge" d="M125 220V289" marker-end="url(#head)"/>
           <text class="note" x="133" y="250">Quack,</text>
@@ -161,14 +159,9 @@ GROUP BY ALL;</code></pre>
           <rect class="node remote" x="15" y="500" width="335" height="56" rx="5"/>
           <text class="title" x="182" y="523" text-anchor="middle">OneLake</text>
           <text class="note" x="182" y="542" text-anchor="middle">tables, files</text>
-          <rect class="node remote" x="365" y="500" width="160" height="56" rx="5"/>
-          <text class="title" x="445" y="523" text-anchor="middle">Fabric REST API</text>
-          <text class="note" x="445" y="542" text-anchor="middle">workspaces, models</text>
-          <rect class="node remote" x="545" y="500" width="120" height="56" rx="5"/>
-          <text class="title" x="605" y="523" text-anchor="middle">Fabric app</text>
-          <text class="note" x="605" y="542" text-anchor="middle">in a browser</text>
-          <path class="edge" d="M525 528H544" marker-end="url(#head)"/>
-          <text class="note" x="535" y="494" text-anchor="middle">Export</text>
+          <rect class="node remote" x="365" y="500" width="300" height="56" rx="5"/>
+          <text class="title" x="515" y="523" text-anchor="middle">Fabric REST API</text>
+          <text class="note" x="515" y="542" text-anchor="middle">workspaces, models</text>
         </svg>
       </figure>
     </section>
@@ -182,13 +175,12 @@ GROUP BY ALL;</code></pre>
           </thead>
           <tbody>
             <tr><td>VS Code's window</td><td>Draws the tree, tabs, menus and status bar. Each tab is a webview holding the extension's page. It does not have the OneLake token.</td><td>VS Code</td><td>None</td></tr>
-            <tr><td>Extension host</td><td>The extension's code. It handles sign-in, checks every statement and lets a write run only when its setting is on, turns names into tables, keeps the local catalog up to date, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td>VS Code's extension host, <code>dist/extension.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
+            <tr><td>Extension host</td><td>The extension's code. It handles sign-in, checks every statement and lets a write run only when its setting is on, turns names into tables, and keeps the local catalog up to date. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td>VS Code's extension host, <code>dist/extension.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
             <tr><td>Local catalog</td><td>A SQLite file on your machine. It stores all metadata: lists of workspaces, items and tables, table metadata, Delta history, opened models, and what was read. The tree reads it, even before you sign in.</td><td>A SQLite file, read with <code>node:sqlite</code></td><td>None</td></tr>
             <tr><td>Query server</td><td>Runs the SQL from every tab, the command line and Keep offline. Tabs connect to it with DuckDB's Quack protocol, and share one memory limit and the data already read. It is the one process that holds the local lake.</td><td>DuckDB 2.0, in a separate process</td><td>OneLake: table logs, and files not copied yet</td></tr>
             <tr><td>Local lake</td><td>A DuckLake catalog of every OneLake table read on this machine, made from the table's own Delta log or Iceberg metadata, and copies of its files. A query on a table it holds reads it at once and asks OneLake nothing. One per Microsoft account.</td><td><code>lake\meta.ducklake</code>, a DuckDB file, and <code>lake\files\</code>, in the account's cache folder</td><td>None</td></tr>
             <tr><td>Table service</td><td>Downloads each file a query opened, whole, in the background, then points the lake at the copy. Only files that queries opened come down. A copy no snapshot names any more is deleted after 15 minutes, and past the disk cache size (256 GB by default) the least recently read go.</td><td>The query server</td><td>OneLake: whole files, over HTTPS</td></tr>
             <tr><td>Command line</td><td>Sends its command to VS Code, which answers with its own sign-in, cache and engine. If VS Code isn't running, the command line starts its own process, with a query server and a lake of its own.</td><td><code>cli/cli.mjs</code></td><td>Through VS Code</td></tr>
-            <tr><td>Fabric app</td><td>A model's Report, published with Export to Fabric. It runs in the browser after a Fabric sign-in and reads the model's tables there.</td><td>Fabric, and the browser</td><td>OneLake</td></tr>
           </tbody>
         </table>
       </div>
@@ -249,17 +241,6 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
         <li>The server runs in UTC, because OneLake stores timestamps in UTC. Otherwise dates wouldn't match between tables.</li>
       </ul>
       <p class="more"><a href="reference.html#the-server">The server</a> and <a href="reference.html#keep-offline">Keep offline</a> in detail</p>
-    </section>
-
-    <section>
-      <h2 id="export">Export to Fabric</h2>
-      <p>Export to Fabric asks before writing anything. It publishes the app with the Fabric REST API. Nothing is written to a semantic model.</p>
-      <ul>
-        <li>The app holds its own copy of the model, as it was exported.</li>
-        <li>The app's function creates a read-only link for each table in the model, and for no other table. The browser reads the tables with DuckDB-WASM, with the rights of the app's owner.</li>
-        <li>Only people who can open the app in Fabric can load the page.</li>
-      </ul>
-      <p class="more"><a href="reference.html#export-to-fabric">Export to Fabric in detail</a></p>
     </section>
 
     <section>

@@ -30,9 +30,6 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 
 ## Experimental
 
-- **Publish to Fabric.** Turn a model's Explore into a Fabric app your colleagues open in a browser,
-  showing the model's current data to those with access. A copy stays in your folder, as a Fabricator project you
-  can open there to keep building the app.
 - **See your Fabric apps.** Each workspace lists its apps, their address and who can open them.
 
 ## Get started
@@ -45,9 +42,8 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 Needs desktop VS Code 1.101+ on Windows x64, macOS on Apple silicon, or Linux (x64 or arm64).
 
 **What it writes.** SQL reads. It writes a lakehouse's tables only once you turn on *Allow Table Writes*, and
-`COPY` writes a file to a lakehouse's `Files/` unless you turn off *Allow Copy to Files*. Two commands write too,
-and each asks first: *Export to Fabric* publishes an app, and *Upload Files…* writes files from your computer into a
-lakehouse's `Files/`. A semantic view's YAML is saved back to its lakehouse, and Publish makes Fabric's model of it. Opening a semantic
+`COPY` writes a file to a lakehouse's `Files/` unless you turn off *Allow Copy to Files*. *Upload Files…* writes
+files from your computer into a lakehouse's `Files/`, and asks first. A semantic view's YAML is saved back to its lakehouse, and Publish makes Fabric's model of it. Opening a semantic
 model keeps it on your machine only.
 
 How to report a security problem, and what is and isn't guarded: [SECURITY.md](SECURITY.md).

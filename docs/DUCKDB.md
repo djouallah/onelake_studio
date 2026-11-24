@@ -142,12 +142,6 @@ OneLake names a table `workspace.lakehouse.schema.table`, and DuckDB's names hav
 - **After a fatal error the database is invalidated** and refuses every statement. The server shuts down, and the
   next statement starts a new one.
 
-## DuckDB-WASM (the Fabric app)
-
-- **Without directIO a store read missed, then failed** with "Snappy decompression failure" until a reload.
-- **Two engines opening at once failed**: one worker's OPFS mount swept the other's scratch folder. Opens go one
-  at a time.
-
 ## Not DuckDB's
 
 - **The engine watchdog:** an engine stopped answering, with no bug found. It is a safety net.
