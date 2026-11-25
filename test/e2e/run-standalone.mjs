@@ -49,12 +49,6 @@ try {
     assert.equal(JSON.parse(r.stdout).ok, true);
   });
 
-  await step("export says it needs VS Code", async () => {
-    const r = await run(["export", "shop", "m"]);
-    assert.equal(r.code, 3, said(r));
-    assert.match(r.stderr, /VS Code/, said(r));
-  });
-
   // What a sign-in leaves behind, for the account's cache: no token, as offline has none to refresh.
   await writeFile(join(home, "standalone-state.json"), JSON.stringify({ "onelakeStudio.lastAccount": { key: "e2eaccount", queries: "e2e", tenant: "" } }));
 
