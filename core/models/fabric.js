@@ -5,8 +5,7 @@
 // A semantic model is not in OneLake: its list and its definition come from the Fabric
 // REST API, which wants a token in a different audience — asked for only when someone
 // expands "Semantic models", never at sign-in. Read only: this module writes nothing to
-// Fabric or OneLake (Export to Fabric, fabricapp.js, is the one write, and only on its
-// button). A model's definition comes as TMSL; it is kept on this machine as an Apache Ossie
+// Fabric or OneLake. A model's definition comes as TMSL; it is kept on this machine as an Apache Ossie
 // .yaml (extension.js) and opened from there.
 //
 // Host-side only. The panel never sees a Fabric token.

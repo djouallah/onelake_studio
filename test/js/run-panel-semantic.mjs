@@ -165,15 +165,15 @@ try {
   const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtab-bar")).display);
   if (css !== "flex") throw new Error(`explore.css did not load (the bar's display is ${css})`);
   const subtabs = await page.locator("#modelView [data-apage]").allTextContents();
-  if (subtabs.join() !== "Model,Visual,Report") throw new Error(`Explore's pages are ${subtabs.join(", ")}, not Model, Visual and Report`);
+  if (subtabs.join() !== "Model,Pivot") throw new Error(`Explore's pages are ${subtabs.join(", ")}, not Model and Pivot`);
 
-  // A model query, compiled by dax-sql and run on the native engine, from Visual's shelves: Total
-  // by Product's Color, as a table. Visual has no SQL box: its query is its shelves'.
-  // Visual loads ECharts as a classic script from the vendored tree — the CSP must admit it.
+  // A model query, compiled by dax-sql and run on the native engine, from Pivot's shelves: Total
+  // by Product's Color, as a table. Pivot has no SQL box: its query is its shelves'.
+  // Pivot loads ECharts as a classic script from the vendored tree — the CSP must admit it.
   async function modelQuery() {
     await page.click('#modelView .subtab[data-apage="pivot"]');
     await page.waitForFunction(() => !!window.echarts, { timeout: 60000 })
-      .catch(() => { throw new Error("ECharts never loaded for the Visual"); });
+      .catch(() => { throw new Error("ECharts never loaded for Pivot"); });
     // Fact tables start collapsed; a search opens the groups it matches.
     for (const [term, name] of [["Total", /^.?Total$/], ["Color", /Color$/]]) {
       await page.locator("#modelView .ex-search").fill(term);
@@ -191,73 +191,6 @@ try {
   const { info, rows } = await modelQuery();
   console.log("model query:", info, "|", rows);
   if (!/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
-
-  // The Report's +: a second page, its name ready to be typed, and the Report still drawn.
-  await page.click('#modelView .subtab[data-apage="report"]');
-  await page.locator("#modelView .rp-page-add").click();
-  await page.waitForFunction(() => document.querySelector("#modelView .rp-page-rename") || document.querySelector("#modelView .rp-report-page .ex-error, #modelView .ex-error"), { timeout: 30000 })
-    .catch(() => { throw new Error("the Report's + added no page"); });
-  const reportError = await page.locator("#modelView .ex-error").allTextContents();
-  if (reportError.length) throw new Error(`the Report's +: ${reportError.join(" | ")}`);
-  const pageNames = await page.locator("#modelView .rp-page").count();
-  if (pageNames !== 2) throw new Error(`the Report has ${pageNames} pages after its +, not 2`);
-  await page.keyboard.type("Second");
-  await page.keyboard.press("Enter");
-  await page.waitForFunction(() => [...document.querySelectorAll("#modelView .rp-page-name")].some(n => n.textContent === "Second"), { timeout: 30000 })
-    .catch(() => { throw new Error("the new page did not take the name typed"); });
-  console.log("report: a page added and named");
-
-  // A Report tile's statement is one a person can run: Logs shows it as it was written (enginelog.js sourceOf)
-  // and its Open puts it in a SQL box. It said FROM model, a name no SQL box takes. Here, what the Report
-  // really sends; that such a statement runs is the command line's test (cli-engine.test.mjs).
-  // The model opened again first: the visual's own answer is kept by the view it ran in, and the tile asks the
-  // same thing, so in the same view it would be answered from there and send nothing.
-  await page.click('#modelView .subtab[data-apage="pivot"]');
-  // Twice: two tiles, for a pick in one to filter the other.
-  await page.locator("#modelView button", { hasText: "Add to report" }).click();
-  await page.locator("#modelView button", { hasText: "Add to report" }).click();
-  await page.evaluate(path => window.postMessage({
-    type: "open-file", workspace: "ws", item: "shop.Lakehouse", path, bytes: 1,
-  }, "*"), BIM_PATH.slice(1).replace(/^ws\//, ""));
-  await page.waitForFunction(() => !document.getElementById("modelView").hidden && document.querySelector('#modelView .subtab[data-apage="report"]'), { timeout: 90000 });
-  const before = host.calls.length;
-  await page.click('#modelView .subtab[data-apage="report"]');
-  // The tile is on the page it was added to, the second one.
-  await page.locator("#modelView .rp-page-name", { hasText: "Second" }).click();
-  await page.waitForFunction(() => /blue/.test(document.querySelector("#modelView .rp-tile table")?.textContent ?? ""), { timeout: 60000 })
-    .catch(async () => { throw new Error(`the Report's tile never drew: ${(await page.locator("#modelView").innerText()).replace(/\s+/g, " ").slice(-300)}`); });
-  const { sourceOf } = require("../../core/engine/enginelog.js");
-  const strings = v => (typeof v === "string" ? [v] : v && typeof v === "object" ? Object.values(v).flatMap(strings) : []);
-  const written = host.calls.slice(before).flatMap(c => strings(c.args)).map(s => sourceOf(s).source).filter(Boolean);
-  const tile = written.find(s => /AGG\("Total"\)/.test(s));
-  if (!tile) throw new Error(`the Report's tile sent no statement over the model: ${written.join(" | ").slice(0, 300)}`);
-  if (/\bFROM model\b/.test(tile)) throw new Error(`a Report tile's statement says FROM model, which no SQL box runs: ${tile}`);
-  console.log(`report: a tile's statement names the model (${tile.replace(/\s+/g, " ").slice(0, 110)})`);
-
-  // Cross filtering: a click on a row of one tile runs the other again. The other keeps its rows on
-  // screen until the new ones are drawn: a tile that had an answer never goes back to "Waiting…".
-  {
-    const tileCount = await page.locator("#modelView .rp-tile").count();
-    if (tileCount !== 2) throw new Error(`the Report's page has ${tileCount} tiles after two Add to report, not 2`);
-    await page.waitForFunction(() => [...document.querySelectorAll("#modelView .rp-tile")].every(t => /red/.test(t.querySelector("table")?.textContent ?? "")), { timeout: 60000 })
-      .catch(() => { throw new Error("the Report's two tiles never both drew"); });
-    await page.evaluate(() => {
-      window.__said = [];
-      new MutationObserver(() => {
-        for (const p of document.querySelectorAll("#modelView .rp-tile .rp-say")) window.__said.push(p.textContent);
-      }).observe(document.querySelector("#modelView .rp"), { childList: true, subtree: true });
-    });
-    await page.locator("#modelView .rp-tile").nth(0).locator("tr.rp-pick", { hasText: "blue" }).first().click();
-    await page.waitForFunction(() => {
-      const t = [...document.querySelectorAll("#modelView .rp-tile")][1], text = t?.querySelector("table")?.textContent ?? "";
-      return t && !t.classList.contains("rp-stale") && /blue/.test(text) && !/red/.test(text);
-    }, { timeout: 60000 })
-      .catch(async () => { throw new Error(`a pick in one tile never filtered the other: ${(await page.locator("#modelView .report-page").innerText()).replace(/\s+/g, " ").slice(-300)}`); });
-    const said = await page.evaluate(() => window.__said);
-    if (said.length) throw new Error(`a tile that had an answer was blanked while it ran again: ${said.join(" | ")}`);
-    if (await page.locator("#modelView .rp-chip").count() !== 1) throw new Error("the pick has no chip over the tiles");
-    console.log("report: a pick in one tile filtered the other, which kept its rows meanwhile");
-  }
 
   // A model the extension downloaded to this machine arrives as text (open-model), not as
   // a OneLake path — the click in the tree — named by its workspace and its own name.

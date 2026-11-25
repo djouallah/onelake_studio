@@ -20,28 +20,6 @@ const PINS = {
   daxSql: 'dax-sql@0.2.4',
 };
 
-// The web app's (Export to Fabric, fabric_app/site): the packages its page imports, which the project's
-// package.json names (fabric_app/export/exportapp.js) and Vite bundles, at package time for OneLake Studio's
-// own publish (scripts/site-bundle.mjs) and in the project for Fabricator's and `rayfin up`'s. What npm has
-// not, vendor.mjs downloads into vendor/webapp/, and the export copies into the project's site/public/:
-// DuckDB's signed extensions and the world's outline.
-const WEBAPP = {
-  // DuckDB-WASM, the base build only (single-threaded; the page needs Chrome or Edge 121+).
-  duckdbWasm: '@duckdb/duckdb-wasm@1.33.1-dev114.0',
-  // The DuckDB that build reports (db.getVersion()): the path its extensions are asked under. A dev build
-  // (dev110.0 said v2.0.0-dev88614) loads no released extension: the build must report the release.
-  duckdb: 'v2.0.0',
-  // DuckDB's signed extensions the page LOADs (storage/data.js).
-  extensions: ['parquet', 'icu'],
-  // The Arrow DuckDB-WASM itself imports (its own dependency, ^17): one module for both.
-  arrow: 'apache-arrow@17.0.0',
-  // Kept on the same version: they share rayfin-auth and rayfin-lib, one module each.
-  rayfinClient: '@microsoft/rayfin-client@1.36.2',
-  rayfinFabric: '@microsoft/rayfin-auth-provider-fabric@1.36.2',
-  echarts: PINS.echarts,
-  worldMap: PINS.worldMap,
-};
-
 // What vendor.mjs fetches for each pin.
 const VENDOR = {
   esm: [PINS.marked, PINS.dompurify, PINS.yaml],          // npm/<pkg>/+esm, with its closure
@@ -51,12 +29,6 @@ const VENDOR = {
   packages: [
     { pkg: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie|ossie-sql)\.js)$/ },
   ],
-  // The web app's static files, vendor/webapp/, as the project's site/public/ holds them: world.json, and
-  // duckdb-ext/<version>/wasm_eh/<name>.duckdb_extension.wasm, the path DuckDB-WASM asks its repository for.
-  webapp: {
-    files: [{ from: `${WEBAPP.worldMap}/map/json/world.json`, to: 'world.json' }],
-    extensions: { duckdb: WEBAPP.duckdb, platform: 'wasm_eh', names: WEBAPP.extensions },
-  },
 };
 
-module.exports = { PINS, WEBAPP, VENDOR };
+module.exports = { PINS, VENDOR };

@@ -240,7 +240,7 @@ test("a dialect Publish knows no name for is red: Fabric refuses the view, even 
 
 test("a profile shows no planning or rows scanned it doesn't carry", async () => {
   const { parseProfile } = await import("../../page/explore/profile.js");
-  // One timed run (the exported app's on a semantic model, modeldata.js): its time, and its operators' rows.
+  // One timed run, as a profile with no planning carries it: its time, and its operators' rows.
   const endpoint = parseProfile({ latency: 5.66, operator: [{ operator_name: "TOP", operator_timing: 5.66, operator_cardinality: 5000,
     children: [{ operator_name: "TABLE SCAN", operator_timing: 0, operator_cardinality: 100000, extra_info: { Table: "t" }, children: [] }] }] });
   assert.equal(endpoint.scanned, null);

@@ -233,7 +233,7 @@ async function openTable(m) {
 async function openFile(m) {
   if (!await goToLakehouse(m.workspace, m.item)) return;
   const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0,
-                  modelWorkspace: m.modelWorkspace || null, openOn: m.openOn || null };
+                  modelWorkspace: m.modelWorkspace || null };
   if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(entry);
   else await selectFile(entry);
 }
@@ -415,8 +415,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName, lakehouseName);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
-    // An app's file holds its model in a zip, which no view can read: not kept.
-    if (!file.appFile && !file.fabricView) {
+    if (!file.fabricView) {
       engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema, lakehouseName)
         .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
     }
@@ -437,24 +436,6 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       copyText,
       loadState: viewState.get,
       saveState: viewState.set,
-      // The native engine set the profile's metrics before it locked its configuration, and
-      // the panel's CSP runs no inline script (DuckDB's HTML plan): its text plan instead.
-      profileSet: false,
-      htmlPlan: false,
-      // Explore as a Fabric app of its own (fabric_app/export/exportapp.js), for a model file that names one
-      // lakehouse: the app carries its own copy of the file and reads that lakehouse's tables. A model file in
-      // OneLake; one from disk (a download, say), in the workspace its tables are in; a Power BI semantic model,
-      // by its local copy, exported as a file from disk is, in its own workspace; or an app's file opened
-      // from disk: that file, published as it is (its model.yaml, its report); one exported from a file on
-      // disk names no Files/ path.
-      exportToFabric: file.appFile ? state => engine.exportExplore({ appFile: file.appFile, file: file.appModelFile, name: m.view,
-        text: bim, state, workspace: file.appModel.split('/')[0], path: file.appModel.split('/').slice(1).join('/'),
-        onDisk: !/^[^/]+\/[^/]+\/Files\//i.test(file.appModel) })
-        : (fromOneLake || file.modelWorkspace || file.localWorkspace) && semantic.lakehousesOf(m.bim).length === 1
-        ? state => engine.exportExplore(fromOneLake
-          ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
-          : { file: file.name, name: m.view, text: bim, state, workspace: file.modelWorkspace || file.localWorkspace, onDisk: true })
-        : undefined,
       // A Fabric semantic view: Fabric's Publish of it, from its lakehouse.
       publishView: file.fabricView && lakehouse
         ? () => engine.publishView({ workspace: lakehouse.workspace, item: lakehouse.item, view: file.modelName }) : undefined,
@@ -468,18 +449,9 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
         state: () => engine.offlineState({ workspace: m.schema, model: m.view }),
         set: on => engine.setOffline({ workspace: m.schema, model: m.view, on }),
       },
-      // The Report tab: the tiles in this model's Export to Fabric zip, else the file the host
-      // keeps for it, else none (fabric_app/export/exportflow.js reportOf), drawn again when they change; Add
-      // to report and a tile's ✕ save them (reportSave). It opens on Model, or on the Report for an app's file.
-      report: {
-        load: () => engine.modelReport({ workspace: m.schema, model: m.view }),
-        stamp: () => engine.modelReportStamp({ workspace: m.schema, model: m.view }),
-        save: (spec, stamp) => engine.modelReportSave({ workspace: m.schema, model: m.view, spec, stamp }),
-      },
-      openOn: openOnText ? 'model' : file.openOn || 'model',
       openOnText,
       // Its file written in, and saved back: a model file in OneLake, or one from disk. Not a semantic model's
-      // local copy (Fabric's is the model, and Refresh reads it again) nor an app's file (its model is in a zip).
+      // local copy (Fabric's is the model, and Refresh reads it again).
       // A Fabric semantic view of one .yaml: that file, back in Context/, once it still opens as a view; then the view
       // again, from what was saved. The TMDL Fabric made of one (SystemContext/) is read only.
       saveFileText: file.fabricView ? (file.viewFile ? async edited => {
@@ -492,7 +464,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
         await openFabricView({ path: file.path }, file.modelName, { openOnText: true });
         setStatus(`Saved ${file.viewFile.split('/').pop()}. Publish makes Fabric's model of it.`, 'ok');
       } : undefined)
-      : !file.appFile && !file.systemView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
+      : !file.systemView && !file.modelWorkspace && (fromOneLake || file.localWorkspace)
         ? async edited => {
           // A text that doesn't open as a model is not written: the file stays one that opens.
           await semantic.checkModel(file.name, edited);
@@ -583,8 +555,7 @@ async function runModelSql(sql) {
 }
 
 // A profile (EXPLAIN (ANALYZE, FORMAT json)) as this engine writes it, in the shape Explore's
-// profile view reads (explore/profile.js parseProfile, shared with the exported app, which
-// runs DuckDB-WASM and keeps the older flat keys):
+// profile view reads (explore/profile.js parseProfile, which reads the older flat keys):
 //   - DuckDB 2.0 nests its totals: planner.total_time, optimizer.total_time,
 //     physical_planner.total_time, query.total_time and total_rows_scanned,
 //     system.peak_buffer_memory; and an operator's rows scanned are `rows_scanned`;
@@ -921,7 +892,7 @@ async function showPlan(text) {
       sql: () => sql, copy: copyText,
       profile: held(async () => {
         try {
-          return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
+          return profileJson((await engine.runSql(profileSql(sql))).rows[0]?.explain_value);
         } catch (e) {
           // Past the EXPLAIN, the box has its answer: the view and this line say it.
           if (my === selSeq) setStatus(e.cancelled ? stoppedNote(e) : 'Plan failed: ' + e.message, e.cancelled ? undefined : 'error');
@@ -1443,8 +1414,6 @@ async function openPivot() {
       copyText,
       loadState: viewState.get,
       saveState: viewState.set,
-      profileSet: false,   // as the model view's (openModelView)
-      htmlPlan: false,
       editSql: editPivotSql,
       plainSql: m.plainSql,
       close: closePivot,
@@ -1453,7 +1422,7 @@ async function openPivot() {
     if (!tablePivot || tablePivot.table !== t) return;
     tablePivot = null;
     $('pivotView').innerHTML = `<div class="hint">${escapeHtml(`The pivot could not open: ${e.message}`)}</div>`;
-    setStatus(`Visual: ${e.message}`, 'error');
+    setStatus(`Pivot: ${e.message}`, 'error');
     console.error(e);
   }
 }
@@ -1989,7 +1958,7 @@ function setBusy(b, { stoppable = false } = {}) {
 showVersion();
 wireUi();
 engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, viewTag: cfg.viewTag, topRows: () => settings.selectTopRows, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
-// A visual, a pivot and a Report tile ask for as many rows as a result may keep (maxResultRows).
+// A pivot asks for as many rows as a result may keep (maxResultRows).
 if (cfg.maxRows) setRowCap(cfg.maxRows);
 engineReady = engine.init();
 if (cfg.draft) {
@@ -2026,17 +1995,13 @@ window.addEventListener('message', async e => {
       const t0 = Date.now();
       // Reported even when it fails: the host's progress notification waits for this.
       try {
-        // From the tree a semantic model (modelWorkspace); from disk a model file, or an app's file
-        // (appFile) on its own model, in the workspace its tables are in (workspace).
+        // From the tree a semantic model (modelWorkspace); from disk a model file, in the workspace its
+        // tables are in (workspace).
         await openModelView({ name: String(m.name || 'model.yaml'), path: String(m.path || ''),
                               modelWorkspace: m.modelWorkspace ? String(m.modelWorkspace) : null,
                               localWorkspace: m.workspace ? String(m.workspace) : null,
                               // The lakehouse its schema.table tables are in, picked for a file that doesn't say.
                               lakehouseName: m.lakehouse ? String(m.lakehouse) : null,
-                              appFile: m.appFile ? String(m.appFile) : null,
-                              appModel: m.appModel ? String(m.appModel) : null,
-                              appModelFile: m.appModelFile ? String(m.appModelFile) : null,
-                              openOn: m.openOn ? String(m.openOn) : null,
                               modelName: m.modelName ? String(m.modelName) : null }, String(m.text || ''));
       } finally {
         reportOpened('file', String(m.name || 'model.yaml'), Date.now() - t0);

@@ -49,7 +49,6 @@ const ICON_PATHS = {
   treemap: 'M2 3h12v10H2zM9 3v10M9 8h5M2 9h7',
   calendar: 'M2 4h12v10H2zM2 7h12M5 2v3M11 2v3',
   map: 'M8 14s4-4.2 4-7.5a4 4 0 0 0-8 0C4 9.8 8 14 8 14zM8 5.5a1 1 0 1 0 .01 0',
-  slicer: 'M2 3h12l-4.5 5.5V13l-3-1.5V8.5z',
   card: 'M2 4h12v8H2zM4.5 7h4M4.5 9.5h7',
   swap: 'M3 5h9l-2-2M13 11H4l2 2',
   sort: 'M3 4h10M3 8h7M3 12h4',
@@ -57,21 +56,13 @@ const ICON_PATHS = {
   clear: 'M3 4h10M6 4V2.5h4V4M4.5 4l.7 9.5h5.6l.7-9.5',
   format: 'M2 5h6M11 5h3M2 11h3M8 11h6M9.5 3.5v3M6.5 9.5v3',
   down: 'M4 6l4 4 4-4',
-  // A Report tile's tools (report.js).
-  grip: 'M6 4a.6.6 0 1 0 .01 0M10 4a.6.6 0 1 0 .01 0M6 8a.6.6 0 1 0 .01 0M10 8a.6.6 0 1 0 .01 0M6 12a.6.6 0 1 0 .01 0M10 12a.6.6 0 1 0 .01 0',
-  edit: 'M3 13l1-3.5L10.5 3 13 5.5 6.5 12zM9.5 4L12 6.5',
-  copy: 'M5.5 5.5h7V13h-7zM3.5 10.5V3h7',
-  close: 'M4 4l8 8M12 4l-8 8',
-  resize: 'M13 7l-6 6M13 11l-2 2',
   // A display folder in the field list.
   folder: 'M2 4.5h4.5L8 6h6v7H2z',
 };
 export const icon = name => el('svg:svg', { class: 'ex-ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, el('svg:path', { d: ICON_PATHS[name] }));
 export const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
   ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['treemap', 'Treemap'], ['calendar', 'Calendar'],
-  ['map', 'Map'], ['slicer', 'Slicer'], ['card', 'Card']];
-// How a slicer is drawn (slicerView); Range only for a date or a number.
-export const SLICER_STYLES = [['list', 'List'], ['buttons', 'Buttons'], ['dropdown', 'Dropdown'], ['range', 'Range']];
+  ['map', 'Map'], ['card', 'Card']];
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
 // A column on Values is summarised, as Power BI does it: a number summed, anything else
 // counted; its chip changes the summary. On the shelf it is "\0sum\0Table.Column".
@@ -88,7 +79,7 @@ const defaultAgg = f => f.type === 'number' ? 'sum' : 'count';
 // Totals are off until asked for. `v` 2: shelves saved before that kept totals on by
 // default, so their `totals` is not read back.
 // A new visual keeps its first 1000 rows (Top 1000); All rows is a pick away, and kept once picked (top: null).
-const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields', slicer: 'list', top: 1000 });
+const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields', top: 1000 });
 
 // =============================================================================
 // The model's fields, the query, the pivot: no DOM
@@ -328,58 +319,11 @@ function shelfField(fields, id) {
   return c && { id, kind: 'measure', type: 'measure', name: nameOf(id), agg: a.agg, column: c,
     format: a.agg === 'count' || a.agg === 'distinct' ? '#,0' : c.format };
 }
-/**
- * The SQL of a column's values, as the Filters shelf lists them: each once, in order (`desc`:
- * the largest first), the first `top`. A Report's filter bar and its colours by value ask it.
- * `name`: what SQL calls the model where this runs (FROM it), as for a tile (pivotQuery).
- */
-export function valuesSql(fields, id, { top = 1000, desc = false, name = 'model' } = {}) {
-  const columnOf = x => { const f = fields.byId.get(x); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
-  return modelSql({ select: { v: id }, orderBy: [desc ? ['v', 'desc'] : 'v'], top }, columnOf, name);
-}
-
-/** The names the shelves' Values have in their query's rows (a Report's format pane lists them). */
+/** The names the shelves' Values have in their query's rows (the Format pane lists them). */
 export const valueNames = s => (s?.values ?? []).map(nameOf);
-// A field's format string: a Report tile's own for its name (look.formats), else the model's.
+// A field's format string: the view's own for its name (look.formats), else the model's.
 const formatOf = (look, id) => look?.formats?.[nameOf(id)] ?? shelfField(look?.fields, id)?.format;
 
-/**
- * A Report's tile of saved shelves: { state }, every shelf there, { sql }, the SELECT over the
- * model it runs, and { field }, the model column of its first Rows field (else
- * Columns) that a click on it picks, or null.
- * `name`: what SQL calls the model where the tile runs, so that its statement is one a person can
- * run as it is (Logs shows it, and opens it in the SQL box). A tile is saved as its shelves, with no
- * name: the Report is the same whatever its model is called. `model` where the host names none.
- */
-export function pivotQuery(saved, fields, name = 'model') {
-  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error("a pivot tile's pivot is the shelves: { rows, cols, values, filters, mark }");
-  const state = { ...EMPTY(), ...saved };
-  for (const k of ['rows', 'cols', 'values', 'filters']) if (!Array.isArray(state[k])) throw new Error(`a pivot tile's ${k} is a list`);
-  const q = buildQuery(state);
-  if (!q) throw new Error("the tile's pivot has no fields on its shelves");
-  const columnOf = id => { const f = fields.byId.get(id); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
-  // A card has no rows to click: it picks nothing.
-  // A map picks its points' name (its third Rows field), not their latitude.
-  const firstId = state.mark === 'card' ? null : state.mark === 'map' ? state.rows[2] ?? null : state.rows[0] ?? state.cols[0];
-  const first = firstId == null ? null : columnOf(firstId);
-  // `sqlWith(where)`: the same query with more conditions (a Report's picks in other tiles, its
-  // filter bar), each as the Filters shelf writes one: [id, op, ...values].
-  const sqlWith = (where = []) => modelSql(where.length ? { ...q, where: [...(q.where ?? []), ...where] } : q, columnOf, name);
-  return { state, sql: sqlWith(), sqlWith,
-           field: first && { id: firstId, table: first.table, column: first.name, ref: `${qid(first.table)}.${qid(first.name)}` } };
-}
-
-/** What a Report's tile of these shelves is called: its values by its rows and columns. */
-export function pivotTitle(s) {
-  const names = ids => ids.map(nameOf).join(', ');
-  // A slicer is named for what it slices.
-  if (s.mark === 'slicer' && (s.rows[0] ?? s.cols[0])) return nameOf(s.rows[0] ?? s.cols[0]);
-  const dims = [...s.rows, ...s.cols];
-  return s.values.length && dims.length ? `${names(s.values)} by ${names(dims)}` : names(s.values.length ? s.values : dims);
-}
-
-// A Report's tile's other bars, points and cells, while one of its rows is picked.
-const DIM = 0.3;
 // The fill under a line: its colour at `a` at the line, fading to nothing at the axis. A colour
 // that is not '#rrggbb' is filled flat, at `a`.
 function fadeDown(c, a) {
@@ -388,37 +332,31 @@ function fadeDown(c, a) {
   const rgba = o => `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${o})`;
   return { opacity: 1, color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: rgba(a) }, { offset: 1, color: rgba(0) }] } };
 }
-const same = (a, b) => (a ?? null) === (b ?? null);
 
 /**
- * The rows of the shelves' query drawn as `mark` says ('auto': autoMark's), the Pivot page's
- * and a Report's tile's alike: { node }, a table or why there is none, or { option, keyAt }, an
- * ECharts option and the row key of a click on it (null: none). `s`: the shelves the rows are
- * of; `look`: { fields, palette, css, styles?, formats?, byValue?, labels?, measures?, totalLine?,
- * maxLabel?, valueColors?, change?, goodWhen? } — a Report tile's own: `formats`, a format
- * string by a field's name, over the model's; `byValue`, a table's measures coloured by their
- * value, 'background' or 'bar', by name; `labels`, a chart's values written on it; `measures`,
- * `totalLine`, `maxLabel` (pivotChart); `valueColors`, a colour by a value's label (the report's
- * theme); `change`, `goodWhen` (cardView). `pick` (a Report's tile): { on(key), active,
- * value } — what a click on a row key calls, and the first field's value picked: its row bright,
- * the others dim. `sel`: a slicer's (slicerView).
+ * The rows of the shelves' query drawn as `mark` says ('auto': autoMark's): { node }, a table or
+ * why there is none, or { option }, an ECharts option. `s`: the shelves the rows are of; `look`:
+ * { fields, palette, css, formats?, byValue?, labels?, measures?, totalLine?, maxLabel?, change?,
+ * goodWhen? }, the view's Format: `formats`, a format string by a field's name, over the model's;
+ * `byValue`, a table's measures coloured by their value, 'background' or 'bar', by name; `labels`,
+ * a chart's values written on it; `measures`, `totalLine`, `maxLabel` (pivotChart); `change`,
+ * `goodWhen` (cardView).
  */
-export function pivotView(s, rows, mark, look, pick = null, sel = null) {
+export function pivotView(s, rows, mark, look) {
   const shown = mark === 'auto' ? autoMark(s, look.fields) : mark;
-  if (shown === 'slicer') return { node: slicerView(s, rows, look, sel ?? { style: s.slicer, onChange() {} }) };
   if (shown === 'card') return { node: cardView(s, rows, look) };
   const piv = pivot(rows, s);
-  if (shown === 'table' || shown === 'highlight' || !s.values.length) return { node: pivotTable(s, piv, shown === 'highlight', look, pick) };
-  const out = pivotChart(s, piv, shown, look, pick);
+  if (shown === 'table' || shown === 'highlight' || !s.values.length) return { node: pivotTable(s, piv, shown === 'highlight', look) };
+  const out = pivotChart(s, piv, shown, look);
   return typeof out === 'string' ? { node: el('div', { class: 'ex-empty' }, out) } : out;
 }
 
 // A card: each field on Values as one figure, in its format, else grouped with at most two
 // decimals. Its query's total row has the figures when a field is on Rows (buildQuery), and the
-// rows under it are the first figure's trend, a line under it; else its one row has them. A
-// Report tile's `look.change`, the name of a measure on Values, is the first figure's change
+// rows under it are the first figure's trend, a line under it; else its one row has them. Its
+// Format's `look.change`, the name of a measure on Values, is the first figure's change
 // (▲ or ▼, good when it goes `look.goodWhen`, up by default) rather than a figure of its own.
-// A figure's name is under it only when there are several: a Report's tile is titled for one.
+// A figure's name is under it only when there are several.
 function cardView(s, rows, look) {
   const total = (s.rows.length ? rows.find(r => r[ROW_TOTAL]) : rows[0]) ?? {};
   const trend = s.rows.length ? rows.filter(r => !r[ROW_TOTAL]) : [];
@@ -461,102 +399,8 @@ function sparkline(values, color) {
     points.length > 1 ? el('svg:polygon', { points: `${points.join(' ')} ${last},24 ${first},24`, fill: `url(#${id})`, stroke: 'none' }) : null,
     el('svg:polyline', { points: points.join(' '), fill: 'none', stroke: color, 'stroke-width': '1.8', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }));
 }
-// A slicer: the values of the first Rows field (else Columns) as the rows have them, in the query's
-// order, each with the first measure's figure (a value with none is not in the rows), drawn as
-// `sel.style` says: a list to tick, buttons, a dropdown of the list, or a range for a date or a
-// number. `sel`: { style, values, range, onChange(next, quiet) }, `next` { values } or { range:
-// [lo, hi] } (null: nothing picked); `quiet`: the slicer has drawn the change itself. A Report's
-// tile filters by it; the Visual page's only shows it. `look.styles` ({ value, set(style) }, the
-// Visual page): a switch of the styles over it.
-function slicerView(s, rows, look, sel) {
-  const id = s.rows[0] ?? s.cols[0];
-  const field = id && look.fields.byId.get(id);
-  if (!field) return el('div', { class: 'ex-empty' }, 'A slicer needs a column on Rows.');
-  const name = nameOf(id), m = s.values[0];
-  const fmt = v => formatValue(v, formatOf(look, m));
-  const figures = new Map();
-  for (const r of rows) if (!r[ROW_TOTAL] && !r[COL_TOTAL] && !figures.has(r[name])) figures.set(r[name], m ? r[nameOf(m)] : null);
-  const values = [...figures.keys()];
-  const shown = v => (v == null ? '(blank)' : String(v));
-  const ranged = field.type === 'date' || field.type === 'number';
-  const style = SLICER_STYLES.some(([k]) => k === sel.style) && (sel.style !== 'range' || ranged) ? sel.style : 'list';
-  const ticked = new Set(sel.values ?? []);
-  const commit = () => { const vs = values.filter(v => ticked.has(v)); sel.onChange(vs.length ? { values: vs } : null, true); };
 
-  // The list, with a search and Clear; `after` once a box changes (the dropdown's summary).
-  function listOf(after = () => {}) {
-    const find = el('input', { type: 'search', placeholder: 'Search values', 'aria-label': `Search the values of ${name}` });
-    const list = el('div', { class: 'ex-values' });
-    const draw = () => {
-      const term = find.value.trim().toLowerCase();
-      list.replaceChildren(...values.filter(v => shown(v).toLowerCase().includes(term)).map(v => {
-        const box = el('input', { type: 'checkbox', checked: ticked.has(v) });
-        box.addEventListener('change', () => { if (box.checked) ticked.add(v); else ticked.delete(v); commit(); after(); });
-        return el('label', {}, box, el('span', { class: 'slicer-value' }, shown(v)), m ? el('span', { class: 'slicer-figure' }, fmt(figures.get(v))) : null);
-      }));
-    };
-    find.addEventListener('input', draw);
-    draw();
-    const clear = el('button', { type: 'button', class: 'btn-explore', onclick: () => { ticked.clear(); draw(); commit(); after(); } }, 'Clear');
-    return el('div', { class: 'rp-slicer' }, el('div', { class: 'rp-slicer-bar' }, find, clear), list);
-  }
-  function buttons() {
-    const pills = values.map(v => {
-      const b = el('button', { type: 'button', class: 'slicer-pill', 'aria-pressed': String(ticked.has(v)) }, shown(v));
-      b.addEventListener('click', () => { if (ticked.has(v)) ticked.delete(v); else ticked.add(v); b.setAttribute('aria-pressed', String(ticked.has(v))); commit(); });
-      return b;
-    });
-    const clear = el('button', { type: 'button', class: 'btn-explore', onclick: () => {
-      ticked.clear(); for (const b of pills) b.setAttribute('aria-pressed', 'false'); commit(); } }, 'Clear');
-    return el('div', { class: 'slicer-pills' }, pills, clear);
-  }
-  // A button that says what is picked, opening the list in a small window under it.
-  function dropdown() {
-    const say = () => [el('span', {}, !ticked.size ? 'All' : ticked.size === 1 ? shown([...ticked][0]) : `${ticked.size} selected`), icon('down')];
-    const b = el('button', { type: 'button', class: 'slicer-drop', 'aria-haspopup': 'dialog', 'aria-label': name }, say());
-    let pop = null;
-    const close = () => { pop?.remove(); pop = null; document.removeEventListener('pointerdown', outside, true); };
-    const outside = e => { if (pop && !pop.contains(e.target) && !b.contains(e.target)) close(); };
-    b.addEventListener('click', () => {
-      if (pop) { close(); return; }
-      pop = el('div', { class: 'ex-pop slicer-drop-pop', role: 'dialog', 'aria-label': name }, listOf(() => { b.replaceChildren(...say()); }));
-      pop.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); b.focus(); } });
-      document.body.append(pop);
-      const r = b.getBoundingClientRect();
-      pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
-      pop.style.top = `${Math.max(8, Math.min(r.bottom + 6, innerHeight - pop.offsetHeight - 8))}px`;
-      pop.querySelector('input')?.focus();
-      setTimeout(() => { if (pop) document.addEventListener('pointerdown', outside, true); });
-    });
-    return el('div', { class: 'slicer-dropdown' }, b);
-  }
-  // From and To, each optional: a date's or a number's own input, the values' ends as hints.
-  function range() {
-    const type = field.type === 'date' ? 'date' : 'number';
-    const ends = values.filter(v => v != null).map(v => (type === 'date' ? String(v).slice(0, 10) : v));
-    const hint = i => (ends.length ? String(i ? ends.reduce((a, b) => (b > a ? b : a)) : ends.reduce((a, b) => (b < a ? b : a))) : '');
-    const box = i => el('input', { type, step: 'any', value: sel.range?.[i] ?? '', placeholder: hint(i), 'aria-label': `${name} ${i ? 'to' : 'from'}` });
-    const from = box(0), to = box(1);
-    const read = x => (x.value === '' ? null : type === 'number' ? Number(x.value) : x.value);
-    const send = () => { const r = [read(from), read(to)]; sel.onChange(r[0] == null && r[1] == null ? null : { range: r }, true); };
-    for (const x of [from, to]) x.addEventListener('change', send);
-    const clear = el('button', { type: 'button', class: 'btn-explore', onclick: () => { from.value = ''; to.value = ''; send(); } }, 'Clear');
-    return el('div', { class: 'rp-slicer slicer-range' }, el('label', {}, 'From', from), el('label', {}, 'To', to), clear);
-  }
-
-  const body = style === 'buttons' ? buttons() : style === 'dropdown' ? dropdown() : style === 'range' ? range() : listOf();
-  if (!look.styles) return body;
-  const switcher = el('div', { class: 'subtabs slicer-styles', role: 'radiogroup', 'aria-label': 'Slicer style' },
-    SLICER_STYLES.map(([k, t]) => el('button', { type: 'button', class: `subtab${k === style ? ' active' : ''}`, role: 'radio',
-      'aria-checked': String(k === style), disabled: k === 'range' && !ranged, title: k === 'range' && !ranged ? 'For a date or a number column' : null,
-      onclick: () => look.styles.set(k) }, t)));
-  return el('div', { class: 'slicer-view' }, switcher, body);
-}
-
-// A key not picked, while a pick is on.
-const dimmed = (pick, key) => !!pick?.active && !same(key?.[0], pick.value);
-
-function pivotTable(s, piv, highlight, look, pick) {
+function pivotTable(s, piv, highlight, look) {
   const { palette } = look;
   const fmt = (id, v) => formatValue(v, formatOf(look, id));
   const measures = s.values, rowNames = s.rows.map(nameOf);
@@ -570,7 +414,7 @@ function pivotTable(s, piv, highlight, look, pick) {
   }
   const tint = palette[0];
   // Only for the highlight, which reads them: every cell is two string keys here.
-  // A Report tile's measures coloured by value (look.byValue): 'background' tints as the highlight
+  // Measures coloured by value (look.byValue, Format's): 'background' tints as the highlight
   // does, 'bar' fills the cell from the left, as far as its value is of the largest.
   const by = m => (highlight ? 'background' : look.byValue?.[nameOf(m)]);
   const ranges = Object.fromEntries(measures.filter(by).map(m => [m, extent(piv.rowKeys.flatMap(a => (s.cols.length ? piv.colKeys : [[]]).map(b => piv.cell(a, b)?.[nameOf(m)])))]));
@@ -598,11 +442,7 @@ function pivotTable(s, piv, highlight, look, pick) {
   const body = el('tbody');
   let prev = [];
   for (const a of rowKeys) {
-    // A Report's tile picks a row by its first field's value: a total row picks nothing.
-    const picks = pick && a && rowNames.length;
-    const tr = el('tr', { class: [a ? '' : 'ex-total', picks ? 'rp-pick' : '', picks && pick.active && same(a[0], pick.value) ? 'rp-on' : ''].filter(Boolean).join(' '),
-      ...(picks ? { tabindex: 0, onclick: () => pick.on(a),
-        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick.on(a); } } } : {}) });
+    const tr = el('tr', { class: a ? '' : 'ex-total' });
     if (a) {
       a.forEach((v, i) => {
         const repeat = prev.length > i && a.slice(0, i + 1).every((v2, j) => prev[j] === v2);
@@ -628,7 +468,7 @@ function pivotTable(s, piv, highlight, look, pick) {
   return t;
 }
 
-function pivotChart(s, piv, mark, look, pick) {
+function pivotChart(s, piv, mark, look) {
   const { fields, palette, css } = look;
   const fmt = (id, v) => formatValue(v, formatOf(look, id));
   const color = i => palette[i % palette.length];
@@ -639,12 +479,7 @@ function pivotChart(s, piv, mark, look, pick) {
   const at = (cat, ser) => byCols ? piv.cell([], cat) : piv.cell(cat, ser);
   const shown = series.slice(0, SERIES_CAP);
   const cut = series.length > SERIES_CAP ? ` (the first ${SERIES_CAP} of ${series.length} series)` : '';
-  // A point's value, dim when a pick is on and its key is not the one picked.
-  const point = (key, value) => (dimmed(pick, key) ? { value, itemStyle: { opacity: DIM } } : value);
 
-  // A value's own colour (a Report's theme gives a fuel, a region, one colour everywhere), else the palette's.
-  const valueColor = key => look.valueColors?.[label(key)];
-  const seriesColor = (b, j) => valueColor(b) ?? color(j);
   // The figure of row key `a` (with no Columns field, its one cell).
   const figure = (a, n) => piv.cell(a, s.cols.length ? piv.colKeys[0] : [])?.[n];
 
@@ -657,7 +492,7 @@ function pivotChart(s, piv, mark, look, pick) {
       if (typeof v !== 'number' || !(v > 0)) continue;
       const top = label([a[0]]);
       if (!tops.has(top)) {
-        const c = valueColor([a[0]]) ?? color(tops.size);
+        const c = color(tops.size);
         tops.set(top, { name: top, key: [a[0]], itemStyle: { color: c }, ...(deep ? { children: [] } : { value: v }) });
       }
       // The second level's boxes in their first level's colour; ECharts sums a first level's size.
@@ -673,7 +508,6 @@ function pivotChart(s, piv, mark, look, pick) {
           upperLabel: { show: deep, height: 18, color: '#fff', fontSize: 11 },
           levels: [{ itemStyle: { borderColor: border, borderWidth: 2, gapWidth: 2 } }, { itemStyle: { borderColor: border, borderWidth: 1, gapWidth: 1 } }] }],
       },
-      keyAt: () => null,
     };
   }
   if (mark === 'calendar') {
@@ -702,9 +536,8 @@ function pivotChart(s, piv, mark, look, pick) {
           firstDay: 1, splitLine: { show: false }, itemStyle: { color: css('--raised'), borderColor: css('--card'), borderWidth: 2 },
           dayLabel: { color: muted, fontSize: 10, firstDay: 1 }, monthLabel: { color: muted, fontSize: 10 }, yearLabel: { color: muted, fontSize: 11 } })),
         series: years.map((y, i) => ({ type: 'heatmap', coordinateSystem: 'calendar', calendarIndex: i,
-          data: days.filter(d => d[0].startsWith(y)).map(d => (dimmed(pick, keyOf.get(d[0])) ? { value: d, itemStyle: { opacity: DIM } } : d)) })),
+          data: days.filter(d => d[0].startsWith(y)) })),
       },
-      keyAt: e => keyOf.get(e.value?.[0]) ?? null,
     };
   }
   if (mark === 'map') {
@@ -728,20 +561,19 @@ function pivotChart(s, piv, mark, look, pick) {
         legend: groups.length > 1 ? { type: 'scroll', bottom: 0, data: groups.map(label) } : undefined,
         tooltip: { trigger: 'item', formatter: p => `${esc(p.data.name)}${groups.length > 1 ? ` · ${esc(p.seriesName)}` : ''}<br>${esc(n)}: <b>${esc(fmt(m, p.data.v))}</b>` },
         series: groups.map((b, i) => ({
-          type: 'scatter', coordinateSystem: 'geo', name: label(b), itemStyle: { color: seriesColor(b, i), opacity: 0.85 },
+          type: 'scatter', coordinateSystem: 'geo', name: label(b), itemStyle: { color: color(i), opacity: 0.85 },
           symbolSize: d => Math.max(5, Math.sqrt(Math.abs(d[2]) / top) * 25),
           data: points[i].map(p => ({ name: named ? label([p.a[2]]) : `${p.a[0]}, ${p.a[1]}`, value: [num(p.a[1]), num(p.a[0]), p.v], v: p.v,
-            key: named ? [p.a[2]] : null, ...(named && dimmed(pick, [p.a[2]]) ? { itemStyle: { opacity: DIM } } : {}) })),
+          })),
         })),
       },
-      keyAt: e => e.data?.key ?? null,
     };
   }
   if (mark === 'heatmap') {
     if (!s.rows.length || !s.cols.length) return 'A heatmap needs a field on Rows and one on Columns.';
     const m = s.values[0], n = nameOf(m);
     const cells = [];
-    piv.rowKeys.forEach((a, y) => piv.colKeys.forEach((b, x) => { const v = piv.cell(a, b)?.[n]; if (v != null) cells.push(point(a, [x, y, v])); }));
+    piv.rowKeys.forEach((a, y) => piv.colKeys.forEach((b, x) => { const v = piv.cell(a, b)?.[n]; if (v != null) cells.push([x, y, v]); }));
     const [lo, hi] = extent(cells.map(c => (c.value ?? c)[2]));
     return {
       option: {
@@ -755,7 +587,6 @@ function pivotChart(s, piv, mark, look, pick) {
         series: [{ type: 'heatmap', data: cells, itemStyle: { borderColor: css('--card'), borderWidth: 2, borderRadius: 3 },
           label: { show: cells.length <= 150, formatter: p => fmt(m, p.value[2]), fontSize: 10 } }],
       },
-      keyAt: e => piv.rowKeys[e.value?.[1]] ?? null,
     };
   }
   if (mark === 'scatter') {
@@ -772,14 +603,13 @@ function pivotChart(s, piv, mark, look, pick) {
         yAxis: { type: 'value', name: nameOf(my), scale: true, axisLabel: { formatter: v => axisValue(v, formatOf(look, my)) } },
         series: shown.map((b, i) => ({
           type: 'scatter', name: label(b), symbolSize: 8, itemStyle: { color: color(i), opacity: 0.8 },
-          data: keys[i].map(a => { const r = at(a, b); return { name: label(a), value: [r[nx], r[ny]], ...(dimmed(pick, a) ? { itemStyle: { opacity: DIM } } : {}) }; }),
+          data: keys[i].map(a => { const r = at(a, b); return { name: label(a), value: [r[nx], r[ny]] }; }),
         })),
       },
-      keyAt: e => keys[e.seriesIndex]?.[e.dataIndex] ?? null,
     };
   }
-  // Bar, stacked bar, line, area: one plot per measure, the series the column keys. A Report
-  // tile's `look.measures` ({ measure: { as, axis } }) puts its measures in one plot instead, each
+  // Bar, stacked bar, line, area: one plot per measure, the series the column keys. Format's
+  // `look.measures` ({ measure: { as, axis } }) puts its measures in one plot instead, each
   // drawn as it says (bar, line, area, or a dashed line), on the left axis or the right one.
   // `look.totalLine`: each measure's total (the query's own Totals row) as a line across;
   // `look.maxLabel`: each series' highest point labelled.
@@ -794,10 +624,10 @@ function pivotChart(s, piv, mark, look, pick) {
   const asOf = m => (combine ? look.measures[nameOf(m)]?.as : null) ?? (mark === 'line' ? 'line' : mark === 'area' ? 'area' : 'bar');
   const onRight = m => combine && look.measures[nameOf(m)]?.axis === 'right';
   const right = ms.some(onRight);
-  // One plot has no title over it: the Values shelf, or a Report tile's title, names its measure,
+  // One plot has no title over it: the Values shelf names its measure,
   // and a title there sat on the axis's top label. Several have one each, over their own plot.
   const one = plots === 1;
-  // `look.axisNames` (Visual: { x, y }): one plot's axes named from the shelves, the category's
+  // `look.axisNames` ({ x, y }): one plot's axes named from the shelves, the category's
   // field under it and its one measure on the value axis. Bars lying down keep their names' room:
   // only their measure is named, under them.
   const catName = one && look.axisNames?.x && !flat ? nameOf(byCols ? s.cols[0] : s.rows[0]) : null;
@@ -814,8 +644,6 @@ function pivotChart(s, piv, mark, look, pick) {
     axisLabel: { formatter: v => axisValue(v, formatOf(look, m)), hideOverlap: true }, splitNumber: plots > 2 ? 2 : 4 });
   const lines = combine ? ms.some(m => asOf(m) !== 'bar') : mark === 'line' || mark === 'area';
   const bars = combine ? ms.some(m => asOf(m) === 'bar') : !lines;
-  // A line marks the pick across its plot, as its points are not drawn.
-  const marked = pick?.active && lines ? cats.findIndex(a => same(a[0], pick.value)) : -1;
   const muted = css('--muted');
   const xAxis = combine ? [catAxis(0, { boundaryGap: bars })]
     : ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' }));
@@ -840,15 +668,12 @@ function pivotChart(s, piv, mark, look, pick) {
       xAxis, yAxis,
       series: ms.flatMap((m, i) => shown.map((b, j) => {
         const as = asOf(m), type = as === 'bar' ? 'bar' : 'line';
-        const c = named ? valueColor([nameOf(m)]) ?? color(i) : seriesColor(b, j);
+        const c = named ? color(i) : color(j);
         const total = look.totalLine && !byCols && shown.length === 1 ? piv.cell(null, b)?.[nameOf(m)] : null;
         const across = [
-          ...(marked >= 0 && i === 0 && j === 0 ? [flat ? { yAxis: label(cats[marked]) } : { xAxis: label(cats[marked]) }] : []),
           ...(typeof total === 'number' ? [{ ...(flat ? { xAxis: total } : { yAxis: total }), lineStyle: { type: 'dashed', color: muted },
             label: { show: true, position: 'insideEndTop', color: muted, fontSize: 11, formatter: `Total ${fmt(m, total)}` } }] : []),
         ];
-        // A bar of a value with its own colour (one series): that colour.
-        const own = a => (shown.length === 1 && !named && type === 'bar' ? valueColor(a) : null);
         const stack = (mark === 'stacked' || mark === 'area') && as !== 'line' && as !== 'dashed' ? `s${i}` : undefined;
         // A bar's free end is rounded: of a stack, its last series'.
         const round = type === 'bar' && (!stack || j === shown.length - 1) ? (flat ? [0, 3, 3, 0] : [3, 3, 0, 0]) : 0;
@@ -873,22 +698,17 @@ function pivotChart(s, piv, mark, look, pick) {
             fontSize: 10, formatter: p => fmt(m, p.value) } } : {}),
           ...(marks.length ? { markPoint: { symbol: 'circle', symbolSize: 6, silent: true, itemStyle: { color: c }, data: marks,
             label: { position: 'top', fontSize: 11, fontWeight: 600, color: css('--text'), formatter: p => fmt(m, p.value) } } } : {}),
-          data: cats.map(a => {
-            const p = point(a, at(a, b)?.[nameOf(m)] ?? null), oc = own(a);
-            if (!oc) return p;
-            return p && typeof p === 'object' ? { ...p, itemStyle: { ...p.itemStyle, color: oc } } : { value: p, itemStyle: { color: oc } };
-          }),
+          data: cats.map(a => at(a, b)?.[nameOf(m)] ?? null),
           ...(across.length ? { markLine: { silent: true, symbol: 'none', label: { show: false }, data: across } } : {}),
         };
       })),
     },
-    keyAt: e => cats[e.dataIndex] ?? null,
   };
 }
 
 // `root`: the element the page is built in. `ctx`:
 //   model()          the model, TMSL (a promise)
-//   name             the model's name in SQL (FROM <name>; 'model' in the Fabric app)
+//   name             the model's name in SQL (FROM <name>)
 //   run(sql, where)  the rows of a SELECT over the model (modelSql), as objects keyed by the
 //                    select's names; `where`: its conditions
 //   chart(el)        an ECharts instance on el, in the page's theme
@@ -896,12 +716,9 @@ function pivotChart(s, piv, mark, look, pick) {
 //   css(name)        a CSS token's value (the chart's tints)
 //   loadState()      the shelves kept from the last visit (or null)
 //   saveState(s)     keep the shelves for the next visit
-//   noSlicer         (optional) no Slicer mark (a table's Visual, which only builds SQL)
 //   mapReady()       (optional) the world's map registered with ECharts (a promise), before a map is drawn
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
-  // What the Visual page's slicer has picked: shown only, nothing filters here.
-  let preview = null;
   let popTimer = null, destroyed = false;
   // A column's values, as a filter lists them to tick: the same query whatever else is on
   // the shelves, and the model is read only — asked once per field for the explorer's life.
@@ -914,6 +731,9 @@ export function createExplorer(root, ctx) {
     try {
       const saved = ctx.loadState() || {};
       if (saved.v !== 2) delete saved.totals;
+      // Shelves kept as a slicer, a mark no longer drawn: Automatic picks one.
+      if (saved.mark === 'slicer') saved.mark = 'auto';
+      delete saved.slicer;
       return { ...EMPTY(), ...saved, v: 2 };
     } catch { return EMPTY(); }
   }
@@ -942,10 +762,10 @@ export function createExplorer(root, ctx) {
     TOPS.map(n => el('option', { value: n }, n ? `Top ${n}` : 'All rows')));
   const info = el('span', { class: 'ex-info' });
   // Format: the pane at the right of the view, what the shelves' `format` says of how it is drawn.
-  const formatBtn = tool('format', 'How this visual is drawn: colours, labels, numbers…', null, 'Format');
+  const formatBtn = tool('format', 'How this pivot is drawn: colours, labels, numbers…', null, 'Format');
   formatBtn.setAttribute('aria-pressed', 'false');
   const formatPane = el('aside', { class: 'rp-pane ex-format', hidden: true, 'aria-label': 'Format' });
-  const toolbar = el('div', { class: 'ex-toolbar', role: 'toolbar', 'aria-label': 'Visual' }, swapBtn, sortBtn, totalsBtn, clearBtn, formatBtn);
+  const toolbar = el('div', { class: 'ex-toolbar', role: 'toolbar', 'aria-label': 'Pivot' }, swapBtn, sortBtn, totalsBtn, clearBtn, formatBtn);
   const side = el('div', { class: 'ex-side' }, toolbar, card('Filters', shelfEls.filters),
     card('Show as', markBtn, el('div', { class: 'ex-card-sub' }, 'Values'), shelfEls.values));
   // The status line, under everything: what the view holds, and Top N.
@@ -971,7 +791,7 @@ export function createExplorer(root, ctx) {
     changed();
   });
   // The marks there are here, and the one the shelves are drawn as.
-  const marksHere = MARKS.filter(([k]) => !(k === 'slicer' && ctx.noSlicer));
+  const marksHere = MARKS;
   const shownMark = () => (state.mark === 'auto' ? (fields ? autoMark(state, fields) : 'table') : state.mark);
   function setMark(k) {
     // A card asks a query of its own (buildQuery): to or from one runs again.
@@ -1427,12 +1247,10 @@ export function createExplorer(root, ctx) {
           'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it. By keyboard: R, C, F or V on a field.')));
       return;
     }
-    // Visual names a chart's axes from its shelves, where its format has no title of its own.
+    // Pivot names a chart's axes from its shelves, where its format has no title of its own.
     const look = { fields, palette: ctx.palette(), css: ctx.css, ...formatLook(state.format),
-      axisNames: { x: !state.format?.xTitle, y: !state.format?.yTitle },
-      styles: { value: state.slicer, set: k => { state.slicer = k; save(); draw(); } } };
-    const view = pivotView(result.state, result.rows, state.mark, look, null,
-      { style: state.slicer, ...preview, onChange: (next, quiet) => { preview = next; if (!quiet) draw(); } });
+      axisNames: { x: !state.format?.xTitle, y: !state.format?.yTitle } };
+    const view = pivotView(result.state, result.rows, state.mark, look);
     if (view.node) {
       chartBox.hidden = true;
       table.hidden = false;
@@ -1468,7 +1286,7 @@ export function createExplorer(root, ctx) {
   let formatOpen = false, drawnSeries = [];
   function formatKind() {
     const m = state.mark === 'auto' && fields ? autoMark(state, fields) : state.mark;
-    return m === 'card' ? 'card' : m === 'slicer' ? 'slicer' : m === 'treemap' || m === 'calendar' || m === 'map' ? 'shape'
+    return m === 'card' ? 'card' : m === 'treemap' || m === 'calendar' || m === 'map' ? 'shape'
       : m === 'table' || m === 'highlight' || !state.values.length ? 'table' : 'chart';
   }
   function drawFormat() {
@@ -1512,15 +1330,6 @@ export function createExplorer(root, ctx) {
         const q = fields && buildQuery(totals ? state : { ...state, totals: false }, { cap });
         return q && { sql: plain ? modelSql(q, columnOf, null, plain) : sqlOf(q), where: q.where ?? [] };
       } catch { return null; }
-    },
-    // The shelves as they are (Export to Fabric: the app's first view).
-    state: () => JSON.parse(JSON.stringify(state)),
-    // Other shelves on screen, run (a Report's tile, to edit it), and kept as the shelves are.
-    setState(s) {
-      state = { ...EMPTY(), ...JSON.parse(JSON.stringify(s ?? {})), v: 2 };
-      preview = null;
-      closePop();
-      changed();
     },
     // The view is going: its timers stop, its popup goes, and a query still running finds
     // its sequence moved on and draws nothing.

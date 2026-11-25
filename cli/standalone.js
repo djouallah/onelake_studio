@@ -13,7 +13,6 @@
 
 const { join } = require('node:path');
 const { mkdirSync, readFileSync, existsSync } = require('node:fs');
-const { EXIT, failureJson } = require('./bridge');
 const { createConnectivity, probeOf } = require('../core/onelake/connectivity');
 const { useConnectivity, inTime } = require('../core/onelake/http');
 const { createSignIn } = require('../core/signin');
@@ -77,7 +76,6 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
     editorVersion: 'none',
     outputLog: () => '(none: VS Code is not running)',
     windowLog,
-    exportUi: {},
     view: { redraw() {}, queriesChanged() {}, modelChanged() {}, refresh() {}, opened: () => [], showOffline() {}, warmIfWanted() {} },
     closePanel() {}, closeAllTabs() {}, post() {},
     notify: message => say(message),
@@ -113,10 +111,6 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
 
     /** One request, as the bridge would have it answered. */
     async answer(request, { signal } = {}) {
-      if (request.args[0] === 'export') {
-        const message = `${request.args[0]} asks for your OK in VS Code: open VS Code with OneLake Studio, and run it again`;
-        return { out: request.opts.json ? failureJson(EXIT.UNAVAILABLE, message) : '', err: request.opts.json ? '' : message, code: EXIT.UNAVAILABLE };
-      }
       await settle();
       return core.agent.run(request, { signal });
     },

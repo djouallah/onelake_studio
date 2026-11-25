@@ -14,7 +14,7 @@ export function shiftDate(date, n) {
 
 // A value written as a model's format string says (Power BI's: `#,##0`, `0.0`, `$#,##0.00`,
 // `0.0%`): the decimals after the point, grouping with a comma, a leading currency sign, a
-// trailing % (the value times 100). A trailing `a` (`#,##0.0a`, the Report's 1.2K) writes it
+// trailing % (the value times 100). A trailing `a` (`#,##0.0a`, 1.2K) writes it
 // in thousands, millions or billions, K, M or B. Text, dates and a format it does not read are
 // written as they are.
 export function formatValue(v, format) {
@@ -45,7 +45,7 @@ export function axisValue(v, format) {
 // Explore's highlight table: how strong a cell's tint is, 6% to 60% of the colour, between the
 // smallest and the largest value shown.
 export const shade = (v, min, max) => v == null || !(max > min) ? 0 : Math.round(6 + 54 * (v - min) / (max - min));
-// A Report table's cell coloured by its value (a CSS background; '' for none): 'background'
+// A table's cell coloured by its value (a CSS background; '' for none): 'background'
 // tints it as the highlight does, 'bar' fills it from the left, as far as its size is of the
 // largest one's.
 export function byValueBackground(how, v, [lo, hi], color) {

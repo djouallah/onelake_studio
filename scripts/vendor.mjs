@@ -3,10 +3,7 @@
 // =============================================================================
 // Downloads what core/vendored.js pins — the markdown renderer, ECharts and the dax-sql
 // compiler — into vendor/, which panel.js serves to the page as webview
-// resources. Nothing the page runs comes from a CDN at run time. Export to Fabric copies
-// dax-sql from here into the app it writes, and vendor/webapp/ — the web app's files npm has not
-// (DuckDB's signed extensions, the world's outline) — into its site/public/. The packages its page
-// imports are npm's, bundled by Vite (scripts/site-bundle.mjs).
+// resources. Nothing the page runs comes from a CDN at run time.
 //
 // Layout, relative to vendor/:
 //   npm/<pkg>@<v>/+esm.js       a jsDelivr ESM bundle, saved with a .js extension: VS Code
@@ -14,9 +11,6 @@
 //                               refuses anything that is not JavaScript.
 //   npm/<pkg>@<v>/<path>        a plain file of a package (ECharts' own build, dax-sql's
 //                               modules).
-//   webapp/world.json           the world's outline a map draws over.
-//   webapp/duckdb-ext/<v>/wasm_eh/<name>.duckdb_extension.wasm
-//                               DuckDB's signed extensions, at the path DuckDB-WASM asks for.
 // Every absolute `/npm/…` import inside a bundle is rewritten to a RELATIVE path, so the
 // tree works under whatever base URI the webview gives it.
 //
@@ -60,7 +54,7 @@ async function save(rel, buf, root = OUT) {
 // "/npm/x@1/+esm" -> "npm/x@1/+esm.js"; "/npm/x@1/dist/a.mjs/+esm" -> "npm/x@1/dist/a.mjs/+esm.js"
 const localOf = npmPath => npmPath.replace(/^\//, "").replace(/\/\+esm$/, "/+esm.js");
 
-// `root`: vendor/ or vendor/webapp/, each tree whole on its own.
+// `root`: vendor/, its tree whole on its own.
 const seen = new Set();
 async function esmClosure(npmPath, root = OUT) {
   if (seen.has(`${root}|${npmPath}`)) return;
@@ -105,18 +99,6 @@ await Promise.all([
 ]);
 
 
-const WEB = join(OUT, "webapp");
-const panelFiles = files, panelBytes = bytes;
-const { duckdb, platform, names } = VENDOR.webapp.extensions;
-await Promise.all([
-  ...VENDOR.webapp.files.map(async f => save(f.to, await get(`${JSDELIVR}/npm/${f.from}`), WEB)),
-  ...names.map(async n => {
-    const rel = `duckdb-ext/${duckdb}/${platform}/${n}.duckdb_extension.wasm`;
-    await save(rel, await get(`https://extensions.duckdb.org/${duckdb}/${platform}/${n}.duckdb_extension.wasm`), WEB);
-  }),
-]);
-
 pins.save();
 await writeFile(STAMP, want);
-console.log(`vendored ${panelFiles} file(s), ${(panelBytes / 1e6).toFixed(1)}MB for the panel; ` +
-  `${files - panelFiles} file(s), ${((bytes - panelBytes) / 1e6).toFixed(1)}MB for the web app (vendor/webapp)`);
+console.log(`vendored ${files} file(s), ${(bytes / 1e6).toFixed(1)}MB for the panel`);

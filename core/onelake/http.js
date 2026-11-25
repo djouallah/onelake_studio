@@ -6,7 +6,7 @@
 // 401: a 403 means this identity may not, and a new token will not change its mind — and,
 // for the callers that ask for it, a 429 or a "not ready yet" status waited out. What the
 // service said when it refused (its error body), Fabric's continuation-token paging, and how
-// many requests run at once. catalog.js, onelakewrite.js, fabric.js and fabricapp.js each
+// many requests run at once. catalog.js, onelakewrite.js, publishview.js and fabric.js each
 // take what they need; none of them writes its own.
 // =============================================================================
 
@@ -123,7 +123,7 @@ async function bodyMessage(r, pick) {
 const fabricMessage = r => bodyMessage(r, j => j && (j.message || (j.error && j.error.message)));
 const oneLakeMessage = r => bodyMessage(r, j => j && j.error && j.error.message);
 
-// What the Fabric REST clients share (models/fabric.js, and the export's fabricapp.js).
+// What the Fabric REST clients share (models/fabric.js, publishview.js).
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 /** An answer the Fabric API gave, which must be OK or one of `ok`: else `what` failed, with what it said. */
 async function fabricOk(r, what, ok = []) {

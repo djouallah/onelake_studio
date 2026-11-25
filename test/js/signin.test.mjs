@@ -135,14 +135,6 @@ test("no asks the Fabric API's other audience after a cancel", async () => {
   assert.equal(asked.filter(a => a.scopes.includes(POWERBI)).length, 0);
 });
 
-test("Export's token is only ever the Fabric API's own audience", async () => {
-  const { signIn, asked } = setup();
-  assert.ok(await signIn.appToken({ createIfNone: true }));
-  const last = asked.at(-1);
-  assert.deepEqual(last.scopes, [FABRIC, "offline_access"]);
-  assert.equal(last.options.createIfNone, true);
-});
-
 test("forgetting the token asks again", async () => {
   const { signIn, asked } = setup();
   await signIn.hostToken();

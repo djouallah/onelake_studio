@@ -31,9 +31,8 @@ const { serveBridge } = require('../cli/bridge');
 const { PINS } = require('./vendored');
 const { createQueries } = require('./queries');
 const { createModels } = require('./models/models');
-const { createOneLakeWriter } = require('../fabric_app/export/onelakewrite');
-const { createViewPublisher } = require('../fabric_app/export/publishview');
-const { createExport } = require('../fabric_app/export/exportflow');
+const { createOneLakeWriter } = require('./onelake/onelakewrite');
+const { createViewPublisher } = require('./onelake/publishview');
 const { createEngines } = require('./engine/engines');
 
 const SESSION_WAIT_MS = 5_000;
@@ -77,7 +76,6 @@ const accountTurn = serialized(body => body());
  * @param {string} o.editorVersion
  * @param {() => string} o.outputLog  where the window's log is written
  * @param {object} o.windowLog  diaglog.js, for the command line's `log` and `status`
- * @param {object} o.exportUi  how Export to Fabric asks (exportflow.js)
  * @param {object} o.view  redraw, queriesChanged, modelChanged, refresh, opened, showOffline, warmIfWanted
  * @param {Function} o.closePanel, o.closeAllTabs  what is on screen over an engine
  * @param {(message: object) => void} o.post  to every tab
@@ -90,10 +88,10 @@ const accountTurn = serialized(body => body());
  */
 function createCore({
   signIn, connectivity, settings, readLog, extensionDir, storageDir, production, serverTag = '', servesCommandLine = true, memento, secrets, httpProxy,
-  readmePath, pageDir, build, editorVersion, outputLog, windowLog, exportUi, view, closePanel, closeAllTabs, post,
+  readmePath, pageDir, build, editorVersion, outputLog, windowLog, view, closePanel, closeAllTabs, post,
   notify, warn, showError, reloadWindow = null, setContext, onAccountChange, subscribe, log, mark,
 }) {
-  const { getSession, hostToken, fabricToken, appToken, forgetToken, signedOutByChoice, accountKey, queryAccountOf,
+  const { getSession, hostToken, fabricToken, forgetToken, signedOutByChoice, accountKey, queryAccountOf,
           knownAccount, rememberAccount } = signIn;
   const { logRead, logBoot, logCatalog } = readLog;
   const { catalogTtlMs, tableTtlMs, keepLimitBytes } = settings;
@@ -101,7 +99,7 @@ function createCore({
   // Set below: what an engine, a tab and the command line ask for by the time anything can ask.
   let onelake = null, semviews = null, rebindStore = null, onStoreCleared = () => {};
   let resolveSqlTable = null, resolveSqlFile = null, resolveSqlLakehouse = null, nameModelTables = null, cachedSqlTables = null;
-  let openSqlModel = null, saveQuery = null, exportExplore = null, openApp = null, modelReport = null, keepOffline = null;
+  let openSqlModel = null, saveQuery = null, keepOffline = null;
 
   // What an engine asks of this window, whichever engine it is.
   function engineCallbacks() {
@@ -166,8 +164,7 @@ function createCore({
     getToken: hostToken,
     onRequest: logRead,
   });
-  // Semantic models and their export: Fabric's token for the model, the storage one
-  // (the same cache the catalog uses) for the one file the export writes.
+  // Semantic models: Fabric's token for the model.
   const fabric = createFabric({ getFabricToken: fabricToken });
 
   // What the extension knows about OneLake, kept on disk per account and served from there
@@ -433,16 +430,9 @@ function createCore({
     vendorDir: join(extensionDir, 'vendor'),
     daxSqlPin: PINS.daxSql,
     yamlPin: PINS.yaml,
-    // `export`: Explore's own Export to Fabric (below), and the .yaml the tree wrote for a model.
-    exportApp: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     fetchModel: n => fetchModel(n, { fresh: true }),
     openModel: x => openSqlModel(x),
     nameTables: list => nameModelTables(list),
-    // `report`: a model's Report, the Report tab's own (below).
-    report: {
-      load: m => (modelReport ? modelReport.load(m) : Promise.reject(new Error('OneLake Studio is still starting'))),
-      save: m => (modelReport ? modelReport.save(m) : Promise.reject(new Error('OneLake Studio is still starting'))),
-    },
     signedIn: () => signedIn,
     offlineReason: () => connectivity.reason(),
     diagnostics: {
@@ -537,20 +527,6 @@ function createCore({
       onelake.models(workspace, { fresh: true }).catch(() => {});
     }
   };
-  const exporter = createExport({
-    connectivity, modules: () => agent.modules(), appToken, fabric,
-    memento, extensionDir, pageDir, reportDir: join(storageDir, 'reports'),
-    maxRows: () => settings.maxResultRows(),
-    ui: exportUi,
-    onRefresh: node => view.refresh(node),
-    log,
-  });
-  exportExplore = exporter.exportExplore;
-  openApp = exporter.openApp;
-  // The Report tab's tiles: a model's exported zip's report.json, else the file kept for it
-  // before an export, else none; Add to report and a tile's ✕ write them.
-  modelReport = { load: exporter.reportOf, stamp: exporter.reportStamp, save: exporter.reportSave };
-
   // Behind what's on screen, once it has been built.
   function start() {
     // Behind the tree. An older version's cache comes across, and the account provider is asked who is
@@ -586,7 +562,7 @@ function createCore({
   }
 
   return {
-    engines, onelake, semviews, rebindStore, exportExplore, openApp, modelReport, keepOffline, openSqlModel, nameModelTables, saveQuery,
+    engines, onelake, semviews, rebindStore, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
     // The cache folder moved from `old` (setCacheRoot): the store's Files/ bytes go to the new one too, and
     // this account's model copies move there, their views with them. Waited for before `old` is deleted.

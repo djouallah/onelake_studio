@@ -221,39 +221,37 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
   });
 });
 
-test("a Report tile with a pick from another tile runs filtered on the real engine (page/explore/report.js)", async () => {
-  const { pickWhere } = await import("../../page/explore/report.js");
-  const { modelFields, pivotQuery } = await import("../../page/explore/explore.js");
-  // The shop model's fields a tile names, as Visual reads them.
+test("Pivot's query runs on the real engine, its Filters shelf and a filter on a measure with it (page/explore/explore.js)", async () => {
+  const { modelFields, buildQuery, modelSql } = await import("../../page/explore/explore.js");
+  // The shop model's fields, as Pivot reads them.
   const fields = modelFields({ tables: [
     { name: "dim_customer", columns: [{ name: "Region", dataType: "string" }] },
     { name: "fct_sales", columns: [{ name: "customer_id", dataType: "int64" }], measures: [{ name: "Total Sales" }] },
   ], relationships: [{ fromTable: "fct_sales", toTable: "dim_customer" }] });
   const MODEL = "shop.sales_model_semanticmodel";
-  const BAR = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12 }, fields, MODEL);
-  const KPI = pivotQuery({ values: ["Total Sales"], mark: "card" }, fields, MODEL);
+  const columnOf = id => { const f = fields.byId.get(id); return f && f.kind === "column" ? { table: f.table, name: f.name, type: f.type } : null; };
+  const shelves = x => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: "auto", totals: false, sort: "fields", top: 1000, ...x });
   await withAgent(agent, async ({ cli }) => {
-    // A tile's statement names the model as SQL calls it (pivotQuery's name), so it runs as it is written:
-    // the one Logs shows, and opens in a SQL box. It said FROM model, and this test wrote the name in for it.
-    const rows = async (piv, where) => {
-      const text = piv.sqlWith(where);
+    // Its statement names the model as SQL calls it, so it runs as it is written: the one Logs shows, and opens in a SQL box.
+    const rows = async x => {
+      const text = modelSql(buildQuery(shelves(x)), columnOf, MODEL);
       assert.match(text, /FROM shop[.]sales_model_semanticmodel/);
       const r = await cli(["sql", text, "--json"]);
       assert.equal(r.code, EXIT.OK, `${text}\n${r.stdout}${r.stderr}`);
       return JSON.parse(r.stdout).rows.map(row => row.map(v => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)));
     };
-    assert.deepEqual(await rows(KPI, pickWhere("dim_customer.Region", { value: "East" })), [[12.5]]);
-    assert.deepEqual(await rows(BAR, pickWhere("fct_sales.customer_id", { value: 2 })), [["West", 5]]);
-    assert.deepEqual(await rows(BAR, pickWhere("dim_customer.Region", { value: null })), [], "a blank: no customer has none");
-    assert.deepEqual(await rows(BAR, pickWhere("dim_customer.Region", { value: "O'Brien" })), [], "a quote in the value");
-    // Two picks, ANDed to the tile's own filter.
-    const own = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12,
-                             filters: [{ field: "dim_customer.Region", op: "notIn", values: ["West"] }] }, fields, MODEL);
-    assert.deepEqual(await rows(own, [...pickWhere("fct_sales.customer_id", { value: 1 }), ...pickWhere("dim_customer.Region", { value: "East" })]), [["East", 12.5]]);
+    assert.deepEqual(await rows({ values: ["Total Sales"], mark: "card", filters: [{ field: "dim_customer.Region", op: "in", values: ["East"] }] }), [[12.5]]);
+    assert.deepEqual(await rows({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12,
+                                  filters: [{ field: "fct_sales.customer_id", op: "in", values: [2] }] }), [["West", 5]]);
+    assert.deepEqual(await rows({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar",
+                                  filters: [{ field: "dim_customer.Region", op: "in", values: ["O'Brien"] }] }), [], "a quote in the value");
+    // Two filters, ANDed.
+    assert.deepEqual(await rows({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12,
+                                  filters: [{ field: "dim_customer.Region", op: "notIn", values: ["West"] },
+                                            { field: "fct_sales.customer_id", op: "in", values: [1] }] }), [["East", 12.5]]);
     // A filter on the measure: a HAVING the compiler takes.
-    const having = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar",
-                                filters: [{ field: "Total Sales", op: "range", min: 6, measure: true }] }, fields, MODEL);
-    const kept = await rows(having, []);
+    const kept = await rows({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar",
+                              filters: [{ field: "Total Sales", op: "range", min: 6, measure: true }] });
     assert.ok(kept.length && kept.every(([, v]) => v >= 6), JSON.stringify(kept));
   });
 });

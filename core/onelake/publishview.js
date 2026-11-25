@@ -9,7 +9,7 @@
 // answered when it is done (200), or as a long-running operation (202).
 // =============================================================================
 
-const { FABRIC_API, authedFetch, jsonOrText, waitFabricOperation } = require('../../core/onelake/http');
+const { FABRIC_API, authedFetch, jsonOrText, waitFabricOperation } = require('./http');
 
 const TIMEOUT_MS = 5 * 60_000;
 

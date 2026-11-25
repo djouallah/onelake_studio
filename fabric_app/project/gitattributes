@@ -1,3 +1,0 @@
-# Every text file with the line ends it was written with, on any computer.
-* text=auto eol=lf
-*.wasm binary

@@ -12,12 +12,6 @@ vendor/
 duckdb-extensions/
 # The extension host bundled by scripts/bundle.mjs (at package time, and by F5).
 dist/
-# Export to Fabric's function, as its deploy package: built by function-bundle.mjs at
-# package time from the template vendor.mjs fetched, and shipped in the vsix.
-fabric-function/
-# Export to Fabric's page as Vite builds it (scripts/site-bundle.mjs), shipped in the vsix.
-fabric-site/
-fabric_app/**/node_modules/
 # Screenshots and drafts for blog posts, kept out of the repo.
 blog/
 .tmp/

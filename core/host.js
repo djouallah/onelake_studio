@@ -51,8 +51,6 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  * @param {(message: string) => void} [o.onStatus]  why a catalog call is taking long
  * @param {(name: string, bytes: Uint8Array) => Promise<string|null>} [o.saveFile]
  *        ask where to save, write it, answer the path (null: dismissed)
- * @param {(x: {file: string, name: string, text: string, state: object|null}) => Promise<string>} [o.exportExplore]
- *        Export to Fabric: answers what the page says when it is done
  * @param {(list: object[]) => Promise<string[]>} [o.nameTables]
  *        a semantic model's Direct Lake tables -> their SQL names: { workspace, item } by GUIDs, or
  *        { workspaceName, itemName }; then { schema, table }
@@ -70,34 +68,16 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        the box's text, for the next panel
  * @param {(name: string) => Promise<string|null>} [o.askVariable]
  *        a query variable's value, asked of the user; null when dismissed
- * @param {{ load: Function, stamp: Function, save?: Function }} [o.report]  the Report tab's tiles (exportflow.js reportOf, reportStamp, reportSave)
  * @param {(sqlName: string) => Promise<void>} [o.openTable]
  *        a OneLake table, by its SQL name, opened in a tab as the tree opens it
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, report = null, offlineState = null, setOffline = null, publishView = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, offlineState = null, setOffline = null, publishView = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveFileText = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
-    // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
-    // OneLake (the app reads it there), its name and the Explore shelves. The host asks where
-    // the local copy goes and publishes it.
-    'fabric.exportExplore': async x => {
-      if (!exportExplore) throw new Error('Export to Fabric is not available here');
-      // A OneLake file (workspace + path), or a file from disk in the workspace its tables are in
-      // (workspace + onDisk).
-      const onDisk = !!(x.onDisk && x.workspace);
-      if (!(x.workspace && x.path) && !onDisk) {
-        throw new Error('Export to Fabric needs a model file: one in OneLake, or one from disk in a workspace');
-      }
-      return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
-                             text: String(x.text ?? ''), ...(x.appFile ? { appFile: String(x.appFile) } : {}),
-                             ...(onDisk ? { workspace: String(x.workspace), onDisk: true, ...(x.path ? { path: String(x.path) } : {}) }
-                               : { workspace: String(x.workspace), path: String(x.path) }),
-                             state: x.state && typeof x.state === 'object' ? x.state : null });
-    },
     // Fabric's Publish of a semantic view (core.js publishView), from the Model tab of one: what to say after.
     'fabric.publishView': async x => {
       if (!publishView) throw new Error('Publish is not available here');
@@ -106,24 +86,6 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       const r = await publishView({ workspace: String(x.workspace), item: String(x.item), view });
       return `Published ${view}: Fabric made its model, ${view}` +
         (r.warnings.length ? `, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'}: ${r.warnings.join('; ')}` : '.');
-    },
-    // The Report tab (exportflow.js reportOf): a model by its names.
-    'model.report': async x => {
-      if (!report) throw new Error('the Report is not available here');
-      if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
-      return report.load({ workspace: String(x.workspace), model: String(x.model) });
-    },
-    'model.reportStamp': async x => {
-      if (!report) throw new Error('the Report is not available here');
-      if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
-      return report.stamp({ workspace: String(x.workspace), model: String(x.model) });
-    },
-    // Add to report and a tile's ✕ (exportflow.js reportSave): the tiles, over those of `stamp`.
-    'model.reportSave': async x => {
-      if (!report || !report.save) throw new Error('the Report is not saved here');
-      if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
-      return report.save({ workspace: String(x.workspace), model: String(x.model), spec: x.spec,
-                           stamp: typeof x.stamp === 'number' ? x.stamp : null });
     },
     // Keep offline (modeldata.js): a semantic model's tables on this machine, by its names alone.
     'model.offlineState': async x => {

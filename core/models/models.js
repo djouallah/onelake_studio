@@ -17,7 +17,7 @@ const VIEW_MODEL_REFUSED = /configured by service apps|denied access to read the
 const VIEW_MODEL = "a semantic view's model";
 
 // A model file's model name: its file name with no model extension, `.ossie.yaml` being one, as Ossie's
-// own tools name a model (sales.ossie.yaml is sales, as exportflow.js names its app).
+// own tools name a model (sales.ossie.yaml is sales).
 const modelNameOf = path => basename(path).replace(/(\.ossie)?\.(ya?ml|bim|tmdl)$/i, '') || basename(path);
 
 /**
@@ -96,8 +96,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   // A semantic model, opened from the tree or named by a query: its definition (Fabric's
   // getDefinition, TMSL), kept as a local copy in Apache Ossie — modelPath(n), ~/OneLakeStudio/
   // semantic-models/<account>/<workspace>/<model>.yaml — and read from there after. Nothing is written to OneLake, so a
-  // user who may only read the workspace opens and queries a model all the same; Export to
-  // Fabric is the one write (exportExplore). A model over a SQL endpoint is kept as one over the
+  // user who may only read the workspace opens and queries a model all the same. A model over a SQL endpoint is kept as one over the
   // item behind it (sqlendpoint.js). A model with no tables in OneLake is refused, and nothing is
   // kept. `fresh` reads Fabric again, over the local copy.
   // `${path}|${fresh}`, lower-cased -> Promise<{ path, text }>: a fresh read never joins one that

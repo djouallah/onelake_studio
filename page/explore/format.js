@@ -1,16 +1,15 @@
 // =============================================================================
-// explore/format.js — a Visual's format, and the pane that sets it
+// explore/format.js — Pivot's format, and the pane that sets it
 // =============================================================================
-// A Visual's shelves hold its format (`format`, beside rows, cols, values …), set in Visual's
-// Format pane and kept with them: a Report tile made from it draws it the same way.
+// Pivot's shelves hold its format (`format`, beside rows, cols, values …), set in its Format pane
+// and kept with them.
 //   { colors: { series: '#rrggbb' }, labels: true, legend: 'top'|'bottom'|'right'|'off',
 //     xTitle, yTitle, yMin, yMax, zoom: true, maxLabel: true, totalLine: true,
 //     measures: { measure: { as: 'bar'|'line'|'area'|'dashed', axis: 'right' } },
 //     numbers: { field: style }, byValue: { field: 'background'|'bar' }, banded: true,
 //     figureSize: 'S'|'L', figureColor: '#rrggbb', change: measure, goodWhen: 'down' }
 // every key optional: left out, as before. A chart's goes over its ECharts option (formatChart);
-// the rest is Visual's own drawing's (formatLook, explore.js pivotView). A Report's theme is its
-// own (report.js): { palette, textSize, colors: { value: '#rrggbb' } }.
+// the rest is Pivot's own drawing's (formatLook, explore.js pivotView).
 // =============================================================================
 
 import { el } from './dom.js';
@@ -20,10 +19,9 @@ export const NUMBER_STYLES = [['auto', 'Auto', null], ['int', '1,234', '#,##0'],
   ['short', '1.2K', '#,##0.0a'], ['pct', '12%', '0%'], ['usd', '$1,234', '$#,##0']];
 /** A number style's format string; null for Auto or one it does not know. */
 export const numberFormat = style => NUMBER_STYLES.find(([k]) => k === style)?.[2] ?? null;
-export const TEXT_SIZES = { S: 10, L: 14 };
 
 /**
- * What a format gives Visual's drawing (explore.js pivotView's `look`): a field's format string
+ * What a format gives Pivot's drawing (explore.js pivotView's `look`): a field's format string
  * by its name, a table's colours by value and bands, a chart's labels, measures in one plot,
  * total line and highest point, a card's figures' size, colour and change.
  */
@@ -36,20 +34,17 @@ export function formatLook(f = {}) {
 /**
  * A chart's ECharts option with a format over it (`f`): series colours by name, the legend's
  * place (off, or one shown where there was none), the category axis's title, the value axes'
- * title and range, a zoom slider, and, with `textSize`, the size of its axes' and legend's
- * text. `label` (fmt(series, value)): every series' values written on it, when f.labels. Pure:
- * the option given is not changed.
+ * title and range, and a zoom slider. Pure: the option given is not changed.
  */
-export function formatChart(option, f = {}, { textSize, label } = {}) {
+export function formatChart(option, f = {}) {
   const o = { ...option };
   const list = v => (v == null ? [] : Array.isArray(v) ? v : [v]);
   const put = (key, items) => { if (o[key] != null) o[key] = Array.isArray(option[key]) ? items : items[0]; };
   const grids = list(o.grid).map(g => ({ ...g }));
   const room = (side, px) => grids.forEach(g => { if (typeof g[side] === 'number') g[side] += px; });
-  const font = TEXT_SIZES[textSize];
   const num = v => typeof v === 'number' && Number.isFinite(v);
   const axisOf = a => {
-    const out = { ...a, ...(font ? { axisLabel: { ...a.axisLabel, fontSize: font } } : {}) };
+    const out = { ...a };
     if (a.type === 'value' || a.type === 'log') {
       if (f.yTitle) Object.assign(out, { name: f.yTitle, nameLocation: 'end', nameTextStyle: { align: 'left' } });
       if (num(f.yMin)) out.min = f.yMin;
@@ -80,7 +75,6 @@ export function formatChart(option, f = {}, { textSize, label } = {}) {
       if (f.legend === 'top' && !option.legend) grids.forEach(g => { if (typeof g.top === 'number') g.top = Math.max(g.top, 32); });
     }
   }
-  if (font && o.legend) o.legend = { ...o.legend, textStyle: { ...o.legend.textStyle, fontSize: font } };
   // A zoom slider under the plot, on its category axes (and a wheel or a pinch inside it).
   if (f.zoom && [...xs, ...ys].some(isCat)) {
     const on = xs.some(isCat) ? { xAxisIndex: xs.map((a, i) => (isCat(a) ? i : -1)).filter(i => i >= 0) }
@@ -93,8 +87,7 @@ export function formatChart(option, f = {}, { textSize, label } = {}) {
   o.series = list(o.series).map(s => {
     const c = colors[s.name];
     return { ...s,
-      ...(c ? { itemStyle: { ...s.itemStyle, color: c }, ...(s.type === 'line' ? { lineStyle: { ...s.lineStyle, color: c } } : {}) } : {}),
-      ...(f.labels && label ? { label: { show: true, position: 'top', fontSize: 10, formatter: p => label(s.name, p.value) } } : {}) };
+      ...(c ? { itemStyle: { ...s.itemStyle, color: c }, ...(s.type === 'line' ? { lineStyle: { ...s.lineStyle, color: c } } : {}) } : {}) };
   });
   return o;
 }
@@ -146,7 +139,7 @@ export const SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
 
 /**
  * The Format pane's rows for format `f`, as `about` says what is drawn: { kind: 'chart' |
- * 'table' | 'card' | 'slicer' | 'shape' (a treemap, a calendar, a map), series: [{ name,
+ * 'table' | 'card' | 'shape' (a treemap, a calendar, a map), series: [{ name,
  * color }], numbers: [field names] }. `set(patch)` changes it; `redraw()` draws the pane again
  * (after a Reset, which takes rows away). `css(name)`: a token's colour.
  */
@@ -199,7 +192,7 @@ export function formatRows(f, about, set, { redraw, css }) {
           v => set({ goodWhen: v === 'up' ? undefined : v }), 'When the change is good')));
     }
   }
-  if (about.kind !== 'slicer' && about.numbers.length) {
+  if (about.numbers.length) {
     rows.push(el('h3', { class: 'rp-pane-sub' }, 'Numbers'), ...about.numbers.map(n => paneRow(n,
       paneSelect(f.numbers?.[n] ?? 'auto', NUMBER_STYLES.map(([k, t]) => [k, t]),
         v => set({ numbers: { ...f.numbers, [n]: v === 'auto' ? undefined : v } }), `Numbers of ${n}`))));

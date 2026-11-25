@@ -1,11 +1,11 @@
-// onelakewrite.js: what the extension writes to OneLake — Export to Fabric's model and Upload's files, into
+// onelakewrite.js: what the extension writes to OneLake — Upload's files and Save's text, into
 // a lakehouse's Files/. No network: `fetch` answers from a script, and every call is kept.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createOneLakeWriter } = require("../../fabric_app/export/onelakewrite.js");
+const { createOneLakeWriter } = require("../../core/onelake/onelakewrite.js");
 
 const DFS = "https://onelake.dfs.fabric.microsoft.com";
 const res = (status, body = "", headers = {}) => ({

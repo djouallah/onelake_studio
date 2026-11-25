@@ -26,7 +26,7 @@ const ANSWERED = [
   ["ls"], ["ls", "ws", "data"], ["models"], ["models", "ws"], ["items"], ["items", "ws"],
   ["files", "ws", "data", "Files/raw"], ["files", "ws", "data", "Files/empty"],
   ["find", "custom"], ["find", "no such name"], ["table", "ws", "data", "customers"],
-  ["sql", "SELECT 1"], ["export", "ws", "Sales"],
+  ["sql", "SELECT 1"],
 ];
 const NOT_ANSWERED = [
   [["ls", "unseen"], EXIT.NOT_CACHED],
@@ -40,8 +40,6 @@ const NOT_ANSWERED = [
   [["table", "ws", "data", "orders"], EXIT.NOT_CACHED],
   [["table", "ws", "nope", "x"], EXIT.FAILED],
   [["model", "ws", "Ops"], EXIT.NOT_CACHED],
-  [["export", "ws", "Ops"], EXIT.NOT_CACHED],
-  [["export", "ws", "nope"], EXIT.FAILED],
 ];
 
 function checkAnswer(r, format, where) {
@@ -94,7 +92,7 @@ function checkFailure(r, format, code, where) {
 }
 
 test("every command, every format: an answer holds its shape, and nothing is fetched", async () => {
-  const { agent, calls, close } = await richAgent({ engine: fakeEngine(), exportApp: async () => "Published to Fabric: x" });
+  const { agent, calls, close } = await richAgent({ engine: fakeEngine() });
   try {
     await withAgent(agent, async ({ cli }) => {
       for (const argv of ANSWERED) for (const [format, flag] of Object.entries(FORMATS)) {
@@ -107,7 +105,7 @@ test("every command, every format: an answer holds its shape, and nothing is fet
 });
 
 test("every failure, every format: its own code, and no answer on stdout", async () => {
-  const { agent, calls, close } = await richAgent({ engine: fakeEngine(), exportApp: async () => "x" });
+  const { agent, calls, close } = await richAgent({ engine: fakeEngine() });
   try {
     await withAgent(agent, async ({ cli }) => {
       for (const [argv, code] of NOT_ANSWERED) for (const [format, flag] of Object.entries(FORMATS)) {
@@ -120,8 +118,8 @@ test("every failure, every format: its own code, and no answer on stdout", async
 });
 
 test("a listing's order is the same whatever order the workspaces answer in", async () => {
-  const a = await richAgent({ engine: fakeEngine(), exportApp: async () => "x" });
-  const b = await richAgent({ engine: fakeEngine(), exportApp: async () => "x", reverse: true });
+  const a = await richAgent({ engine: fakeEngine() });
+  const b = await richAgent({ engine: fakeEngine(), reverse: true });
   try {
     await withAgent(a.agent, ({ cli: one }) => withAgent(b.agent, async ({ cli: other }) => {
       for (const argv of [...ANSWERED, ["ls", "ws"]]) for (const [format, flag] of Object.entries(FORMATS)) {
@@ -480,33 +478,6 @@ test("models and items mark what a dataflow made for its staging", async () => {
     assert.match(stdout, /\| DataflowsStagingWarehouse \|  \| staging \|/);
   });
 });
-
-test("export: published, declined, failed, each its own code", async () => {
-  const declined = message => Object.assign(new Error(message), { declined: true });
-  let answer;
-  const { agent, close } = await richAgent({ exportApp: async () => answer() });
-  try {
-    await withAgent(agent, async ({ cli }) => {
-      answer = async () => "Published to Fabric: https://x";
-      let r = await cli(["export", "ws", "Sales", "--json"]);
-      assert.equal(r.code, EXIT.OK);
-      assert.equal(JSON.parse(r.stdout).data.message, "Published to Fabric: https://x");
-
-      answer = async () => { throw declined("Export cancelled."); };
-      r = await cli(["export", "ws", "Sales"]);
-      assert.equal(r.code, EXIT.DECLINED, "a No never reads as a publish");
-      assert.equal(r.stdout, "");
-      assert.match(r.stderr, /Export cancelled/);
-      r = await cli(["export", "ws", "Sales", "--json"]);
-      assert.equal(JSON.parse(r.stdout).error.code, "DECLINED");
-
-      answer = async () => { throw new Error("the deploy failed"); };
-      r = await cli(["export", "ws", "Sales"]);
-      assert.equal(r.code, EXIT.FAILED);
-    });
-  } finally { await close(); }
-});
-
 
 test("names that would break a table: every format keeps the rows apart", async () => {
   const at = Date.now();

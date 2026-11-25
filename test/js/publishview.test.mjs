@@ -1,11 +1,11 @@
-// fabric_app/export/publishview.js: Fabric's Publish of a semantic view, and what Fabric said of it. No network:
+// core/onelake/publishview.js: Fabric's Publish of a semantic view, and what Fabric said of it. No network:
 // `fetch` answers as Fabric did when OneLake Studio's spike published studio_spike (2026-11-18).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createViewPublisher } = require("../../fabric_app/export/publishview.js");
+const { createViewPublisher } = require("../../core/onelake/publishview.js");
 
 const WS = "91588e42-0f1c-4e56-bcaa-cbf015b8f312", LH = "d77983f0-61d2-4d37-b143-f1841f07a3f2";
 const res = (status, body) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null },

@@ -31,16 +31,10 @@ export function profileColors(css) {
   return { plan: css('--faint'), scan, join, aggregate, sort, window: win, filter, other: css('--muted') };
 }
 
-// What the profile is asked to measure on DuckDB 1.5 (the Fabric app's): the operators, and the
-// phases before them. DuckDB 2.0, the extension's engine, always collects them and has no such setting.
-export const PROFILE_METRICS = ['LATENCY', 'OPERATOR_TIMING', 'OPERATOR_CARDINALITY', 'OPERATOR_ROWS_SCANNED', 'OPERATOR_TYPE',
-  'OPERATOR_NAME', 'EXTRA_INFO', 'CUMULATIVE_ROWS_SCANNED', 'PLANNER', 'PHYSICAL_PLANNER', 'ALL_OPTIMIZERS',
-  'SYSTEM_PEAK_BUFFER_MEMORY'];
 // The SQL that profiles a query: the metrics, then EXPLAIN ANALYZE, which runs it. One row,
-// its `explain_value` the profile as JSON. `set: false` for DuckDB 2.0 (the extension's engine).
-export const profileSql = (sql, { set = true } = {}) =>
-  (set ? `SET custom_profiling_settings = '${JSON.stringify(Object.fromEntries(PROFILE_METRICS.map(m => [m, 'true'])))}';\n` : '') +
-  `EXPLAIN (ANALYZE, FORMAT json) ${sql}`;
+// its `explain_value` the profile as JSON. DuckDB 2.0, the extension's engine, always collects the
+// operators' metrics and the phases before them.
+export const profileSql = sql => `EXPLAIN (ANALYZE, FORMAT json) ${sql}`;
 
 // An operator's kind, for its colour: what it does, read off DuckDB's operator name.
 const KINDS = [['scan', /SCAN|READ_|PARQUET|CSV|COLUMN_DATA|DUMMY|EMPTY_RESULT|CHUNK_SCAN|DELIM_SCAN|CTE_SCAN/],
@@ -232,7 +226,7 @@ export function createPlanView(ctx) {
 }
 
 // The SQL tab: the statement, and Copy. Runs nothing. `sql` is one statement, or several to show one after another,
-// [{ label, text }], each with its heading and its own Copy (Visual's: the model's SQL, and the SQL it compiles to).
+// [{ label, text }], each with its heading and its own Copy (Pivot's: the model's SQL, and the SQL it compiles to).
 function sqlView(sql, copyText) {
   const one = text => {
     const copy = el('button', { type: 'button', class: 'btn-explore pf-copy' }, 'Copy');

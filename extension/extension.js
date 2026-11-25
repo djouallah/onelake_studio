@@ -130,11 +130,6 @@ function closeAllTabs() {
 let rebindStore = async () => {};
 // The semantic views this machine keeps (semviews.js), per account; set by activateInner.
 let semviews = null;
-// Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
-// which owns the agent's modules.
-let exportExplore = null;
-// The Report tab's tiles (exportflow.js reportOf), the page's model.report; set by activateInner, as above.
-let modelReport = null;
 // Keep offline (modeldata.js), the page's model.offlineState and model.setOffline; set by activateInner, as above.
 let keepOffline = null;
 // A semantic model a query names (ws.model_semanticmodel), opened: its local copy kept, and
@@ -186,14 +181,6 @@ async function show(context, { newTab = false, key = null, signIn = true, ...opt
     host: (tabEngine, post) => createHostMethods({
       onelake, engine: tabEngine, onStatus: message => post({ type: 'status', message }),
       saveFile, semviews, modelsDir: engines.modelsFolder(),
-      // A refusal is what Explore's info line says, not a failure of the export.
-      exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
-        : Promise.reject(new Error('OneLake Studio is still starting'))),
-      report: {
-        load: x => (modelReport ? modelReport.load(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
-        stamp: x => (modelReport ? modelReport.stamp(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
-        save: x => (modelReport ? modelReport.save(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
-      },
       publishView: x => (theCore ? theCore.publishView(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       setOffline: x => (keepOffline ? keepOffline.set(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -408,18 +395,6 @@ async function activateInner(context) {
     editorVersion: vscode.version,
     outputLog: () => outputLogOf(dirname(context.logUri.fsPath), 'OneLake Studio'),
     windowLog: out,
-    exportUi: {
-      info: (...a) => vscode.window.showInformationMessage(...a),
-      warn: (...a) => vscode.window.showWarningMessage(...a),
-      openFolder: () => { const open = (vscode.workspace.workspaceFolders || [])[0]; return open ? open.uri.fsPath : null; },
-      saveFile: async ({ defaultPath, title, saveLabel, filters }) => {
-        const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(defaultPath), title, saveLabel, filters });
-        return uri ? uri.fsPath : null;
-      },
-      withProgress: (title, work) => vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, work),
-      openExternal: url => vscode.env.openExternal(vscode.Uri.parse(url)),
-      reveal: dir => vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(dir)),
-    },
     view: {
       redraw: () => tree.redraw(),
       queriesChanged: () => tree.queriesChanged(),
@@ -443,7 +418,7 @@ async function activateInner(context) {
     mark: step => out && out.mark(step),
   });
   theCore = core;
-  ({ engines, onelake, semviews, rebindStore, exportExplore, modelReport, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
+  ({ engines, onelake, semviews, rebindStore, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
   const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
@@ -502,7 +477,7 @@ async function activateInner(context) {
   const offlineItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
   offlineItem.name = 'OneLake Studio offline';
   offlineItem.command = 'onelakeStudio.signIn';
-  offlineItem.tooltip = 'OneLake Studio is working from what this machine has read. Export to Fabric, and anything never read, need OneLake. Click to sign in.';
+  offlineItem.tooltip = 'OneLake Studio is working from what this machine has read. Anything never read needs OneLake. Click to sign in.';
   context.subscriptions.push(offlineItem);
   const showOffline = reason => {
     if (!reason) { offlineItem.hide(); return; }
@@ -565,7 +540,7 @@ async function activateInner(context) {
   const modelTabKey = n => `model:${n.workspace}/${n.model}`;
   function tabKey(msg) {
     if (msg.type === 'open-model') {
-      return msg.appFile ? pathKey(msg.appFile) : msg.modelWorkspace ? modelTabKey({ workspace: msg.modelWorkspace, model: msg.modelName })
+      return msg.modelWorkspace ? modelTabKey({ workspace: msg.modelWorkspace, model: msg.modelName })
         : msg.path ? pathKey(msg.path) : null;
     }
     // A table's and an item's names are matched ignoring case, as its SQL name is (NAMING.md); a path in Files/ is exact.
@@ -653,7 +628,7 @@ async function activateInner(context) {
 
   // A click on a model in the tree: its local copy (read from Fabric the first time), opened in
   // the panel. One progress notification from the click until the page says it is on screen.
-  async function openModel(n, { openOn = null, key = null } = {}) {
+  async function openModel(n, { key = null } = {}) {
     if (!n || n.kind !== 'semanticModel') return;
     // Open already (`key`: the app's file it was opened from): its tab, with nothing read again.
     key = key || modelTabKey(n);
@@ -672,7 +647,7 @@ async function activateInner(context) {
           say('opening it in OneLake Studio…');
           const name = modelFileName(n.model);
           const opened = whenOpened(name);
-          const went = await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model, openOn }, n.model, key);
+          const went = await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model }, n.model, key);
           // Its tab came forward: the page will not say it opened anything.
           if (went !== true) return;
           await opened;
@@ -709,8 +684,7 @@ async function activateInner(context) {
       .catch(e => { if (out) out.appendLine(`${workspace}/${path} was saved, and its folder could not be listed again — ${(e && e.message) || e}`); });
   };
 
-  // A file from disk: VS Code's Explorer or an editor's title bar, an app file's editor, or a double-click. An app's file (.fabricator, or an earlier .fabricapp) opens its model on the Report page, drawing this
-  // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it; a .sql file
+  // A file from disk: VS Code's Explorer or an editor's title bar, a model file's editor, or a double-click. An Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it; a .sql file
   // opens in the SQL box, its text not run, as a saved query does. `arg`: a Uri, a path, or nothing
   // (the active editor's file). `fallbackToText` (a double-click VS Code handed to this extension's editor):
   // a file that does not open here opens as text in VS Code's own editor, with why, never as nothing at all.
@@ -723,7 +697,6 @@ async function activateInner(context) {
     // Open already: its tab, before the file is read again.
     if (revealTab(pathKey(fsPath))) return true;
     try {
-      if (/\.(fabricator|fabricapp)$/i.test(fsPath)) { await openAppFile(fsPath); return true; }
       if (/\.sql$/i.test(fsPath)) {
         const sql = await fsp.readFile(fsPath, 'utf8');
         openedFiles.add(pathKey(fsPath));
@@ -845,22 +818,6 @@ async function activateInner(context) {
     });
   }
 
-  // A .fabricator (or an earlier .fabricapp) opens on its own model.yaml, the app as it is, and Export to
-  // Fabric there publishes this file. On the Report page, which draws this file (exportflow.js openApp).
-  async function openAppFile(fsPath) {
-    if (!core.openApp) throw new Error('OneLake Studio is still starting');
-    const app = await core.openApp(fsPath);
-    const { workspace, model } = app.report;
-    if (app.copy) {
-      // Named for its model's format (model.ossie.yaml, model.bim): the tab reads the text by its name.
-      return openText({ name: `${model}${app.copy.name.replace(/^model/, '')}`, path: fsPath, text: app.copy.text, workspace, modelName: model,
-                        appFile: fsPath, appModel: app.modelPath, appModelFile: app.copy.name, openOn: 'report' });
-    }
-    // A file from before the app held its model: the model file in OneLake, as the tree opens it.
-    const [ws, ...rest] = app.modelPath.split('/');
-    return openInPanel({ type: 'open-file', workspace: ws, item: rest[0], path: rest.join('/'), bytes: 0, openOn: 'report' }, undefined, pathKey(fsPath));
-  }
-
   // The local copies of a workspace's models, read from Fabric again, behind: Refresh of the workspace
   // or its Semantic models is the one way a change made in Fabric reaches them. A model that fails
   // keeps its copy, and says why in the log.
@@ -889,13 +846,13 @@ async function activateInner(context) {
   };
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
 
-  // A .fabricator or .fabricapp, or a model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code, opens
-  // in OneLake Studio here, by openPath.
+  // A model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code, opens in OneLake Studio here, by
+  // openPath.
   // Its editor closes its own empty tab ("Reopen Editor With… Text Editor" still shows the text). A .sql file
   // is not taken: most have nothing to do with OneLake, so it opens as text, and Explorer's right-click opens it
   // here.
   if (vscode.window.registerCustomEditorProvider) {
-    for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
+    for (const viewType of ['onelakeStudio.ossieModel']) {
       context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {
         openCustomDocument: uri => ({ uri, dispose() {} }),
         // It returns at once: VS Code is still putting the panel on screen while this runs, and a panel
@@ -1187,7 +1144,7 @@ async function activateInner(context) {
       }
     }),
     // Fabric's Publish of a semantic view, from a .yaml of it (Context/Semantic Views/<view>/…): one request to Fabric,
-    // which makes the view's TMDL and model (fabric_app/export/publishview.js). In the status bar while it runs,
+    // which makes the view's TMDL and model (core/onelake/publishview.js). In the status bar while it runs,
     // blocking nothing; what Fabric said after, its diagnostics by file and line in the log too.
     vscode.commands.registerCommand('onelakeStudio.publishSemanticView', n => {
       // From its folder, or from a .yaml in it.

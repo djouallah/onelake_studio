@@ -23,7 +23,7 @@ test("help and version need no VS Code, and exit 0", async () => {
     const r = await run(argv, NOBODY);
     assert.equal(r.code, 0, argv.join(" "));
     assert.match(r.stdout, /ls <ws> <item>/);
-    assert.doesNotMatch(r.stdout, /export <ws>/, "that command's lines, not all of them");
+    assert.doesNotMatch(r.stdout, /sql "<sql>"/, "that command's lines, not all of them");
   }
   let r = await run(["--version"], NOBODY);
   assert.equal(r.code, 0);
@@ -59,8 +59,6 @@ const WRONG = [
   [["sql", "SELECT 1", "--downloaded"], /--downloaded is not an option of sql/],
   [["ls", "--downloaded"], /--downloaded is not an option of ls/],
   [["model", "a", "b", "--csv"], /--csv is not an option of model/],
-  [["export", "a"], /usage: export/],
-  [["export", "a", "b", "--csv"], /--csv is not an option of export/],
 ];
 test("a wrong call exits 2, says why on stderr, and sends nothing", async () => {
   for (const [argv, why] of WRONG) {
@@ -269,16 +267,4 @@ test("a reader that stops reading is not a failure", async () => {
     assert.equal(r.code, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /EPIPE|^\s+at /m);
   });
-});
-
-test("export says on stderr that it waits, and no timeout cuts a person's answer short", async () => {
-  const { agent, close } = await richAgent({ exportApp: async () => { await new Promise(r => setTimeout(r, 300)); return "Published to Fabric: x"; } });
-  try {
-    await withAgent(agent, async ({ cli }) => {
-      const r = await cli(["export", "ws", "Sales"]);
-      assert.equal(r.code, 0, r.stderr);
-      assert.match(r.stderr, /confirm it in VS Code/);
-      assert.equal(r.stdout, "Published to Fabric: x\n");
-    });
-  } finally { await close(); }
 });

@@ -107,7 +107,7 @@ function createSignIn({ session, memento, tenant, connectivity, log }) {
   // change the answer clears it outright.
   const storageHold = createTokenHold(TOKEN_TTL_MS);
 
-  function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); tokenAsked = null; }
+  function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; tokenAsked = null; }
 
   // What is being asked of the account provider, for the burst behind the first to share.
   let tokenAsked = null;
@@ -161,23 +161,8 @@ function createSignIn({ session, memento, tenant, connectivity, log }) {
     return null;
   }
 
-  // Export to Fabric's token (fabricapp.js): the Fabric API's own audience, never Power BI's —
-  // the app item's workload routes are the Fabric API's. The same account as the storage
-  // session, as fabricToken asks. `createIfNone` on the button's click, which may prompt.
-  const appHold = createTokenHold(TOKEN_TTL_MS);
-  async function appToken({ fresh = false, createIfNone = false } = {}) {
-    if (!fresh && !createIfNone && appHold.recent()) return appHold.recent();
-    const asked = appHold.turn();
-    const storage = await getSession({ createIfNone: false }).catch(() => null);
-    if (!storage) return null;
-    const s = await sameAccountSession(FABRIC_AUDIENCES[0], createIfNone, storage);
-    const token = s ? s.accessToken : null;
-    appHold.keep(asked, token);
-    return token;
-  }
-
   return {
-    getSession, getToken, hostToken, fabricToken, appToken, forgetToken,
+    getSession, getToken, hostToken, fabricToken, forgetToken,
     signedOutByChoice, accountKey, queryAccountOf, knownAccount, rememberAccount,
     lastAuthError: () => lastAuthError,
     // VS Code owns the account, so this is all a Sign Out can do.

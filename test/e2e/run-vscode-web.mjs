@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { chromium } from "playwright-core";
 
-import { ACCOUNT, MODEL_QUERY, NEVER_READ, REPORT_KEY, TABLE, WORKSPACE, globalState, seedAccount } from "./fixtures.mjs";
+import { ACCOUNT, MODEL_QUERY, NEVER_READ, TABLE, WORKSPACE, globalState, seedAccount } from "./fixtures.mjs";
 
 const SERVER = process.env.E2E_SERVER;
 const VSIX = process.env.E2E_VSIX;
@@ -622,50 +622,17 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
 }
 
 // ---------------------------------------------------------------------------
-// A model's Report: every tile's SQL (FROM model) goes through the compiler. With no rows here a tile
-// can only fail where the rows aren't held, never as SQL DuckDB can't parse. The Report is the zip's
-// (fixtures.mjs): tiles over the model (a pivot among them), and a table whose row needs no rows from OneLake, to click.
+// A model's Explore, from its local copy with no rows held: Model and Pivot, and Pivot's fields.
 // ---------------------------------------------------------------------------
-const tilesDone = f => until("every tile done", async () => {
-  // A tile that runs again keeps what it shows, dimmed (rp-stale), until its new answer is drawn.
-  const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => (t.classList.contains("rp-stale") ? "Waiting…" : t.innerText)));
-  return said.length && said.every(t => !/Waiting…|Running…/.test(t)) && said;
-}, 90000);
-const UNCOMPILED = /Parser Error|Binder Error|Catalog Error|syntax error|AGG\(|\bSQL( syntax)?: /i;
-
 async function modelMatrix() {
-  await step("Model: the Report runs every tile, compiled", async () => {
+  await step("Model: Explore is Model and Pivot, and Pivot lists the model's fields", async () => {
     await drive("exec", { command: "onelakeStudio.openSemanticModel", args: [{ kind: "semanticModel", workspace: WORKSPACE, model: "shop", modelId: "shop" }], timeoutMs: 60000 });
     const f = await panel();
     await until("the model view", async () => f.locator("#modelView").isVisible(), 30000);
-    await f.locator('#modelView [data-apage="report"]').click();
-    const tiles = await tilesDone(f);
-    check("the Report has tiles", tiles.length > 0, String(tiles.length));
-    const bad = tiles.filter(t => UNCOMPILED.test(t));
-    check("no tile's SQL reached DuckDB uncompiled", bad.length === 0, bad.join(" | "));
-    // The zip's report is from before pages ({ tiles }): one page, Page 1, with + to add another.
-    const names = await f.locator("#modelView .rp-page-name").allInnerTexts();
-    check("its tiles are one page, Page 1", names.length === 1 && names[0] === "Page 1", names.join(" | "));
-    check("a page can be added", await f.locator("#modelView .rp-page-add").isVisible());
-    // The Report's Theme: its pane at the right, the report's colours and the page's tiles; its ✕ closes it.
-    // A tile's look is its Visual's: no 🖌 on a tile.
-    check("a tile has no format tool of its own", await f.locator('#modelView .rp-tile button[title="Format"]').count() === 0);
-    await f.locator("#modelView .explore-actions button", { hasText: "Theme" }).click();
-    const pane = f.locator("#modelView .report-page .rp-pane");
-    check("Theme opens its pane", await pane.isVisible() && /Theme[\s\S]*Colours[\s\S]*Tiles on this page/i.test(await pane.innerText()), await pane.innerText());
-    await pane.locator(".rp-pane-x").click();
-    check("its ✕ closes it", await pane.isHidden());
-  }, 180000);
-
-  await step("Model: every tile is a Visual; one of SQL says so", async () => {
-    const f = await panel();
-    const tiles = await tilesDone(f);
-    const old = tiles.find(t => /Not a Visual tile/.test(t));
-    check("a tile of SQL is not drawn: it says to build it again in Visual", !!old && tiles.length === 4, tiles.join(" | "));
-    // The Visual tiles reached the engine, compiled, and stopped where the rows aren't held.
-    const visuals = tiles.filter(t => t !== old);
-    check("the Visual tiles ran, past the compiler", visuals.every(t => !UNCOMPILED.test(t)), visuals.join(" | "));
-    check("the Report has a slicer", await f.locator("#modelView .rp-slicer-tile").count() === 1);
+    const pages = await f.locator("#modelView [data-apage]").allInnerTexts();
+    check("its pages are Model and Pivot", pages.join() === "Model,Pivot", pages.join(" | "));
+    await f.locator('#modelView [data-apage="pivot"]').click();
+    await until("Pivot's fields", async () => (await f.locator("#modelView .ex-field").count()) > 0, 60000);
     await f.locator('#modelView [data-apage="model"]').click();
   }, 180000);
 }
@@ -908,14 +875,13 @@ async function main() {
   // ------------------------------------------------------------------- 3
   console.log("\n=== 3. Signed out, with an account's cache on this machine");
   const cached = await place("cached");
-  const { saved, report, dbFile } = await seedAccount(cached);
+  const { saved, dbFile } = await seedAccount(cached);
   // The first start only makes the state to add to: an account known, and signed out.
   await open(cached);
   await step("Cached: the account is on this machine", async () => {
     await drive("exec", { command: "onelakeStudio.signOut" });
     await sleep(3000);
-    // And the model's Report, from an export's zip (fixtures.mjs).
-    const state = await globalState(page, { "onelakeStudio.lastAccount": ACCOUNT, [REPORT_KEY]: report });
+    const state = await globalState(page, { "onelakeStudio.lastAccount": ACCOUNT });
     check("the account is written in", state?.["onelakeStudio.lastAccount"]?.key === ACCOUNT.key, JSON.stringify(state));
   });
   await close();
@@ -953,7 +919,7 @@ async function main() {
     check("Logs lists every statement the matrices ran", missing === "none", missing);
     before = await logsCounted("SELECT 'n=' || count(*) || ';last=' || max(epoch_ms(logged_at)) AS kept FROM onelake_logs").catch(e => ({ error: e.message }));
     check("the log counts them", before.n > 0, JSON.stringify(before));
-    // A query's box in front again, for the steps after: the Report left the model on screen, and Logs is a tab of
+    // A query's box in front again, for the steps after: the model is left on screen, and Logs is a tab of
     // its own. The engine is up, so no "DuckDB ready" comes again.
     await drive("exec", { command: "onelakeStudio.newQuery", timeoutMs: 60000 });
     await until("a query's box on screen", async () => (await panel()).locator("#sqlEditor").isVisible(), 30000);

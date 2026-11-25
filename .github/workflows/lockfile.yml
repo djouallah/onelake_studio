@@ -1,5 +1,4 @@
-# Regenerates package-lock.json (the extension's, the Fabric function's and the exported project's) against the PUBLIC npm
-# registry, and commits them.
+# Regenerates package-lock.json against the PUBLIC npm registry, and commits it.
 #
 # Exists because the lockfile cannot always be made where the code is written: a machine
 # behind a corporate npm mirror resolves whatever that mirror happens to have (which lagged
@@ -35,26 +34,18 @@ jobs:
       - name: Resolve
         run: |
           set -euo pipefail
-          for dir in . fabric_app/rayfin/functions; do
-            ( cd "$dir"
-              rm -f package-lock.json
-              npm install --package-lock-only --ignore-scripts --no-audit --no-fund                 --registry https://registry.npmjs.org
-              grep -q '"resolved": "https://registry.npmjs.org/' package-lock.json
-              ! grep -q 'pkgs.visualstudio.com\|packagefeedproxy' package-lock.json )
-          done
-
-      # The lock file every exported Fabric app's project ships (fabric_app/export/exportapp.js, projectLock):
-      # the project's package.json as an export writes it, with the function as its workspace.
-      - name: The exported project's lockfile
-        run: node scripts/fabric-lock.mjs
+          rm -f package-lock.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry https://registry.npmjs.org
+          grep -q '"resolved": "https://registry.npmjs.org/' package-lock.json
+          ! grep -q 'pkgs.visualstudio.com\|packagefeedproxy' package-lock.json
 
       - name: Commit, if anything changed
         run: |
-          git add package-lock.json fabric_app/rayfin/functions/package-lock.json fabric_app/project/package-lock.json
+          git add package-lock.json
           if git diff --cached --quiet; then
-            echo "lockfiles already current"; exit 0
+            echo "lockfile already current"; exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Lockfiles resolved against the public registries"
+          git commit -m "Lockfile resolved against the public registry"
           git push

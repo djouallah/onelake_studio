@@ -45,20 +45,18 @@ const node = { ...globals.node };
 const browser = { ...globals.browser, acquireVsCodeApi: 'readonly' };
 
 module.exports = [
-  // Built or fetched, not written here; the Fabric function is TypeScript, which its own tsc reads.
-  { ignores: ['node_modules/**', 'dist/**', 'vendor/**', 'webview/**', 'duckdb-extensions/**', 'fabric-function/**', 'fabric-site/**',
-              'fabric_app/rayfin/**', 'website/**', 'blog/**', '.tmp/**', '.claude/**',
+  // Built or fetched, not written here.
+  { ignores: ['node_modules/**', 'dist/**', 'vendor/**', 'webview/**', 'duckdb-extensions/**', 'website/**', 'blog/**', '.tmp/**', '.claude/**',
               'test/fixtures/**', 'test/e2e/driver/**'] },
   { linterOptions: { reportUnusedDisableDirectives: 'error' } },
   // The host: CommonJS on Node.
-  { files: ['core/**/*.js', 'extension/**/*.js', 'cli/**/*.js', 'fabric_app/export/**/*.js',
-            '*.cjs'],
+  { files: ['core/**/*.js', 'extension/**/*.js', 'cli/**/*.js', '*.cjs'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'commonjs', globals: node }, rules },
   // Scripts, tests and the command line: modules on Node. A test's page-side code names the browser's too.
   { files: ['scripts/**/*.mjs', 'cli/**/*.mjs', 'test/**/*.mjs'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...node, ...browser } }, rules },
-  // A tab's page and the Fabric app's site: modules in a browser. The command line
-  // loads two of the page's files as well, so Node's names are known there.
-  { files: ['page/**/*.js', 'fabric_app/site/**/*.js'],
+  // A tab's page: modules in a browser. The command line loads two of the page's files as well, so
+  // Node's names are known there.
+  { files: ['page/**/*.js'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...browser, ...node } }, rules },
 ];

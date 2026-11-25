@@ -7,7 +7,7 @@
 // has — its sign-in, its cache-first OneLake (onelake.js), the Fabric API, the downloaded
 // model files, the DAX compiler — so there is one sign-in and one cache, not a second copy
 // for the command line. Every statement goes through the engine's guard: it reads, or writes to a lakehouse
-// (Iceberg tables, and Files/ by COPY), as a tab's do. Export is Explore's own Export to Fabric, confirmed in VS Code.
+// (Iceberg tables, and Files/ by COPY), as a tab's do.
 //
 //   ls [<ws> [<item>]]               workspaces / items + semantic models / tables
 //   models [<ws>]                    semantic models in every workspace (or one), counted
@@ -24,9 +24,6 @@
 //                                    'ws.lakehouse/Files/x.parquet'; a semantic model is
 //                                    ws.model_semanticmodel, AGG("m") its measure m; and SHOW
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
-//   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model's local
-//   export <ws> <item> <Files/path>  copy, or a model file in Files/
-//   report <ws> <model> | <ws> <item> <Files/path>  a model's Report as JSON; --set writes one, checked first
 //   status                           this window: build, session, startup, catalog, sync, its files
 //   log [<text>]                     this window's own log
 //
@@ -72,7 +69,6 @@ const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```
  * @param {string} o.appDir                  the panel's modules (semantic.js, paths.js)
  * @param {string} o.vendorDir               the vendored DAX compiler and YAML reader
  * @param {ReturnType<import('../core/models/semviews').createSemViews>} o.semviews  the views this machine keeps
- * @param {(x: object) => Promise<string>} [o.exportApp]  Explore's Export to Fabric (extension.js)
  * @param {(n: {workspace: string, model: string, modelId: string}) => Promise<{path: string, text: string}>} [o.fetchModel]
  *   a semantic model's definition read from Fabric again, into its local copy (modelPath)
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
@@ -112,7 +108,7 @@ function closestNames(wanted, names, most = 5) {
 
 function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
                        readNow = (job, o) => readJob(onelake, job, o),
-                       exportApp = null, fetchModel = null, openModel = null, nameTables = null, report = null,
+                       fetchModel = null, openModel = null, nameTables = null,
                        signedIn = () => true, offlineReason = () => null, diagnostics = null }) {
   let mods = null;
   async function modules() {
@@ -734,98 +730,6 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       io.note(`${((Date.now() - t0) / 1000).toFixed(1)}s`);
     },
 
-    // Export to Fabric from a shell: Explore's own export (extension.js), which asks in
-    // VS Code where the local copy goes and waits for the OK there before it publishes. The
-    // model is a model file in a lakehouse's Files/, or a semantic model's local copy, exported as a
-    // model file from disk is, in its own workspace. With no Explore on screen, Explore's Pivot
-    // opens on its default view.
-    async export([ws, a, b], opts, io) {
-      if (!exportApp) throw new Error('Export to Fabric is not available here');
-      const say = message => { io.data({ message }); io.out(message); };
-      const { semantic } = await modules();
-      if (!b) {
-        const m = await modelOf(ws, a, opts);
-        const path = modelPath(ws, m.name);
-        if (!await exists(path)) {
-          throw Object.assign(new Error(`${ws}/${m.name} is not downloaded yet — open it in the OneLake Studio tree, ` +
-            `or \`model "${ws}" "${m.name}" --fresh\``), { notCached: true, retry: `model "${ws}" "${m.name}" --fresh` });
-        }
-        const text = await fsp.readFile(path, 'utf8');
-        say(await exportApp({ file: path.split(/[\\/]/).pop(), name: semantic.modelName(m.name), text, state: null,
-                              workspace: ws, onDisk: true }));
-        return;
-      }
-      const lh = await itemOf(ws, a, await look('items', [ws], opts));
-      if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
-      const where = { workspace: lh.workspace, path: `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}` };
-      const file = where.path.split('/').pop();
-      const text = Buffer.from(await onelake.readBytes(where.workspace, where.path)).toString('utf8');
-      say(await exportApp({ file, name: semantic.modelName(file), text, state: null,
-                            workspace: where.workspace, path: where.path }));
-    },
-
-    // A model's Report, the one its Report tab draws and edits (exportflow.js reportOf, reportSave): a semantic
-    // model's local copy, or a model file in a lakehouse's Files/, by the names the tab gives it. Read, it is the
-    // Report as JSON, where it is kept, and the fields a tile can name. --set writes one, checked first as the page
-    // reads it (explore/reportcheck.js) and each pivot tile's query compiled as Explore compiles it: a Report the
-    // tab could not draw is refused, its problems named. The tab draws what is written at once.
-    async report([ws, a, b], opts, io) {
-      if (!report) throw new Error('a model\'s Report is not available here');
-      const { semantic, compiler } = await modules();
-      let key, file, text;
-      if (!b) {
-        const m = await modelOf(ws, a, opts);
-        const path = modelPath(ws, m.name);
-        if (!await exists(path)) {
-          throw Object.assign(new Error(`${ws}/${m.name} is not downloaded yet — open it in the OneLake Studio tree, ` +
-            `or \`model "${ws}" "${m.name}" --fresh\``), { notCached: true, retry: `model "${ws}" "${m.name}" --fresh` });
-        }
-        key = { workspace: ws, model: m.name };
-        file = path;
-        text = await fsp.readFile(path, 'utf8');
-      } else {
-        const lh = await itemOf(ws, a, await look('items', [ws], opts));
-        if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
-        file = `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}`;
-        text = Buffer.from(await onelake.readBytes(lh.workspace, file)).toString('utf8');
-        key = { workspace: lh.workspace, model: semantic.modelName(file) };
-      }
-      const dir = typeof appDir === 'function' ? await appDir() : appDir;
-      const load = p => import(pathToFileURL(join(dir, p)).href);
-      const [{ modelFields }, { tmslOf }, { compileModelSql, EXPLORE_CASTS }, { checkReport, fieldList }] = await Promise.all([
-        load('explore/explore.js'), load('explore/model.js'), load('explore/query.js'), load('explore/reportcheck.js')]);
-      const bim = semantic.bimOf(file, text, compiler);
-      const fields = modelFields(tmslOf(bim));
-      const sqlName = `${key.workspace}.${key.model}_semanticmodel`;
-
-      if (opts.set == null) {
-        const kept = await report.load(key);
-        io.data({ model: sqlName, kept: kept.from, report: kept.spec, fields: fieldList(fields) });
-        io.out(`${sqlName}'s Report, ${kept.from ? `kept in ${kept.from}` : 'not written yet: none is kept for it'}\n\n` +
-          `${fence('json', JSON.stringify(kept.spec, null, 2))}\n\nThe fields a tile can name:\n` +
-          fieldList(fields).map(t => `- ${t.table}${t.kind ? ` (${t.kind})` : ''}: ${t.fields.map(f => `${f.id} (${f.type})`).join(', ')}`).join('\n'));
-        return;
-      }
-      let spec;
-      try { spec = JSON.parse(String(opts.set)); }
-      catch (e) { throw new Error(`the Report is not JSON: ${e.message}`); }
-      const { problems, pages, tiles, queries } = checkReport(spec, fields);
-      const explore = compiler.createCompiler(compiler.tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS });
-      for (const q of queries) {
-        try { compileModelSql(explore, q.sql); }
-        catch (e) { problems.push(`${q.where}: its query does not compile: ${String(e.message).split('\n')[0]}`); }
-      }
-      if (problems.length) {
-        throw Object.assign(new Error(`the Report was not written: ${problems.length} problem(s)\n${problems.map(p => `  - ${p}`).join('\n')}`),
-          { detail: { problems } });
-      }
-      await report.save({ ...key, spec, stamp: null });
-      const kept = await report.load(key);
-      const message = `${sqlName}'s Report written: ${pages} page(s), ${tiles} tile(s), every field in the model and every query compiles. ` +
-        `Kept in ${kept.from}; its Report tab draws it.`;
-      io.data({ message, model: sqlName, kept: kept.from });
-      io.out(message);
-    },
   };
 
   // An engine result, as one table: `numRows` is how many there were, whatever came back.
@@ -839,7 +743,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   const usage = message => Object.assign(new Error(message), { usage: true });
   const unavailable = message => Object.assign(new Error(message), { unavailable: true });
   const exitOf = e => (e.usage ? EXIT.USAGE : e.unavailable || e.status === 401 ? EXIT.UNAVAILABLE
-    : e.notCached || e.offline ? EXIT.NOT_CACHED : e.declined ? EXIT.DECLINED : EXIT.FAILED);
+    : e.notCached || e.offline ? EXIT.NOT_CACHED : EXIT.FAILED);
 
   // One answer, written out once as Markdown, CSV or JSON, from the same raw tables. Nothing
   // reaches stdout until the command is done: a failure leaves none of it there.
@@ -935,7 +839,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     }
   }
 
-  // modules(): the compiler, for the extension's own uses of it too (Export to Fabric).
+  // modules(): the compiler, for the extension's own uses of it too (its tree's names, its models).
 
   // A model by its SQL name, defined here as a view: wherever its view says, a local copy or a file in a
   // lakehouse's Files/. One whose text changed is defined again. Answers its view's SQL name.

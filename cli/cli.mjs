@@ -7,13 +7,12 @@
 // answer — the answer alone on stdout, notes on stderr, and the exit code an agent can branch on
 // (EXIT, in bridge.js). With VS Code closed, on Windows, the same answer comes from dist/standalone.js,
 // on a sign-in of its own (signin).
-// Written for an agent to run. SQL reads, or writes to a lakehouse; export is confirmed in VS Code.
+// Written for an agent to run. SQL reads, or writes to a lakehouse.
 //
 //   node cli/cli.mjs --help
 // =============================================================================
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -48,18 +47,6 @@ const USAGE = {
                                         table: SELECT d.col, AGG("measure") FROM ws.model_semanticmodel GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
     --show-sql                       print the SQL a model query compiles to`,
-  export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the app reads
-                                        the model's tables with DuckDB in the browser (open the
-                                        model in the tree once first).
-  export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/.
-                                        VS Code asks where the local copy goes and for the OK.
-                                        The app is one file, <model>.fabricator: the model's Report,
-                                        site/report.json in the zip, yours to grow`,
-  report: `  report <ws> <model>                 a model's Report, the pages of tiles its Report tab draws, as JSON:
-                                        where it is kept, and every field a tile can name
-  report <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
-    --set <file.json>                 write it, checked first with the page's own code: refused, with
-                                        each problem named, when the page could not draw it; - is stdin`,
   status: `  status                              this window: its build, session, startup timeline, catalog,
                                         sync, and where its files are. Answers signed out too`,
   log: `  log [<text>]                        this window's own log, the lines holding <text> if given,
@@ -75,21 +62,21 @@ const OPTIONS = `  --limit N                           rows printed (default 100
                                         or { ok: false, error: { code, message, retry }, notes }
   --fresh                             ask OneLake/Fabric now, ahead of the background's listings, and for sql, read its tables' metadata first: listings and metadata come only
                                         from the cache otherwise, and say so when it has nothing
-  --timeout SEC                       give up and stop the query (default 600; 0 waits; export waits)
+  --timeout SEC                       give up and stop the query (default 600; 0 waits)
   --                                  what follows is not an option
   -h, --help  --version
 
 exit codes: 0 answered (--json: complete, truncated say how much)  1 failed, or no such table  2 wrong call
-            3 not signed in (signin), or no VS Code for export  4 not cached (--fresh)  5 you declined  6 timed out`;
+            3 not signed in (signin)  4 not cached (--fresh)  6 timed out`;
 
 const HELP = `onelake — ask OneLake Studio: VS Code if it is open, and if not, on Windows, this
-on a sign-in of its own. SQL reads, or writes to a lakehouse; export waits for your OK in VS Code.
+on a sign-in of its own. SQL reads, or writes to a lakehouse.
 
 ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
 const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded" };
-const VALUES = { "--limit": "limit", "--timeout": "timeout", "--set": "set" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {
@@ -190,7 +177,7 @@ async function local(name) {
 async function ask() {
   if (wrong) return fail(EXIT.USAGE, wrong);
   if (Object.hasOwn(LOCAL, args[0])) return local(args[0]);
-  const seconds = opts.timeout != null ? Number(opts.timeout) : args[0] === "export" ? 0 : DEFAULT_TIMEOUT_S;
+  const seconds = opts.timeout != null ? Number(opts.timeout) : DEFAULT_TIMEOUT_S;
   if (!(seconds >= 0)) return fail(EXIT.USAGE, `--timeout takes seconds, not "${opts.timeout}"`);
   const timeoutMs = seconds * 1000;
   let alone = null;
@@ -202,16 +189,10 @@ async function ask() {
       args[1] = await withinTimeout(readStdin(), timeoutMs);
       if (!args[1].trim()) return fail(EXIT.USAGE, "sql -: nothing on stdin");
     }
-    // The Report to write, read here: a path is this shell's, which the extension's may not be.
-    if (args[0] === "report" && sent.set != null) {
-      sent.set = sent.set === "-" ? await withinTimeout(readStdin(), timeoutMs) : readFileSync(resolve(sent.set), "utf8");
-      if (!sent.set.trim()) return fail(EXIT.USAGE, "report --set: the Report is empty");
-    }
     const request = { args, opts: sent };
     if (JSON.stringify(request).length >= MAX_REQUEST) {
       return fail(EXIT.USAGE, `the request is over ${MAX_REQUEST / 1048576} MB: too long to send`);
     }
-    if (args[0] === "export" && !opts.json) process.stderr.write("Export to Fabric: confirm it in VS Code…\n");
     let r;
     try {
       r = await askBridge(request, undefined, { timeoutMs });
@@ -219,7 +200,7 @@ async function ask() {
       if (e.code !== "NO_EXTENSION" || !(alone = standalone())) throw e;
       const stop = new AbortController();
       r = await withinTimeout(alone.answer(request, { signal: stop.signal }), timeoutMs).catch(x => { stop.abort(); throw x; });
-      if (r.code === EXIT.UNAVAILABLE && args[0] !== "export") process.stderr.write(`Sign in with: node "${fileURLToPath(import.meta.url)}" signin\n`);
+      if (r.code === EXIT.UNAVAILABLE) process.stderr.write(`Sign in with: node "${fileURLToPath(import.meta.url)}" signin\n`);
     }
     if (r.out) process.stdout.write(r.out + "\n");
     if (r.err) process.stderr.write(r.err + "\n");

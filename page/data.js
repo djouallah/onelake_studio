@@ -614,14 +614,6 @@ export function createEngine({
   // A semantic model a query names that no view has yet: the host opens it (its local copy,
   // read from Fabric the first time) and keeps it — { name, schema, path, text }.
   const semanticOpen = ref => callHost("semantic.open", [ref]);
-  // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
-  // app's zip and publishes it (fabric_app/export/exportapp.js); answers what to tell the user.
-  const exportExplore = x => callHost("fabric.exportExplore", [x]);
-  // The Report tab: a model's tiles ({ spec, stamp }), what changes when they do, and the tiles
-  // saved over those of a stamp (Add to report, a tile's ✕).
-  const modelReport = x => callHost("model.report", [x]);
-  const modelReportStamp = x => callHost("model.reportStamp", [x]);
-  const modelReportSave = x => callHost("model.reportSave", [x]);
   // Keep offline: a semantic model's tables on this machine (core/models/modeldata.js); both answer what to show.
   const offlineState = x => callHost("model.offlineState", [x]);
   const setOffline = x => callHost("model.setOffline", [x]);
@@ -646,5 +638,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticViewFiles, publishView, tableFields, semanticOpen, exportExplore, modelReport, modelReportStamp, modelReportSave, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticViewFiles, publishView, tableFields, semanticOpen, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

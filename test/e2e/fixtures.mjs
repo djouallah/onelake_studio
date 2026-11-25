@@ -12,7 +12,6 @@ const require = createRequire(import.meta.url);
 const { createStore } = require("../../core/onelake/store.js");
 const { createOneLake } = require("../../core/onelake/onelake.js");
 const { PINS } = require("../../core/vendored.js");
-const { writeApp, REPORT } = require("../../fabric_app/export/exportapp.js");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VENDOR = join(root, "vendor");
@@ -52,8 +51,6 @@ export const NEVER_READ = "e2e.data.dbo.neverread";
 export const MODEL = "e2e.shop_semanticmodel";
 export const MODEL_QUERY = `SELECT Product.Color, AGG("Total") FROM ${MODEL} GROUP BY ALL`;
 export const SAVED_QUERY = "kept";
-// Where the extension keeps the zip a model's Report tab draws (fabric_app/export/exportflow.js reportKey).
-export const REPORT_KEY = `exportReport:${WORKSPACE}/shop`;
 
 const LAKEHOUSE = { workspace: WORKSPACE, item: "data.Lakehouse" };
 const WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
@@ -143,17 +140,7 @@ export async function seedAccount({ dataDir, home }) {
   await mkdir(dirname(model), { recursive: true });
   await writeFile(model, stringify(tmslToOssie(BIM, "shop")));
 
-  // The model's Report, as an export's zip holds it: a card, a stacked bar and a slicer, each a Visual
-  // over the model, and one tile of SQL from before tiles were only Visuals, which says so.
-  const report = join(home, "OneLakeStudio", "exports", "shop.zip");
-  const tiles = [
-    { title: "Totals", kind: "pivot", pivot: { rows: [], values: ["Total"], mark: "card" } },
-    { title: "Total by Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "stacked", sort: "desc", top: 5 } },
-    { title: "Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "slicer", slicer: "list" } },
-    { title: "Old", kind: "table", sql: 'SELECT 1 AS "x" FROM model' }];
-  await writeApp(report, new Map([[REPORT, Buffer.from(JSON.stringify({ tiles }))]]), { e2e: true });
-
-  return { saved, report, dbFile: { workspace: WORKSPACE, item: LAKEHOUSE.item, path: DB_FILE, bytes: dbBytes.length } };
+  return { saved, dbFile: { workspace: WORKSPACE, item: LAKEHOUSE.item, path: DB_FILE, bytes: dbBytes.length } };
 }
 
 // The extension's globalState, in the workbench's own storage in the browser, as a page reads or

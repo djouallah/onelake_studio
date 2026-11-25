@@ -15,13 +15,9 @@
   --pill-figure-line: color-mix(in srgb, var(--measure) 65%, var(--bg));
   /* A table's header and its totals. */
   --band: color-mix(in srgb, var(--text) 7%, var(--card));
-  /* A Report tile: a little lighter, or darker, than the page it sits on. */
-  --tile: color-mix(in srgb, var(--text) 5%, var(--bg));
-  /* It sits a little over its page: a soft shadow under it. */
-  --tile-shadow: 0 1px 2px rgba(0,0,0,0.14), 0 6px 18px rgba(0,0,0,0.10);
 }
-/* The view takes the place of the results (app.js: section.modelOpen). A column, so Visual is as tall
-   as the tab; a table's Visual (#pivotView) the same. */
+/* The view takes the place of the results (app.js: section.modelOpen). A column, so Pivot is as tall
+   as the tab; a table's Pivot (#pivotView) the same. */
 #modelView { flex: 1; overflow: auto; min-height: 0; }
 #modelView, #pivotView { display: flex; flex-direction: column; }
 #modelView > *, #pivotView > * { flex-shrink: 0; }
@@ -87,7 +83,7 @@ section.modelOpen #chartBtn { display: none; }
 .model-panel[hidden] { display: none; }
 .m-close { margin-left: auto; background: none; border: 0; color: var(--faint); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 0.2rem; }
 .m-close:hover, .m-close:focus-visible { color: var(--text); }
-.report-page[hidden], .model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
+.model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
 /* Model's Diagram | YAML: the model drawn, or its file (pretty.js's tk-* spans). */
 .model-switch { padding: 0.12rem; }
 .model-switch .subtab { padding: 0.16rem 0.65rem; font-size: 12px; }
@@ -166,14 +162,14 @@ section.modelOpen #chartBtn { display: none; }
 .m-mark { fill: var(--faint); font-size: 11px; font-weight: 700; }
 .m-rel.m-on .m-mark { fill: var(--text); }
 .m-card.m-off, .m-rel.m-off { opacity: 0.2; }
-/* Visual (explore.js): the fields; then the tools over the Filters and Show as cards; then Columns and
+/* Pivot (explore.js): the fields; then the tools over the Filters and Show as cards; then Columns and
    Rows over the view; and the status line under them all. Flat panes that touch, as tall as the tab:
    only the fields, the cards and the view scroll. */
 .explore-page { flex: 1 1 auto; min-height: 460px; display: flex; flex-direction: column; }
 .ex { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: 230px 200px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
 .ex-fields, .ex-side { min-height: 0; background: var(--card); border-right: 1px solid var(--border); }
 .ex-fields { display: flex; flex-direction: column; padding: 0.5rem 0.4rem 0; }
-.ex-search, .ex-pop input[type=search], .rp-slicer input[type=search], .rp-slicer input[type=date], .rp-slicer input[type=number], .ex-pop input[type=number], .ex-pop input[type=date], .ex-pop select, .ex-status select {
+.ex-search, .ex-pop input[type=search], .ex-pop input[type=number], .ex-pop input[type=date], .ex-pop select, .ex-status select {
   font-size: 12px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.28rem 0.5rem; }
 .ex-search { width: 100%; margin-bottom: 0.4rem; }
 .ex-list { overflow: auto; flex: 1 1 0; min-height: 0; }
@@ -248,7 +244,7 @@ section.modelOpen #chartBtn { display: none; }
 .ex-info.ex-warn { color: var(--warn, var(--bad)); }
 .ex-empty.ex-error { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* The view, and Visual's Format pane at its right. `--surface`: what a table's fixed cells stand on. */
+/* The view, and Pivot's Format pane at its right. `--surface`: what a table's fixed cells stand on. */
 .ex-work { display: flex; align-items: stretch; flex: 1 1 0; min-width: 0; min-height: 0; }
 .ex-work > .ex-out { flex: 1 1 auto; min-width: 0; }
 .ex-work > .ex-format { position: static; max-height: none; margin: 0; overflow: auto; border: 0; border-left: 1px solid var(--border); border-radius: 0; box-shadow: none; }
@@ -282,7 +278,6 @@ section.modelOpen #chartBtn { display: none; }
 .ex-pivot .ex-colhead { text-align: center; border-left: 1px solid var(--border); }
 .ex-pivot tbody th:has(+ td), .ex-pivot thead .ex-rowhead:has(+ th:not(.ex-rowhead)) { border-right: 1px solid var(--border); }
 .ex-pivot.ex-stick tbody th { position: sticky; left: 0; z-index: 1; background: var(--surface, var(--card)); }
-.ex-pivot.ex-stick tr.rp-on > th { background: linear-gradient(color-mix(in srgb, var(--accent) 22%, transparent) 0 0), var(--surface, var(--card)); }
 .ex-pivot tr.ex-total td, .ex-pivot tr.ex-total th { font-weight: 700; border-top: 1px solid var(--border); background: var(--band); }
 .ex-pop { position: fixed; z-index: 950; width: 300px; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 0.7rem; font-size: 12px; display: flex; flex-direction: column; gap: 0.5rem; }
 .ex-pop-head { font-weight: 700; font-size: 12px; }
@@ -314,7 +309,6 @@ section.modelOpen #chartBtn { display: none; }
 /* Show plan (profile.js): the profile, and the plan's tree. */
 .explore-plan { flex: 1 1 auto; min-height: 420px; display: flex; padding: 0 var(--gutter) 1rem; }
 .explore-plan[hidden], .explore-table-wrap[hidden] { display: none; }
-.plan-frame { flex: 1 1 auto; width: 100%; min-height: 420px; border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--card); }
 .pf-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; gap: 0.6rem; }
 .pf-tabs { display: flex; gap: 0.15rem; padding: 0.2rem; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-sm); align-self: flex-start; }
 .pf-tab { padding: 0.28rem 0.85rem; font-size: 12px; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; }
@@ -364,106 +358,15 @@ section.modelOpen #chartBtn { display: none; }
   .ex-main { min-height: 420px; }
 }
 
-/* The Report (report.js): its tiles in a grid, figures, charts and tables. */
-/* 12 columns and rows of 10px (report.js arrange): a tile is placed by its layout, and its content
-   fills it, scrolling when it is more. A tile keeps a gap below it inside its rows. On a narrow
-   window each tile is full width, one under another, as tall as its rows. */
-.rp { --gap: 14px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 10px; column-gap: var(--gap); row-gap: 0; padding: var(--gap) var(--gutter) 1.5rem; }
-/* A tile: a surface with a hairline round it and a soft shadow under it, its corners its theme's (--tile-radius). */
-.rp-tile { --surface: var(--tile); position: relative; background: var(--tile); border: 1px solid var(--hairline); border-radius: var(--tile-radius, max(var(--radius), 10px)); box-shadow: var(--tile-shadow); padding: 0.75rem 0.95rem; min-width: 0; min-height: 0; margin-bottom: var(--gap); display: flex; flex-direction: column; gap: 0.4rem; overflow: hidden; }
-/* A text tile is words on the page, with no surface of its own. */
-.rp-tile.rp-text-tile { background: none; border-color: transparent; box-shadow: none; }
-.rp-tile.rp-text-tile:hover, .rp-tile.rp-text-tile:focus-within { border-color: var(--hairline); }
-@media (max-width: 700px) {
-  .rp { grid-auto-rows: auto; row-gap: var(--gap); }
-  .rp-tile { grid-column: 1 / -1 !important; grid-row: auto !important; height: var(--rp-h); margin-bottom: 0; }
-}
-.rp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.rp-body .rp-chart { height: auto; flex: 1; min-height: 60px; }
-.rp-body .rp-table, .rp-body .rp-pivot { max-height: none; flex: 1; min-height: 0; }
-.rp-body .rp-slicer { flex: 1; min-height: 0; }
-.rp-body .rp-slicer .ex-values, .rp-body .slicer-pills { max-height: none; flex: 1; min-height: 0; }
-/* Its ◢: dragged, or the arrow keys. */
-.rp-resize { position: absolute; right: 1px; bottom: 1px; display: flex; background: none; border: none; color: var(--faint); padding: 0; cursor: nwse-resize; border-radius: var(--radius-sm); opacity: 0; touch-action: none; }
-.rp-resize .ex-ico, .rp-tool .ex-ico { width: 14px; height: 14px; }
-.rp-tile:hover .rp-resize, .rp-resize:focus-visible { opacity: 1; }
-.rp-resize:hover, .rp-resize:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-tile h2 { margin: 0; font-family: var(--title-font, inherit); font-size: 14px; font-weight: 600; line-height: 1.3; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Under the title: what the tile is of, in a few words. */
-.rp-titles { flex: 1; min-width: 0; }
-.rp-titles[title] { cursor: text; }
-.rp-sub { margin: 0.05rem 0 0; font-size: 12px; line-height: 1.3; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-sub[hidden] { display: none; }
-.rp-renaming { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.rp-rename.rp-rename-sub { font-size: 12px; font-weight: 400; }
-/* Over the report: its title, and when its tiles last had their answers (view.js drawTop). */
-.rp-top { display: flex; align-items: baseline; gap: 1rem; padding: var(--gap) var(--gutter) 0; }
-.rp-top[hidden] { display: none; }
-.rp-title { margin: 0; font-family: var(--title-font, inherit); font-size: 1.3rem; font-weight: 650; line-height: 1.25; letter-spacing: -0.01em; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-title[title] { cursor: text; }
-.rp-title.rp-title-none { font-weight: 400; color: var(--faint); opacity: 0; transition: opacity 0.15s; }
-.rp-top:hover .rp-title.rp-title-none { opacity: 1; }
-.rp-title-edit { flex: 1; min-width: 0; font: inherit; font-size: 1.3rem; font-weight: 650; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0 0.35rem; }
-.rp-read { margin-left: auto; flex: none; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
-.rp-head { display: flex; align-items: center; gap: 0.5rem; }
-/* No title (a text tile, or one whose title is off): no row for it. */
-.rp-head:not(:has(h2:not(:empty), input)), .rp-notitle .rp-head { display: none; }
-.rp-head h2 { flex: 1; min-width: 0; }
-.rp-head h2[title] { cursor: text; }
-/* A tile's tools: its grip (dragged, or the arrow keys), ✎, ⧉ and ✕, shown while the pointer or the
-   keyboard is on the tile, as the tree's row actions are. */
-.rp-tools { position: absolute; top: 4px; right: 4px; z-index: 3; display: flex; gap: 1px; padding: 1px; background: var(--tile); border: 1px solid var(--border); border-radius: var(--radius-sm); opacity: 0; pointer-events: none; }
-.rp-tools:empty { display: none; }
-.rp-tile:hover .rp-tools, .rp-tile:focus-within .rp-tools, .rp-tile.rp-dragging .rp-tools { opacity: 1; pointer-events: auto; }
-.rp-tool { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; background: none; border: none; color: var(--muted); cursor: pointer; border-radius: var(--radius-sm); }
-/* (the tools show with their box, above) */
-.rp-tool:hover, .rp-tool:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-grip { cursor: grab; }
-.rp-rename { flex: 1; min-width: 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.05rem 0.35rem; }
-.rp-tile.rp-dragging, .rp-tile.rp-resizing { outline: 2px dashed var(--accent); outline-offset: -2px; user-select: none; z-index: 1; }
-.rp-grip { touch-action: none; }
-/* A slicer: its column's values to tick. */
-.rp-slicer { display: flex; flex-direction: column; gap: 0.4rem; font-size: 13px; }
-.rp-slicer-bar { display: flex; gap: 0.4rem; }
-.rp-slicer-bar input { flex: 1; min-width: 0; }
-.rp-slicer .ex-values { display: flex; flex-direction: column; gap: 0.1rem; max-height: 240px; overflow: auto; }
-.rp-slicer .ex-values label { display: flex; align-items: center; gap: 0.45rem; color: var(--text); }
-/* A slicer's other styles (explore.js slicerView): buttons, a dropdown of the list, a range. */
-.rp-slicer .ex-values label .slicer-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.slicer-figure { color: var(--muted); font-variant-numeric: tabular-nums; }
-.slicer-pills { display: flex; flex-wrap: wrap; gap: 0.35rem; max-height: 240px; overflow: auto; font-size: 13px; }
-.slicer-pill { background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; padding: 0.22rem 0.75rem; cursor: pointer; }
-.slicer-pill:hover { background: var(--hover-soft); }
-.slicer-pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.slicer-drop { display: inline-flex; align-items: center; justify-content: space-between; gap: 0.6rem; min-width: 9rem; max-width: 100%; text-align: left; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 13px; padding: 0.25rem 0.5rem; cursor: pointer; }
-.slicer-drop > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.slicer-drop .ex-ico { width: 12px; height: 12px; color: var(--muted); }
-.slicer-dropdown { align-self: flex-start; max-width: 100%; }
-.slicer-range { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.slicer-range label { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--muted); }
-/* Visual's slicer: its styles over it, in the result area. */
-.slicer-view { display: flex; flex-direction: column; gap: 0.6rem; max-width: 420px; padding: 0.6rem 0; }
-.slicer-styles { align-self: flex-start; padding: 0.12rem; }
-.slicer-styles .subtab { padding: 0.16rem 0.65rem; font-size: 12px; }
-.slicer-styles .subtab:disabled { opacity: 0.45; cursor: default; }
-/* A pivot tile's table: Pivot's own (explore.js), its rows picked by a click. */
-.rp-pivot { overflow: auto; max-height: 420px; }
-.rp-pivot tr.rp-pick { cursor: pointer; }
-.rp-pivot tr.rp-pick:hover > * { background: var(--hover-soft); }
-.rp-pivot tr.rp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.rp-pivot tr.rp-on > * { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.rp-chart { height: 280px; }
 /* A card (explore.js cardView): its figures, as big as its box lets them be. */
 .card-figures { flex: 1; min-height: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.6rem 2.2rem; container-type: size; }
 .explore-page .card-figures { min-height: 160px; }
 .card-figure { display: flex; flex-direction: column; align-items: center; min-width: 0; }
 .card-figure b { font-size: clamp(1.4rem, 45cqh, 3.2rem); line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--card-figure, var(--text)); white-space: nowrap; }
-/* A Visual's format (format.js): a card's figures smaller or larger, a table's rows banded. */
+/* Pivot's format (format.js): a card's figures smaller or larger, a table's rows banded. */
 .card-S .card-figure b { font-size: clamp(1rem, 30cqh, 2rem); }
 .card-L .card-figure b { font-size: clamp(1.8rem, 60cqh, 4.4rem); }
 .ex-banded :where(tbody tr:nth-child(even) > *) { background-color: var(--hover-soft); }
-.rp-pane-head strong { font-size: 13px; }
-.rp-pane-tile { border-top: 1px solid var(--row-line); padding-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem; }
 .card-many .card-figure b { font-size: clamp(1.2rem, 30cqh, 2.4rem); }
 .card-figure span { color: var(--muted); font-size: 0.78rem; text-align: center; }
 /* A card's change (▲/▼, good or bad) and its trend, under its figure. */
@@ -473,84 +376,7 @@ section.modelOpen #chartBtn { display: none; }
 .card-trend { width: 100%; min-width: 120px; height: 28px; margin-top: 0.3rem; overflow: visible; }
 .card-trended { align-items: stretch; }
 .card-trended .card-figure { flex: 1; align-items: flex-start; }
-.rp-kpis { display: flex; flex-wrap: wrap; gap: 0.6rem 2.2rem; }
-.rp-kpi span { display: block; color: var(--muted); font-size: 0.78rem; }
-.rp-kpi b { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
-.rp-table { overflow: auto; max-height: 420px; }
-.rp-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.rp-table th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.35rem 0.6rem; position: sticky; top: 0; background: var(--tile); }
-.rp-table td { border-bottom: 1px solid var(--row-line); padding: 0.3rem 0.6rem; }
-.rp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.rp-table tr.rp-pick { cursor: pointer; }
-.rp-table tr.rp-pick:hover td { background: var(--hover-soft); }
-.rp-table tr.rp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.rp-table tr.rp-on td { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-/* Cross filtering's picks, above the tiles: one chip each, its ✕ clears it. */
-.rp-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: var(--gap) var(--gutter) 0; font-size: 12px; color: var(--muted); }
-.rp-filters[hidden] { display: none; }
-.rp-chip { display: inline-flex; align-items: center; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--raised)); border-radius: var(--radius-sm); color: var(--text); }
-.rp-chip > span { padding: 0.18rem 0.2rem 0.18rem 0.65rem; }
-.rp-x { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.18rem 0.55rem 0.18rem 0.3rem; }
-.rp-x:hover, .rp-x:focus-visible { color: var(--text); }
-/* The Report's pages (view.js): their names over the tiles, the one on screen marked; a dragged
-   tile's grip over another marks it too. */
-/* The report's filter bar (view.js drawBar), over its pages' names: each filter's name, then how
-   it is picked; + Filter adds one. */
-.rp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem; padding: var(--gap) var(--gutter) 0; font-size: 12px; }
-.rp-bar[hidden] { display: none; }
-.rp-bar-item { display: inline-flex; align-items: center; gap: 0.4rem; }
-.rp-bar-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); font-weight: 600; }
-.rp-bar select, .rp-bar input[type=date], .rp-bar-pick { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.2rem 0.45rem; }
-.rp-bar-pick { cursor: pointer; }
-.rp-bar-dates { display: inline-flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
-.rp-bar-to { color: var(--faint); }
-.rp-bar-preset { background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted); font: inherit; font-size: 12px; padding: 0.1rem 0.55rem; cursor: pointer; }
-.rp-bar-preset:hover, .rp-bar-preset:focus-visible { color: var(--text); border-color: var(--muted); }
-.rp-bar-x, .rp-bar-add { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); }
-.rp-bar-x:hover, .rp-bar-add:hover, .rp-bar-x:focus-visible, .rp-bar-add:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-bar-form { display: inline-flex; align-items: center; gap: 0.4rem; }
-.rp-bar-pop { position: fixed; z-index: 20; width: 280px; max-height: 60vh; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); font-size: 12px; }
-.rp-bar-pop input[type=search] { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.25rem 0.45rem; }
-.rp-bar-values { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 0.1rem; }
-.rp-bar-values label { display: flex; align-items: center; gap: 0.45rem; color: var(--text); }
-.rp-bar-pop-foot { display: flex; justify-content: flex-end; gap: 0.4rem; }
-.rp-pane-values { display: flex; flex-direction: column; gap: 0.25rem; max-height: 220px; overflow: auto; padding-left: calc(88px + 0.5rem); }
-.rp-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; padding: var(--gap) var(--gutter) 0; font-size: 12px; }
-.rp-pages[hidden], .rp-page-view[hidden] { display: none; }
-.rp-page-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.rp-page { display: inline-flex; align-items: center; border: solid transparent; border-width: 2px 0; }
-.rp-page.active { border-bottom-color: var(--accent); }
-.rp-page.rp-drop { outline: 2px dashed var(--accent); outline-offset: 1px; }
-.rp-page-name { padding: 0.2rem 0.8rem; font: inherit; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; }
-.rp-page.active .rp-page-name, .rp-page-name:hover { color: var(--text); }
-.rp-page-name:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.rp-page-x { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.2rem 0.55rem 0.2rem 0; margin-left: -0.45rem; opacity: 0; }
-.rp-page:hover .rp-page-x, .rp-page:focus-within .rp-page-x { opacity: 1; }
-.rp-page-x:hover, .rp-page-x:focus-visible { color: var(--text); }
-.rp-page-add { background: none; border: none; color: var(--muted); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; padding: 0.15rem 0.5rem; border-radius: var(--radius); }
-.rp-page-add:hover, .rp-page-add:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-page-rename { font: inherit; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.15rem 0.7rem; }
-.rp-page-ask { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: 0.6rem; color: var(--text); }
-.rp-tile.rp-leaving { opacity: 0.45; }
-/* A tile that runs again (report.js wait): what it shows stays, dimmed, and a line runs along its top
-   while its query does. */
-.rp-body { transition: opacity 0.2s; }
-.rp-tile.rp-stale .rp-body { opacity: 0.45; pointer-events: none; }
-.rp-tile.rp-stale.rp-running::before { content: ''; position: absolute; top: 0; left: 0; width: 30%; height: 2px; background: var(--accent); animation: rp-run 1.1s ease-in-out infinite; }
-@keyframes rp-run { from { transform: translateX(-100%); } to { transform: translateX(334%); } }
-@media (prefers-reduced-motion: reduce) { .rp-tile.rp-stale.rp-running::before { animation: none; width: 100%; opacity: 0.5; } }
-/* A tile's format (report.js styleTile): no title (its tools stay), the title's size, a card's
-   figures' size and colour, banded rows; and the report's text size. */
-/* A tile whose title is off: .rp-head, above. */
-
-.rp-title-S h2 { font-size: 0.75rem; }
-.rp-title-L h2 { font-size: 1.05rem; color: var(--text); }
-.rp-text-S .rp-table table, .rp-text-S .rp-pivot table, .rp-text-S .rp-text { font-size: 0.74rem; }
-.rp-text-L .rp-table table, .rp-text-L .rp-pivot table, .rp-text-L .rp-text { font-size: 0.95rem; }
-.rp-text-L .rp-tile h2 { font-size: 0.95rem; }
-/* The format pane, at the right of the tiles; over them on a narrow window. */
-.rp-work { display: flex; align-items: flex-start; min-width: 0; }
-.rp-page-host { flex: 1; min-width: 0; }
+/* The Format pane, at the right of the view; over it on a narrow window. */
 .rp-pane { flex: none; width: 300px; position: sticky; top: 0; max-height: 100vh; overflow: auto; margin: var(--gap) var(--gutter) 0 0; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.6rem 0.8rem 0.9rem; font-size: 12px; box-sizing: border-box; }
 .rp-pane[hidden] { display: none; }
 .rp-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
@@ -564,74 +390,15 @@ section.modelOpen #chartBtn { display: none; }
 .rp-pane-ctl select, .rp-pane-input { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.15rem 0.35rem; min-width: 0; }
 .rp-pane-input { flex: 1; width: 100%; box-sizing: border-box; }
 .rp-pane-input[type=number] { width: 5.5rem; flex: none; }
-.rp-pane-check, .rp-pane-swatch, .rp-pane-palette { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--text); }
+.rp-pane-check, .rp-pane-swatch { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--text); }
 .rp-pane-swatch { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-pane-colour { width: 1.6rem; height: 1.25rem; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; cursor: pointer; flex: none; }
 .rp-pane-reset { background: none; border: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
 .rp-pane-sub { margin: 0.5rem 0 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.rp-pane-palettes { display: flex; flex-direction: column; gap: 0.3rem; }
-.rp-pane-palette > span:first-of-type { width: 3.4rem; }
-.rp-pane-chips { display: inline-flex; gap: 2px; }
-.rp-pane-chips i { width: 10px; height: 10px; border-radius: 2px; }
 .rp-pane .subtabs .subtab { padding: 0.16rem 0.6rem; font-size: 12px; }
 .rp-pane > .rp-pane-body > .rp-say { margin-top: 0.4rem; }
 @media (max-width: 700px) {
   .rp-pane { position: fixed; top: 0; right: 0; bottom: 0; max-height: none; width: min(320px, 92vw); margin: 0; z-index: 5; border-radius: 0; box-shadow: var(--shadow); }
 }
-/* A text tile: its Markdown, or the box it is written in. */
-.rp-text { flex: 1; min-height: 0; overflow: auto; font-size: 13px; line-height: 1.45; color: var(--text); }
-.rp-text h3 { margin: 0 0 0.4rem; font-size: 1.2rem; font-weight: 600; }
-.rp-text h4 { margin: 0 0 0.35rem; font-size: 1rem; font-weight: 600; }
-.rp-text h5 { margin: 0 0 0.3rem; font-size: 13px; font-weight: 600; color: var(--muted); }
-.rp-text p, .rp-text ul { margin: 0 0 0.45rem; }
-.rp-text ul { padding-left: 1.2rem; }
-.rp-text a { color: var(--accent); }
-.rp-text-editing { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.4rem; }
-.rp-text-edit { flex: 1; min-height: 60px; width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.5; background: var(--input-bg); color: var(--text); border: 1px solid var(--accent); border-radius: var(--radius); padding: 0.5rem 0.7rem; resize: none; }
-.rp-text-edit:focus { outline: none; }
-.rp-text-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
 .rp-say { margin: 0; color: var(--muted); font-size: 13px; }
 .rp-say.error { color: var(--err); white-space: pre-wrap; }
-/* Over Visual while a Report tile is edited there (view.js editTile). */
-.explore-editing { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: var(--gap) var(--gutter) 0; padding: 0.45rem 0.8rem; border: 1px solid var(--accent); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 10%, var(--card)); font-size: 12px; }
-.explore-editing[hidden] { display: none; }
-.explore-editing-say { font-weight: 600; }
-.explore-editing label { display: inline-flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 12rem; color: var(--muted); }
-.explore-editing-title { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.2rem 0.5rem; }
-
-/* A Report tile's figure: under its title, at the left. */
-.rp-tile .card-figures { justify-content: flex-start; }
-.rp-tile .card-figure { align-items: flex-start; }
-.rp-tile .card-figure span { text-align: left; }
-/* The Report fills the tab, on its own background when its theme has one (view.js paintBackground):
-   the page's, the tiles' and the text's colours, the same in any editor theme. Its charts read
-   them off this element (the `report` chart theme). */
-.report-page { flex: 1 0 auto; }
-.report-page.rp-bg-dark, .report-page.rp-bg-light, .report-page[class*="rp-style-"] { background: var(--bg); color: var(--text); }
-/* A style (theme.js STYLES): the whole look at once, the same in any editor theme. Paper: warm and
-   light, its titles in a serif. Midnight: deep blue, its tiles round. Slate: cool grey, its tiles
-   square and flat. */
-.report-page.rp-style-paper { color-scheme: light;
-  --bg: #f6f1e7; --tile: #fffdf8; --card: #fffdf8; --raised: #fffdf8; --input-bg: #fffdf8; --panel2: #fffdf8;
-  --border: #ddd3c0; --hairline: #e6ddcc; --row-line: #ece5d6; --text: #2a2520; --muted: #6b6257; --faint: #8a8073; --disabled: #b5ab9c;
-  --hover: rgba(60,40,10,0.07); --hover-soft: rgba(60,40,10,0.035); --band: #f1eadb; --accent: #a4532a; --on-accent: #fffdf8;
-  --tile-radius: 6px; --tile-shadow: 0 1px 2px rgba(70,50,20,0.10), 0 4px 14px rgba(70,50,20,0.07);
-  --title-font: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif; }
-.report-page.rp-style-midnight { color-scheme: dark;
-  --bg: #0b1020; --tile: #121a31; --card: #121a31; --raised: #18223f; --input-bg: #0e152a; --panel2: #0e152a;
-  --border: #26335a; --hairline: #1f2a4c; --row-line: #1a2444; --text: #e9eeff; --muted: #9aa8d1; --faint: #7482ad; --disabled: #48557d;
-  --hover: rgba(140,170,255,0.10); --hover-soft: rgba(140,170,255,0.05); --band: #18223f; --accent: #6ea8ff; --on-accent: #0b1020;
-  --tile-radius: 14px; --tile-shadow: 0 10px 30px rgba(0,0,0,0.45); }
-.report-page.rp-style-slate { color-scheme: light;
-  --bg: #e9ecef; --tile: #ffffff; --card: #ffffff; --raised: #ffffff; --input-bg: #ffffff; --panel2: #ffffff;
-  --border: #c9ced6; --hairline: #c9ced6; --row-line: #e4e7eb; --text: #1d232b; --muted: #56606c; --faint: #727c89; --disabled: #a9b0ba;
-  --hover: rgba(0,0,0,0.06); --hover-soft: rgba(0,0,0,0.03); --band: #eef0f3; --accent: #2f6fde; --on-accent: #ffffff;
-  --tile-radius: 2px; --tile-shadow: none; }
-.report-page.rp-bg-dark { color-scheme: dark;
-  --bg: #0f1115; --tile: #181b21; --card: #181b21; --raised: #1e222a; --input-bg: #12151b; --panel2: #12151b;
-  --border: #2b303b; --hairline: #2b303b; --row-line: #232833; --text: #e8ebf0; --muted: #a1a9b6; --faint: #838c9a; --disabled: #545c69;
-  --hover: rgba(255,255,255,0.08); --hover-soft: rgba(255,255,255,0.04); --band: #20242c; }
-.report-page.rp-bg-light { color-scheme: light;
-  --bg: #f2f3f5; --tile: #ffffff; --card: #ffffff; --raised: #ffffff; --input-bg: #ffffff; --panel2: #ffffff;
-  --border: #d5d9e0; --hairline: #d5d9e0; --row-line: #e7e9ee; --text: #1b1f26; --muted: #57606c; --faint: #6a7380; --disabled: #a3aab5;
-  --hover: rgba(0,0,0,0.06); --hover-soft: rgba(0,0,0,0.03); --band: #eef0f3; }

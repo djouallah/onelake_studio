@@ -139,22 +139,16 @@ jobs:
       - name: Every lockfile resolves from the public registry
         run: |
           set -euo pipefail
-          for f in package-lock.json fabric_app/rayfin/functions/package-lock.json fabric_app/project/package-lock.json; do
-            bad=$(grep -n '"resolved":' "$f" | grep -v '"resolved": "https://registry.npmjs.org/' | grep -v '"resolved": "rayfin/functions"' | grep -v '"resolved": "site"' || true)
+          for f in package-lock.json; do
+            bad=$(grep -n '"resolved":' "$f" | grep -v '"resolved": "https://registry.npmjs.org/' || true)
             [ -z "$bad" ] || { echo "$f resolves outside registry.npmjs.org:"; echo "$bad" | head -20; exit 1; }
           done
       - name: No known hole in what ships
         run: npm audit --omit=dev --audit-level=high
-      - name: The Fabric app's function typechecks
-        working-directory: fabric_app/rayfin/functions
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          # --build: the function reads the app's data schema, a project of its own that is built first.
-          npx tsc --build
 
   # Mistakes a reader misses: a name that is nothing, a key written twice, code no path reaches. Not
   # style, and nothing here formats. ESLint is installed beside the tree, not into it: the product has
-  # no use for it. The first run found Download CSV broken in every model's Visual: a key written twice.
+  # no use for it. The first run found Download CSV broken in every model's Pivot: a key written twice.
   lint:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
@@ -240,9 +234,6 @@ jobs:
           --test-coverage-include=cli/cli.mjs --test-coverage-include=cli/agent.js --test-coverage-include=cli/bridge.js
           test/js/sqllogic.test.mjs test/js/cli-engine.test.mjs
           test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/agent.test.mjs test/js/bridge.test.mjs
-      # The Fabric app's split on what the pinned dax-sql writes: each query whole and shared out, on DuckDB.
-      - if: runner.os == 'Linux'
-        run: node --test test/js/split-compiled.test.mjs
 
   # The command line where it runs for most people: a named pipe, not a socket, and another
   # shell's idea of an argument. Everything but the engine, so nothing to install.
@@ -296,17 +287,10 @@ jobs:
         run: node test/js/run-engine-host.mjs
       - if: always()
         run: node test/js/run-panel-semantic.mjs
-      # The Fabric app's store: a query that reads bytes it lacks, answered right once they are downloaded.
-      - if: always()
-        run: node test/js/run-store-heal.mjs
-      # The Fabric app's split (?split=1): a query shared out between engines answers as it does whole.
-      - if: always()
-        run: node test/js/run-split.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
-  # package legs, which then restore it rather than build it once each: the webview's and
-  # the web app's libraries (vendor/, from jsDelivr: one CDN hiccup here instead of four chances
-  # to fail a leg), and Export to Fabric's function package.
+  # package legs, which then restore it rather than build it once each: the webview's
+  # libraries (vendor/, from jsDelivr: one CDN hiccup here instead of four chances to fail a leg).
   prepare:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
@@ -320,17 +304,6 @@ jobs:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
       - run: node scripts/vendor.mjs
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: fabric-function
-          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'fabric_app/export/fabricapp.js', 'fabric_app/rayfin/**') }}
-      - run: node scripts/function-bundle.mjs
-      # The app's page as Vite builds it (scripts/site-bundle.mjs): what an export uploads, nobody who exports needing npm.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: fabric-site
-          key: fabric-site-${{ hashFiles('scripts/site-bundle.mjs', 'fabric_app/site/**', 'fabric_app/project/**', 'fabric_app/export/exportapp.js', 'fabric_app/rayfin/functions/package.json', 'page/explore/**', 'page/paths.js', 'core/vendored.js') }}
-      - run: node scripts/site-bundle.mjs
 
   package:
     needs: [test, checks, lint, engine, cli-os, page, prepare]
@@ -384,21 +357,6 @@ jobs:
       - name: Bundle the DuckDB extensions for ${{ matrix.target }}
         run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
 
-      # Export to Fabric's function, as the deploy package Fabric takes (one esbuild bundle and
-      # its metadata), built from fabric_app/rayfin so nobody who exports needs npm: the
-      # prepare job's, from the cache (vscode:prepublish finds the same pins and builds nothing).
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: fabric-function
-          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'fabric_app/export/fabricapp.js', 'fabric_app/rayfin/**') }}
-      - run: node scripts/function-bundle.mjs
-      # The app's page as Vite builds it (scripts/site-bundle.mjs): what an export uploads, nobody who exports needing npm.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: fabric-site
-          key: fabric-site-${{ hashFiles('scripts/site-bundle.mjs', 'fabric_app/site/**', 'fabric_app/project/**', 'fabric_app/export/exportapp.js', 'fabric_app/rayfin/functions/package.json', 'page/explore/**', 'page/paths.js', 'core/vendored.js') }}
-      - run: node scripts/site-bundle.mjs
-
       # The staged page (stage-webview.mjs) and the host's bundle (bundle.mjs) are built by
       # vscode:prepublish, which vsce runs as it packages.
       # --target stamps TargetPlatform into the manifest AND names the file
@@ -437,28 +395,8 @@ jobs:
           grep -qx 'extension/dist/engine-server.js' <<<"$files" || { echo "no dist/engine-server.js in the vsix"; exit 1; }
           grep -qx 'extension/dist/standalone.js' <<<"$files" || { echo "no dist/standalone.js in the vsix"; exit 1; }
           grep -qx 'extension/cli/bridge.js' <<<"$files" || { echo "no cli/bridge.js — cli/cli.mjs needs it"; exit 1; }
-          # Export to Fabric writes its app from fabric_app/ and Studio's Explore (webview/explore),
-          # and deploys the prebuilt function; fabric_app/project/ is the project around it (a .fabricator).
-          for f in fabric_app/site/index.html fabric_app/site/src/app.js fabric_app/site/src/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js \
-                   fabric_app/project/vite.config.mjs fabric_app/project/gitignore fabric_app/project/gitattributes fabric_app/project/package-lock.json \
-                   fabric_app/project/validate-report.mjs \
-                   fabric-site/index.html; do
-            grep -qx "extension/$f" <<<"$files" || { echo "no $f in the vsix"; exit 1; }
-          done
-          # The web app's files npm has not (core/vendored.js VENDOR.webapp): its page loads nothing from a CDN.
-          webapp=$(node -e "const w = require('./core/vendored.js').VENDOR.webapp, x = w.extensions;
-            console.log([...w.files.map(f => f.to),
-              ...x.names.map(n => 'duckdb-ext/' + x.duckdb + '/' + x.platform + '/' + n + '.duckdb_extension.wasm')].join(' '))")
-          [ -n "$webapp" ] || { echo "no web app files listed in core/vendored.js"; exit 1; }
-          # The page's build holds the engine: DuckDB-WASM, from the project's own package.
-          grep -qE '^extension/fabric-site/assets/duckdb-base-[^/]+\.wasm$' <<<"$files" || { echo "no DuckDB-WASM in fabric-site"; exit 1; }
-          for f in $webapp; do
-            grep -qxF "extension/vendor/webapp/$f" <<<"$files" || { echo "no vendor/webapp/$f in the vsix"; exit 1; }
-          done
-          for f in source.zip deploymetadata.json agent-files.json; do
-            grep -qx "extension/fabric-function/$f" <<<"$files" || { echo "no fabric-function/$f in the vsix"; exit 1; }
-          done
-          stray=$(grep -E '^extension/(src|core|extension|cli|fabric_app/export)/' <<<"$files"                   | grep -vxE 'extension/cli/(cli.mjs|bridge.js|SKILL.md)' || true)
+          grep -qx 'extension/webview/explore/view.js' <<<"$files" || { echo "no webview/explore/view.js in the vsix"; exit 1; }
+          stray=$(grep -E '^extension/(src|core|extension|cli)/' <<<"$files"                   | grep -vxE 'extension/cli/(cli.mjs|bridge.js|SKILL.md)' || true)
           [ -z "$stray" ] || { echo "source shipped beside the bundle: $stray"; exit 1; }
           ! grep -q '^extension/node_modules/@duckdb/node-api/' <<<"$files" \
             || { echo "@duckdb/node-api shipped beside the bundle"; exit 1; }
