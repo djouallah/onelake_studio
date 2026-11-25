@@ -47,7 +47,7 @@ const EXTENSIONS = [
   // How a OneLake table is read: through DuckLake, its files brought here one at a time as they are read
   // (onelaketable.js, tableservice.js). What stays on this machine, and so what reads offline.
   { name: "ducklake", repo: "https://extensions.duckdb.org", required: true },
-  // COMMUNITY extensions, so nothing is downloaded at run time and a zip reads offline from the first
+  // COMMUNITY extensions, so nothing is downloaded at run time and they work offline from the first
   // start. A LOAD by path verifies against the core signing keys only, so these load as unsigned, and
   // their hash here is what holds them. Without them in the bundle the engine doesn't allow unsigned
   // ones, and it installs them from the community repository.
