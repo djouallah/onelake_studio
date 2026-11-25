@@ -195,13 +195,12 @@ test("Pivot's total line asks its query for the totals", () => {
   assert.match(sql, /GROUPING\("dim_zone"\."Borough"\) AS "__rows_total"[\s\S]*GROUP BY ROLLUP\("dim_zone"\."Borough"\)/);
 });
 
-const { modelPlaces, modelEdges, modelLayout } = await import("../../page/explore/draw.js");
+const { modelPlaces, modelEdges } = await import("../../page/explore/draw.js");
 
 test("the model's lines are drawn from wherever its cards are", () => {
   const tables = [{ name: "sales", lines: 2 }, { name: "date", lines: 2 }];
   const rels = [{ fromTable: "sales", fromColumn: "d", toTable: "date", toColumn: "d" }];
   const boxes = modelPlaces(tables, rels);
-  assert.deepEqual(modelLayout(tables, rels).edges, modelEdges(boxes, rels), "the star's lines are its boxes' lines");
   const [star] = modelEdges(boxes, rels);
   assert.equal(star.many.anchor, "start", "the fact is left of the dimension: its line leaves its right side");
   // The fact dragged past the dimension, to its right: the line leaves its left side now.
@@ -241,7 +240,7 @@ test("a chart's bars are rounded at their free end, and a line alone fades under
 });
 
 test("a field's display folders: several split by ';', each a path split by a backslash", async () => {
-  const { folderPaths, fieldPath } = await import("../../page/explore/explore.js");
+  const { folderPaths } = await import("../../page/explore/explore.js");
   assert.deepEqual(folderPaths(undefined), []);
   assert.deepEqual(folderPaths(""), []);
   assert.deepEqual(folderPaths("Money"), [["Money"]]);
@@ -253,6 +252,4 @@ test("a field's display folders: several split by ';', each a path split by a ba
   const [t] = fields.tables;
   assert.deepEqual(t.columns.map(c => c.folders), [[["Dates"]], []]);
   assert.deepEqual(t.measures.map(m => m.folders), [[["Margins", "Ratios"]], []]);
-  assert.equal(fieldPath(t, t.columns[0]), "Sales › Dates › Order Date");
-  assert.equal(fieldPath(t, t.columns[1]), "Sales › Amount");
 });

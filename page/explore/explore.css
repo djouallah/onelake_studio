@@ -23,8 +23,6 @@
 #modelView > *, #pivotView > * { flex-shrink: 0; }
 section.modelOpen .resultsWrap, section.modelOpen #csvBtn, section.modelOpen #profileBtn,
 section.modelOpen #chartBtn { display: none; }
-.sm-title { font-size: 12px; color: var(--muted); flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sm-title code { color: var(--text); }
 .sm-plan { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 0; }
 /* The studio styles every input; Explore's checkboxes keep their own size. */
 .ex input[type=checkbox], .ex-pop input[type=checkbox] { padding: 0; }
@@ -57,14 +55,11 @@ section.modelOpen #chartBtn { display: none; }
 @media (prefers-reduced-motion: reduce) { .keep-switch, .keep-switch::after, .keep-meter i { transition: none; } }
 
 /* --- SQL page --- */
-.explore-controls { display: flex; gap: 0.8rem; padding: var(--gap) var(--gutter) 0.8rem; align-items: center; flex-wrap: wrap; }
 .btn-explore { padding: 0.18rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; line-height: 1.4; white-space: nowrap; background: none; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
 .btn-explore:hover { border-color: var(--muted); }
 .btn-explore.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-explore.primary:hover { opacity: 0.88; }
 .btn-explore:disabled { opacity: 0.5; cursor: not-allowed; }
-.explore-info { font-size: 12px; color: var(--muted); padding: 0 var(--gutter); }
-.explore-table-wrap { margin: 0.6rem var(--gutter) 1.5rem; overflow: auto; max-height: 60vh; border-radius: var(--radius); }
 .explore-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 .explore-table th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; }
 .explore-table td { padding: 0.35rem 0.7rem; border-bottom: 1px solid var(--row-line); color: var(--text); }
@@ -126,7 +121,6 @@ section.modelOpen #chartBtn { display: none; }
 .model-panel h4 { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin: 1.1rem 0 0.4rem; }
 .model-panel p { color: var(--muted); line-height: 1.5; margin: 0.35rem 0; }
 .model-panel .m-src { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--faint); }
-.model-panel .m-hint { color: var(--faint); }
 .model-panel a { color: var(--text); }
 .m-tag { font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 0.45rem; margin-left: 0.4rem; white-space: nowrap; vertical-align: 1px; }
 .model-panel h3 .m-tag { margin-left: 0; }
@@ -308,7 +302,7 @@ section.modelOpen #chartBtn { display: none; }
 
 /* Show plan (profile.js): the profile, and the plan's tree. */
 .explore-plan { flex: 1 1 auto; min-height: 420px; display: flex; padding: 0 var(--gutter) 1rem; }
-.explore-plan[hidden], .explore-table-wrap[hidden] { display: none; }
+.explore-plan[hidden] { display: none; }
 .pf-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; gap: 0.6rem; }
 .pf-tabs { display: flex; gap: 0.15rem; padding: 0.2rem; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-sm); align-self: flex-start; }
 .pf-tab { padding: 0.28rem 0.85rem; font-size: 12px; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; }
@@ -390,7 +384,7 @@ section.modelOpen #chartBtn { display: none; }
 .rp-pane-ctl select, .rp-pane-input { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.15rem 0.35rem; min-width: 0; }
 .rp-pane-input { flex: 1; width: 100%; box-sizing: border-box; }
 .rp-pane-input[type=number] { width: 5.5rem; flex: none; }
-.rp-pane-check, .rp-pane-swatch { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--text); }
+.rp-pane-swatch { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--text); }
 .rp-pane-swatch { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-pane-colour { width: 1.6rem; height: 1.25rem; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; cursor: pointer; flex: none; }
 .rp-pane-reset { background: none; border: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }

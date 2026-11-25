@@ -135,7 +135,7 @@ export const paneColour = (value, set, label) => {
   i.addEventListener('change', () => set(i.value));
   return i;
 };
-export const SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
+const SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
 
 /**
  * The Format pane's rows for format `f`, as `about` says what is drawn: { kind: 'chart' |

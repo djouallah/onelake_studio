@@ -160,8 +160,3 @@ export function modelSize(boxes) {
   const { w, gap } = MODEL_CARD, all = Object.values(boxes);
   return { width: Math.max(3 * w + 2 * gap, ...all.map(b => b.x + b.w)), height: all.length ? Math.max(...all.map(b => b.y + b.h)) : 0 };
 }
-
-export function modelLayout(tables, rels) {
-  const boxes = modelPlaces(tables, rels);
-  return { ...modelSize(boxes), boxes, edges: modelEdges(boxes, rels) };
-}

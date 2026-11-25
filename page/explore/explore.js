@@ -90,9 +90,6 @@ const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 
 export const folderPaths = displayFolder => String(displayFolder ?? '').split(';')
   .map(p => p.split('\\').map(s => s.trim()).filter(Boolean)).filter(p => p.length);
 
-// A field as a picker lists it: its table, its first display folder, its name.
-export const fieldPath = (t, f) => [t.name, ...(f.folders?.[0] ?? []), f.name].join(' › ');
-
 // Tables with their visible columns and measures, dimensions first (a dimension is a table a
 // relationship points to: the model says it, not the names). A hidden table hides all it holds,
 // its measures too, as Power BI does. Each field has its display folders (folderPaths).
@@ -320,7 +317,7 @@ function shelfField(fields, id) {
     format: a.agg === 'count' || a.agg === 'distinct' ? '#,0' : c.format };
 }
 /** The names the shelves' Values have in their query's rows (the Format pane lists them). */
-export const valueNames = s => (s?.values ?? []).map(nameOf);
+const valueNames = s => (s?.values ?? []).map(nameOf);
 // A field's format string: the view's own for its name (look.formats), else the model's.
 const formatOf = (look, id) => look?.formats?.[nameOf(id)] ?? shelfField(look?.fields, id)?.format;
 
@@ -1308,7 +1305,7 @@ export function createExplorer(root, ctx) {
   // --- Start ---
   renderControls();
   draw();
-  const ready = ctx.model().then(model => {
+  ctx.model().then(model => {
     fields = modelFields(model);
     renderFields();
     renderShelves();
@@ -1317,7 +1314,6 @@ export function createExplorer(root, ctx) {
   }, e => { table.replaceChildren(el('div', { class: 'ex-error' }, `Could not read the model: ${e.message}`)); });
 
   return {
-    ready,
     // The theme changed: the chart is drawn again in the new one.
     redraw: () => { if (fields) draw(); },
     // The shelves as one SELECT over the model, and its conditions, or null. As the pivot runs

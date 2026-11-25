@@ -7,13 +7,13 @@
 // Series colours, each of them mid-toned enough for a dark or a light card.
 export const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#4f9a3a', '#9085e9', '#e66767', '#5aa7b8', '#b0762f', '#a86bc4', '#7f8a9c'];
 
-// Registers ECharts theme `name`, its colours read off the page's tokens (`css(name)`).
-export function registerChartTheme(echarts, css, name = 'studio') {
+// Registers ECharts theme 'studio', its colours read off the page's tokens (`css(name)`).
+export function registerChartTheme(echarts, css) {
   const text = css('--text'), muted = css('--muted'), line = css('--border'), split = css('--row-line');
   // Grid lines are dashed: they are read past, not read.
   const axis = { axisLine: { lineStyle: { color: line } }, axisTick: { lineStyle: { color: line } },
     axisLabel: { color: muted, fontSize: 11 }, splitLine: { lineStyle: { color: split, type: [3, 4] } }, nameTextStyle: { color: muted } };
-  echarts.registerTheme(name, {
+  echarts.registerTheme('studio', {
     backgroundColor: 'transparent',
     textStyle: { color: muted, fontFamily: getComputedStyle(document.body).fontFamily },
     title: { textStyle: { color: text } },
