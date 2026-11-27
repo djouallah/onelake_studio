@@ -62,7 +62,7 @@ const { tmslToOssie } = await load(`${PINS.daxSql}/formats/ossie.js`);
 const { stringify } = await load(`${PINS.yaml}/+esm.js`);
 const modelFile = name => join(dir, `${name}.yaml`);
 const OSSIE = stringify(tmslToOssie(BIM, "sales_model"));
-for (const name of ["sales_model", "opened_model"]) await writeFile(modelFile(name), OSSIE);
+for (const name of ["sales_model", "opened_model", "stats_model"]) await writeFile(modelFile(name), OSSIE);
 await writeFile(modelFile("broken_model"), "datasets: [this is : not an ossie model");
 // The same tables with no lakehouse behind them, as an Import model has none.
 const IMPORT = { compatibilityLevel: 1604, model: { ...BIM.model, expressions: [], tables: BIM.model.tables.map(({ partitions, ...t }) => t) } };
@@ -218,6 +218,25 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
     // Plain SQL compiles to nothing: there is nothing to show.
     r = await cli(["sql", "SELECT 1 AS one", "--show-sql", "--csv"]);
     assert.equal(r.stdout, "one\n1\n");
+  });
+});
+
+test("a model's stats are read from the data once, and its answers stay as they were (semantic.takeStats)", async () => {
+  // Kept, as a model opened in a tab is: every statement defines it again, with the same file.
+  await semviews.put("stats_model", modelFile("stats_model"), "shop");
+  const regions = REGIONS.replace("sales_model", "stats_model");
+  await withAgent(agent, async ({ cli }) => {
+    let before = queries.length;
+    let r = await cli(["sql", regions, "--json"]);
+    assert.equal(r.code, EXIT.OK, r.stdout);
+    assert.deepEqual(asRegions(JSON.parse(r.stdout).rows), EXPECTED);
+    const first = queries.length - before;
+    before = queries.length;
+    r = await cli(["sql", regions, "--json"]);
+    assert.equal(r.code, EXIT.OK, r.stdout);
+    assert.deepEqual(asRegions(JSON.parse(r.stdout).rows), EXPECTED, "every key has its customer: no blank row, the same numbers");
+    // The orphans check and the trailing spaces check, the first time only.
+    assert.equal(first - (queries.length - before), 2);
   });
 });
 

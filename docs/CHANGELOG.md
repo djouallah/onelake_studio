@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **DuckDB 2.0.1 and dax-sql 0.2.5.** dax-sql writes ROUND and the conversion to a fixed decimal so DuckDB 2.0.1 gives
+  Power BI's answers. 2.0.0's optimizer lost rows on some model queries, and 2.0.1 doesn't.
+- **A model's first query reads two facts from its tables:** which relationships have keys the other table lacks,
+  and which text columns have values ending in spaces. The status says "Reading the model's keys…" while it does.
+  Later queries skip the blank-row test for a relationship whose keys all match, which makes them faster. A value
+  that ends in spaces reads without them, as Power BI loads it. The facts are read again when the model is opened again.
+
 ## 0.3.1
 
 ### Removed

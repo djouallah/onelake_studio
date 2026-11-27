@@ -33,6 +33,8 @@ const PAGES = [['model', 'Model'], ['pivot', 'Pivot']];
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
 //                    query.js's EXPLORE_CASTS
 //   run(sql)         a compiled SQL's result: { fields, rows, numRows, truncated?, limit? }
+//   prepare()        (optional) awaited before the shelves' query compiles: what the data says of the
+//                    model, read once, which the compiler then uses
 //   echarts()        ECharts (a promise)
 //   worldMap()       (optional) the world's outline, a GeoJSON (a promise): what a map draws over
 //   saveText(name, text)  a CSV saved: answers where (or null: dismissed)
@@ -380,7 +382,7 @@ export function mountExplore(root, ctx) {
     explorer = createExplorer(pivotPage, {
       model: async () => ctx.tmsl,
       name: ctx.name,
-      run: async text => (await run(compile(text))).rows,
+      run: async text => { await ctx.prepare?.(); return (await run(compile(text))).rows; },
       cancel: ctx.cancel,
       chart: box => {
         if (!charts.has(box)) { charts.set(box, echarts.init(box, 'studio')); resized.observe(box); }
@@ -438,6 +440,7 @@ export function mountExplore(root, ctx) {
     csvBtn.disabled = true;
     csvBtn.textContent = 'Exporting…';
     try {
+      await ctx.prepare?.();
       // Every column as DuckDB prints it: a DATE, TIMESTAMP or DECIMAL would otherwise be its raw number.
       const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${compile(base)}\n)`, { fresh: true });
       const text = toCsv(res.fields, res.rows, { eol: '\n' }) + '\n';

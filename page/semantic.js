@@ -60,6 +60,8 @@ function compilerModules() {
 // The views (dax-sql's registry) and, per view, its Direct Lake tables.
 let mods = null, views = null;
 const lakes = new Map();   // lower-cased view name -> directLakeTables()
+// What the data says of each view's model (takeStats), by its lower-cased fullName: { s, compiler, sig }.
+const stats = new Map();
 async function ready(modules) {
   if (!views) {
     mods = modules || await compilerModules();
@@ -307,7 +309,7 @@ function itemOfIdent(ident) {
  * { name (its SQL name), view (the model's name), schema, file, sample, directLake, bim, exploreCompiler, lakeTables }:
  * `lakeTables`, each Direct Lake table's SQL name by its model table's name, lower-cased.
  */
-export async function defineView(name, path, text, mode = "replace", modules = null, schema = null, lakehouse = null) {
+export async function defineView(name, path, text, mode = "replace", modules = null, schema = null, lakehouse = null, keepStats = false) {
   if (!schema) throw new Error(`a semantic model is named <workspace>.<model>${SUFFIX}: ${name} has no workspace`);
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
@@ -326,12 +328,23 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   };
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
-  const at = { path, mode, db: MODEL_DB, schema, tableSource, tablesFrom: where.join(", ") || null };
+  // What the data says of the model (takeStats), empty until it is read: a key not answered yet is
+  // tested in the SQL, as with no stats. Read again each time the model is opened; `keepStats` (the
+  // command line, which defines every kept view for each statement) keeps what was read while the
+  // file and its tables are the same.
+  const sig = JSON.stringify([path, text, [...lake.values()].map(l => l.ident)]);
+  const was = keepStats ? stats.get(lc([schema, viewName(name)].map(sqlPart).join("."))) : null;
+  const s = was && was.sig === sig ? was.s : { orphans: new Map(), padded: new Set(), taken: null };
+  const known = { orphans: r => s.orphans.get(r.key), trailingSpaces: c => s.padded.has(c.key) || undefined };
+  const at = { path, mode, db: MODEL_DB, schema, tableSource, tablesFrom: where.join(", ") || null, ...known };
   const done = views.define(viewName(name), tmslToModel(bim), at);
   const v = views.get(modelKey(schema, name));
-  if (done === "created") lakes.set(lc(v.sqlName), lake);
+  if (done === "created") {
+    lakes.set(lc(v.sqlName), lake);
+    stats.set(lc(fullName(v)), { s, compiler: v.compiler, sig });
+  }
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
-  const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
+  const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS, ...known });
   return { name: fullName(v), view: modelOf(v.name), schema, file: basename(path), sample: sampleQuery(v),
            directLake: lake.size, bim, exploreCompiler, done, skipped: bim.skipped ?? [],
            lakeTables: Object.fromEntries([...lake].map(([table, l]) => [table, l.ident])) };
@@ -561,6 +574,43 @@ function withCatalog(sql) {
   });
 }
 
+// What the data says of the models a statement names, read once per model as it was opened
+// (defineView): which relationships' many side holds a key its one side lacks (dax-sql's orphans),
+// and which text columns end in spaces (trailingSpaces). With them a relationship whose keys all
+// match has no blank-row test, and a padded column reads trimmed, as Power BI loads it. `run`
+// runs SQL on the engine: { rows: [{ name: value }] }. A check that fails leaves its keys
+// tested in the SQL, as before.
+export async function takeStats(sql, run) {
+  const s = String(sql);
+  if (!views || !lc(s).includes(SUFFIX)) return;
+  for (const m of s.matchAll(DOTTED)) {
+    const ref = m[1] && modelRef(partsOf(m[1]));
+    const v = ref && views.get(modelKey(ref.workspace, ref.model));
+    if (v) await takeStatsOf(fullName(v), run);
+  }
+}
+
+// The same, of one view by its name (defineView's `name`).
+export function takeStatsOf(name, run) {
+  const rec = stats.get(lc(name));
+  if (!rec) return Promise.resolve();
+  rec.s.taken = rec.s.taken || readStats(rec, run).catch(e => console.warn(`[stats] ${name}: ${e.message}`));
+  return rec.s.taken;
+}
+
+async function readStats({ s, compiler }, run) {
+  const row = async check => {
+    const res = await run(check.sql);
+    const r = res.rows[0] || [];
+    return Array.isArray(r) ? r : Object.values(r);   // one boolean a column, in the check's order
+  };
+  const o = compiler.orphanCheck();
+  // Only a boolean is an answer: anything else leaves that key tested in the SQL.
+  if (o.rels.length) (await row(o)).forEach((b, i) => { if (typeof b === "boolean") s.orphans.set(o.rels[i].key, b); });
+  const t = compiler.trailingSpacesCheck();
+  if (t.columns.length) (await row(t)).forEach((b, i) => { if (b === true) s.padded.add(t.columns[i].key); });
+}
+
 // A model's SQL name read back: { workspace, model }, or null when it is not one.
 export function modelNameParts(sqlName) {
   const s = String(sqlName).trim();
@@ -574,6 +624,7 @@ export function dropView(name) {
   if (!v) return;
   views.drop([v.db, v.schema, v.name], { ifExists: true });
   lakes.delete(lc(v.sqlName));
+  stats.delete(lc(fullName(v)));
 }
 
 export const hasView = name => !!(views && views.get(name));

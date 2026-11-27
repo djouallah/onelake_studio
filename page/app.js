@@ -425,6 +425,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     modelView = mountExplore($('modelView'), {
       // The tab and the header already say the file: the bar says only the model's name.
       name: m.name, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
+      prepare: () => modelStats(() => semantic.takeStatsOf(m.name, runStats)),
       text: file.viewText ?? bim, ext: file.viewText != null ? 'yaml' : (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
       fabricView: !!file.fabricView,
       run: runModelSql,
@@ -526,6 +527,18 @@ async function openModels(sql) {
     setStatus(`Opening the semantic model ${ref.workspace}.${ref.model}…`);
     const v = await engine.semanticOpen(ref);
     await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema, v.lakehouse || null);
+  }
+}
+
+// What the data says of a model (semantic.takeStats), read once when it is first queried: the status
+// says so while it runs, and a model already read waits for nothing.
+const runStats = sql => engine.runSql(sql);
+async function modelStats(take) {
+  let shown = false;
+  const said = setTimeout(() => { shown = true; setStatus("Reading the model's keys…"); }, 100);
+  try { await take(); } finally {
+    clearTimeout(said);
+    if (shown) setStatus('Running…');
   }
 }
 
@@ -966,6 +979,7 @@ async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
     const source = summarize != null ? String(summarize) : sql;
     await viewsFor(source);
     await openModels(source);
+    await modelStats(() => semantic.takeStats(source, runStats));
     if (stale()) return false;
     const onRows = n => { rowsSoFar = n; };
     let model = null, statementSql;

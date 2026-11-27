@@ -85,7 +85,10 @@ and joins at step 3.
 1. **Open the models it names.** `unopenedModels` finds each `<ws>.<model>_semanticmodel` not open yet.
    The host opens it from its local copy, reading it from Fabric the first time.
 2. **Compile.** `semantic.statement` has dax-sql rewrite a model query as plain SQL over the tables'
-   names. A statement that names no model passes through unchanged.
+   names. A statement that names no model passes through unchanged. Before that, `semantic.takeStats` runs
+   dax-sql's two checks, `orphanCheck` and `trailingSpacesCheck`, once for each model the statement names. Their
+   answers become the compiler's `orphans` and `trailingSpaces` options. They are kept until the model is opened again.
+   The command line keeps them while the model's file and tables stay the same.
 3. **Check.** `assertReads` in the host refuses more than one statement, and anything that isn't a read. A
    statement that isn't a read goes to [SQL writes](#sql-writes) instead.
    `checkedRead` then asks DuckDB's parser, in this window's own empty DuckDB, what the statement is, so that
