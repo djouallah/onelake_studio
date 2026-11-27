@@ -850,6 +850,6 @@
   },
   "dependencies": {
     "@azure/msal-node": "7.2.3",
-    "@duckdb/node-api": "2.0.1-r.1"
+    "@duckdb/node-api": "2.0.0-r.1"
   }
 }
