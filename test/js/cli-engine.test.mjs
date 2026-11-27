@@ -111,6 +111,7 @@ const at = Date.now() - 60_000;
 const cached = v => ({ value: v, at });
 const opened = [];
 const queries = [];
+let snapshot = 1;
 const agent = createAgent({
   onelake: {
     cached: {
@@ -125,6 +126,8 @@ const agent = createAgent({
   semviews,
   engine: async () => ({
     agentQuery: (sql, o) => { const p = engine.agentQuery(sql, o); queries.push(p); return p; },
+    // These tables are no lake's (resolveTable's emptySql): the snapshot they are at is the test's to say.
+    tableSnapshots: async names => names.map(() => snapshot),
   }),
   modelPath: (ws, model) => modelFile(model),
   appDir: join(ROOT, "page"), vendorDir: VENDOR, daxSqlPin: PINS.daxSql, yamlPin: PINS.yaml,
@@ -221,22 +224,25 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
   });
 });
 
-test("a model's stats are read from the data once, and its answers stay as they were (semantic.takeStats)", async () => {
+test("a model's stats are read once for its tables' snapshots, again when one moves, and its answers stay (semantic.takeStats)", async () => {
   // Kept, as a model opened in a tab is: every statement defines it again, with the same file.
   await semviews.put("stats_model", modelFile("stats_model"), "shop");
   const regions = REGIONS.replace("sales_model", "stats_model");
   await withAgent(agent, async ({ cli }) => {
-    let before = queries.length;
-    let r = await cli(["sql", regions, "--json"]);
-    assert.equal(r.code, EXIT.OK, r.stdout);
-    assert.deepEqual(asRegions(JSON.parse(r.stdout).rows), EXPECTED);
-    const first = queries.length - before;
-    before = queries.length;
-    r = await cli(["sql", regions, "--json"]);
-    assert.equal(r.code, EXIT.OK, r.stdout);
-    assert.deepEqual(asRegions(JSON.parse(r.stdout).rows), EXPECTED, "every key has its customer: no blank row, the same numbers");
+    const asked = async () => {
+      const before = queries.length;
+      const r = await cli(["sql", regions, "--json"]);
+      assert.equal(r.code, EXIT.OK, r.stdout);
+      assert.deepEqual(asRegions(JSON.parse(r.stdout).rows), EXPECTED, "every key has its customer: the same numbers");
+      return queries.length - before;
+    };
+    const first = await asked(), again = await asked();
     // The orphans check and the trailing spaces check, the first time only.
-    assert.equal(first - (queries.length - before), 2);
+    assert.equal(first - again, 2);
+    // A table at another snapshot: both checks again, once.
+    snapshot = 2;
+    assert.equal(await asked(), first);
+    assert.equal(await asked(), again);
   });
 });
 

@@ -157,6 +157,12 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         schema: String(x.schema || 'dbo'), table: String(x.table),
       })));
     },
+    // The DuckLake snapshot each table is at, by its SQL name (engine-host.js tableSnapshots): no OneLake request,
+    // and no line in Logs. page/semantic.js asks it before a model query.
+    'lake.snapshots': async x => {
+      const names = (x && Array.isArray(x.names) ? x.names : []).map(String);
+      return engine.tableSnapshots ? engine.tableSnapshots(names) : names.map(() => null);
+    },
     // A Delta table's own log: its state as of the converted version, and its commits a
     // page at a time. The engine is passed for the checkpoint, the one log file that is parquet.
     'onelake.deltaState': x => onelake.deltaState(lhOf(x), tableOf(x), { run: sql => engine.call('query', [sql]) }),

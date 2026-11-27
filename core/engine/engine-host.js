@@ -41,7 +41,7 @@ const { sqlStr, quoteIdent, storedFault, ONELAKE_SCOPES, scopeOfUrl, oneLakeScop
 const { sqlName, sqlPart, itemPart, displayName, abfssUrl, MODEL_KIND, modelSqlName, ENGINE_DB } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
 const { mapPool } = require('../onelake/http');
-const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, localAll } = require('../lake/onelaketable');
+const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, localAll, snapshotsOf } = require('../lake/onelaketable');
 const { createTableService, httpsDownload, openedSince, heldOn } = require('../lake/tableservice');
 const { tableReadCopies, TABLE_READ_FOLDER } = require('../lake/tableread');
 
@@ -796,6 +796,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const lakeTablesHere = () => withConn(c => syncedAll(c), agentLive);
   // Each lake table's folder and how many of its files are still only on OneLake: what the tree's check says.
   const lakeLocalHere = () => withConn(c => localAll(c), agentLive);
+  // Each lake table's DuckLake snapshot, by name (onelaketable.js snapshotsOf).
+  const lakeSnapshotsHere = names => withConn(c => snapshotsOf(c, names), agentLive);
   const lakeOf = which => (remote ? instance.lakeTable(which) : lakeTable(which));
   // The lake's name for a table it holds, or null: asks nothing of OneLake (health.js reads its files by it).
   const lakeName = async w => {
@@ -1818,6 +1820,28 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // The sync service's (syncworker.js): the lake's tables, and one synced now.
   const lakeTables = () => init().then(() => (remote ? instance.lakeTables() : capabilities.lake ? lakeTablesHere() : []));
   const lakeLocal = () => init().then(() => (remote ? instance.lakeLocal() : capabilities.lake ? lakeLocalHere() : []));
+  const lakeSnapshots = names => init().then(() => (remote ? instance.lakeSnapshots(names) : capabilities.lake ? lakeSnapshotsHere(names) : {}));
+  /**
+   * The DuckLake snapshot of each table named by its SQL name (ws.item.schema.table), in order: null for one the lake
+   * doesn't hold (a table read through the table read API, a view of Files/, one never read here). Asks nothing of
+   * OneLake, and over the control pipe on a shared engine, so it is no line in Logs: semantic.js asks it before each
+   * model query, to know whether what it read of the data still holds.
+   */
+  async function tableSnapshots(names) {
+    await init();
+    const list = (Array.isArray(names) ? names : []).map(String);
+    if (!capabilities.lake || !resolveTable) return list.map(() => null);
+    const lake = await Promise.all(list.map(async n => {
+      try {
+        const [ref] = tableRefs(`SELECT * FROM ${n}`);
+        const r = ref && await resolveTable(ref, {});
+        if (!r || r.emptySql != null || (!r.deltaTable && !r.metadataLocation)) return null;
+        return (await lakeOf({ deltaTable: r.deltaTable || null, metadataLocation: r.metadataLocation || null, check: true })).name || null;
+      } catch (_) { return null; }
+    }));
+    const snaps = await lakeSnapshots([...new Set(lake.filter(Boolean))]);
+    return lake.map(l => (l && snaps[l] != null ? Number(snaps[l]) : null));
+  }
   // On this window's token, as a statement is: the server's secret may hold one that expired since its last statement.
   const syncLakeTable = which => init().then(() => withAuthRetry(() => (remote ? instance.lakeSync(which) : lakeSync(which))));
   // serve: the OneLake token a window sends, over the control pipe.
@@ -2014,7 +2038,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeLocal, lakeStats, lakeFetch, lakeStop, keepWhole, logs, health,
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeLocal, lakeSnapshots, tableSnapshots, lakeStats, lakeFetch, lakeStop, keepWhole, logs, health,
                 icebergAttach: ({ warehouse }) => iceAttach(warehouse), icebergDetach: ({ name }) => iceDetach(name),
                 deltaAttach: ({ folder }) => deltaAttach(folder), deltaDetach: ({ name }) => deltaDetach(name) };
   return api;

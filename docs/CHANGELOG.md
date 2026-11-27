@@ -7,7 +7,8 @@
 - **dax-sql 0.2.5: a model's first query reads two facts from its tables:** which relationships have keys the other table lacks,
   and which text columns have values ending in spaces. The status says "Reading the model's keys…" while it does.
   Later queries skip the blank-row test for a relationship whose keys all match, which makes them faster. A value
-  that ends in spaces reads without them, as Power BI loads it. The facts are read again when the model is opened again.
+  that ends in spaces reads without them, as Power BI loads it. The facts hold for the snapshot each table is at in the
+  lake, and are read again when one of the model's tables moves to another.
 
 ## 0.3.1
 

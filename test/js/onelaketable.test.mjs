@@ -15,7 +15,7 @@ const skip = !FIXTURES && "LAKE_FIXTURES is not set: the lake is tested by its o
 if (skip && process.env.NO_SKIP) throw new Error(skip);
 const require = createRequire(import.meta.url);
 const H = skip ? null : await import("./lake-helpers.mjs");
-const { readDelta, syncTable, META } = require("../../core/lake/onelaketable.js");
+const { readDelta, syncTable, snapshotsOf, META } = require("../../core/lake/onelaketable.js");
 const { createTableService, openedSince } = require("../../core/lake/tableservice.js");
 const MAKE = new URL("../fixtures/lake/make_tables.py", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const fwd = p => p.replace(/\\/g, "/");
@@ -149,7 +149,7 @@ test("a table followed commit by commit stays equal to delta_scan, time travel i
     const root = fwd(join(FIXTURES, "churn"));
     let steps = [];
     const snapshots = [];
-    let before = null;
+    let before = null, churnAt = null;
     for (let step = 0; step < 7; step++) {
       const out = JSON.parse(execFileSync("python", [MAKE, FIXTURES, "churn", String(step)], { encoding: "utf8" }));
       steps = out.steps;
@@ -157,6 +157,12 @@ test("a table followed commit by commit stays equal to delta_scan, time travel i
       if (step === 4) execFileSync("python", ["-c", `from deltalake import DeltaTable; DeltaTable(r'''${root}''').create_checkpoint()`]);
       const state = await readDelta(lake.c, root);
       await syncTable(lake.c, "churn", state, { dvDir: lake.dvDir });
+      // Its snapshot (semantic.js's stats hold while it stays): the sync's own, newer than the last one's.
+      const [newest] = await H.rowsOf(lake.c, "SELECT max(snapshot_id)::BIGINT AS id FROM lake.snapshots()");
+      const at = (await snapshotsOf(lake.c, ["churn", "no_such_table"])).churn;
+      assert.equal(at, Number(newest.id), `after ${steps[step]}: the sync's snapshot`);
+      if (churnAt != null) assert.ok(at > churnAt, `after ${steps[step]}: a new snapshot`);
+      churnAt = at;
       const names = state.fields.map(f => f.name);
       const same = await H.sameRows(lake.c, "lake.churn", `delta_scan(${H.q(root)})`, names);
       assert.deepEqual([same.onlyInFirst, same.onlyInSecond], [0, 0], `after ${steps[step]}: ${JSON.stringify(same)}`);
@@ -170,6 +176,11 @@ test("a table followed commit by commit stays equal to delta_scan, time travel i
       if (before && step !== 4) assert.equal(on.commitsRead, on.version - before.state.version);
       assert.deepEqual(shape(on), shape(state), `after ${steps[step]}`);
       await syncTable(lake.c, "churn_on", on, { dvDir: lake.dvDir });
+      // Another table's sync moves only that table's snapshot.
+      const both = await snapshotsOf(lake.c, ["churn", "churn_on", "no_such_table"]);
+      assert.deepEqual(Object.keys(both).sort(), ["churn", "churn_on"]);
+      assert.equal(both.churn, churnAt, `after ${steps[step]}: churn_on's sync leaves churn where it was`);
+      assert.ok(both.churn_on > churnAt);
       const sameOn = await H.sameRows(lake.c, "lake.churn_on", `delta_scan(${H.q(root)})`, names);
       assert.deepEqual([sameOn.onlyInFirst, sameOn.onlyInSecond], [0, 0], `synced on, after ${steps[step]}: ${JSON.stringify(sameOn)}`);
       before = { state: on, rows: sameOn.rows };

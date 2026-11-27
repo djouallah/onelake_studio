@@ -694,6 +694,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       lakeSync: t => ask({ lakeSync: t }),
       lakeTables: () => ask({ lakeTables: true }),
       lakeLocal: () => ask({ lakeLocal: true }),
+      lakeSnapshots: names => ask({ lakeSnapshots: names }),
       lakeStats: () => ask({ lakeStats: true }),
       lakeFetch: name => ask({ lakeFetch: name }),
       lakeStop: name => ask({ lakeStop: name }),

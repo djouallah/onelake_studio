@@ -87,8 +87,9 @@ and joins at step 3.
 2. **Compile.** `semantic.statement` has dax-sql rewrite a model query as plain SQL over the tables'
    names. A statement that names no model passes through unchanged. Before that, `semantic.takeStats` runs
    dax-sql's two checks, `orphanCheck` and `trailingSpacesCheck`, once for each model the statement names. Their
-   answers become the compiler's `orphans` and `trailingSpaces` options. They are kept until the model is opened again.
-   The command line keeps them while the model's file and tables stay the same.
+   answers become the compiler's `orphans` and `trailingSpaces` options. They hold for the DuckLake snapshot each
+   table was at (`lake.snapshots`, which reads the lake's metadata and nothing of OneLake), and are read again when
+   one of the model's tables is at another. A table the lake doesn't hold gets no answer: its keys are tested in the SQL.
 3. **Check.** `assertReads` in the host refuses more than one statement, and anything that isn't a read. A
    statement that isn't a read goes to [SQL writes](#sql-writes) instead.
    `checkedRead` then asks DuckDB's parser, in this window's own empty DuckDB, what the statement is, so that

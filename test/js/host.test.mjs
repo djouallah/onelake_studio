@@ -80,6 +80,14 @@ test("a model's tables reach the host as the page names them: by GUIDs, or by la
   ]);
 });
 
+test("a model's tables' DuckLake snapshots: asked of the engine by SQL name, none from an engine with no lake", async () => {
+  const asked = [];
+  const engine = { tableSnapshots: async names => { asked.push(...names); return names.map((_, i) => i + 7); } };
+  assert.deepEqual(await createHostMethods({ onelake: {}, engine })["lake.snapshots"]({ names: ["w.lh.dbo.a", 3] }), [7, 8]);
+  assert.deepEqual(asked, ["w.lh.dbo.a", "3"]);
+  assert.deepEqual(await createHostMethods({ onelake: {}, engine: {} })["lake.snapshots"]({ names: ["w.lh.dbo.a"] }), [null]);
+});
+
 test("Keep offline: a page names a model and on or off, and nothing else", async () => {
   const asked = [];
   const methods = createHostMethods({ onelake: {}, engine: {},

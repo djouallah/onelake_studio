@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | othersRunning | logs | storageToken | lakeTable | lakeSync | lakeTables | lakeLocal | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | deltaAttach | deltaDetach | listen }, answered { id, value | error }
+//   window -> server   { id, stats | othersRunning | logs | storageToken | lakeTable | lakeSync | lakeTables | lakeLocal | lakeSnapshots | lakeStats | lakeFetch | lakeStop | icebergAttach | icebergDetach | deltaAttach | deltaDetach | listen }, answered { id, value | error }
 //   server -> window   { reattach: true }   its own news, with no id
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
@@ -149,6 +149,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     if (msg.lakeSync) return engine.lakeSync(msg.lakeSync);
     if (msg.lakeTables) return engine.lakeTables();
     if (msg.lakeLocal) return engine.lakeLocal();
+    if (msg.lakeSnapshots) return engine.lakeSnapshots(Array.isArray(msg.lakeSnapshots) ? msg.lakeSnapshots.map(String) : []);
     if (msg.lakeStats) return engine.lakeStats();
     // A lake table's every file brought here whole, or the rest of them left (engine-host.js keepWhole).
     if (msg.lakeFetch) return engine.lakeFetch(String(msg.lakeFetch));

@@ -425,7 +425,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     modelView = mountExplore($('modelView'), {
       // The tab and the header already say the file: the bar says only the model's name.
       name: m.name, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
-      prepare: () => modelStats(() => semantic.takeStatsOf(m.name, runStats)),
+      prepare: () => modelStats(() => semantic.takeStatsOf(m.name, runStats, engine.tableSnapshots)),
       text: file.viewText ?? bim, ext: file.viewText != null ? 'yaml' : (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
       fabricView: !!file.fabricView,
       run: runModelSql,
@@ -530,8 +530,8 @@ async function openModels(sql) {
   }
 }
 
-// What the data says of a model (semantic.takeStats), read once when it is first queried: the status
-// says so while it runs, and a model already read waits for nothing.
+// What the data says of a model (semantic.takeStats), read when it is first queried and again when one of its
+// tables is at another DuckLake snapshot: the status says so while the checks run.
 const runStats = sql => engine.runSql(sql);
 async function modelStats(take) {
   let shown = false;
@@ -979,7 +979,7 @@ async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
     const source = summarize != null ? String(summarize) : sql;
     await viewsFor(source);
     await openModels(source);
-    await modelStats(() => semantic.takeStats(source, runStats));
+    await modelStats(() => semantic.takeStats(source, runStats, engine.tableSnapshots));
     if (stale()) return false;
     const onRows = n => { rowsSoFar = n; };
     let model = null, statementSql;

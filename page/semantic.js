@@ -60,7 +60,7 @@ function compilerModules() {
 // The views (dax-sql's registry) and, per view, its Direct Lake tables.
 let mods = null, views = null;
 const lakes = new Map();   // lower-cased view name -> directLakeTables()
-// What the data says of each view's model (takeStats), by its lower-cased fullName: { s, compiler, sig }.
+// What the data says of each view's model (takeStats), by its lower-cased fullName: { s, compiler, sig, tables }.
 const stats = new Map();
 async function ready(modules) {
   if (!views) {
@@ -309,7 +309,7 @@ function itemOfIdent(ident) {
  * { name (its SQL name), view (the model's name), schema, file, sample, directLake, bim, exploreCompiler, lakeTables }:
  * `lakeTables`, each Direct Lake table's SQL name by its model table's name, lower-cased.
  */
-export async function defineView(name, path, text, mode = "replace", modules = null, schema = null, lakehouse = null, keepStats = false) {
+export async function defineView(name, path, text, mode = "replace", modules = null, schema = null, lakehouse = null) {
   if (!schema) throw new Error(`a semantic model is named <workspace>.<model>${SUFFIX}: ${name} has no workspace`);
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
@@ -329,19 +329,18 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
   // What the data says of the model (takeStats), empty until it is read: a key not answered yet is
-  // tested in the SQL, as with no stats. Read again each time the model is opened; `keepStats` (the
-  // command line, which defines every kept view for each statement) keeps what was read while the
-  // file and its tables are the same.
+  // tested in the SQL, as with no stats. Defined again from the same file and tables (the command line
+  // defines every kept view for each statement), the model keeps it: it holds while its tables' snapshots do.
   const sig = JSON.stringify([path, text, [...lake.values()].map(l => l.ident)]);
-  const was = keepStats ? stats.get(lc([schema, viewName(name)].map(sqlPart).join("."))) : null;
-  const s = was && was.sig === sig ? was.s : { orphans: new Map(), padded: new Set(), taken: null };
+  const was = stats.get(lc([schema, viewName(name)].map(sqlPart).join(".")));
+  const s = was && was.sig === sig ? was.s : { orphans: new Map(), padded: new Set(), at: null };
   const known = { orphans: r => s.orphans.get(r.key), trailingSpaces: c => s.padded.has(c.key) || undefined };
   const at = { path, mode, db: MODEL_DB, schema, tableSource, tablesFrom: where.join(", ") || null, ...known };
   const done = views.define(viewName(name), tmslToModel(bim), at);
   const v = views.get(modelKey(schema, name));
   if (done === "created") {
     lakes.set(lc(v.sqlName), lake);
-    stats.set(lc(fullName(v)), { s, compiler: v.compiler, sig });
+    stats.set(lc(fullName(v)), { s, compiler: v.compiler, sig, tables: new Map([...lake].map(([table, l]) => [table, l.ident])), pending: null });
   }
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
   const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS, ...known });
@@ -574,41 +573,68 @@ function withCatalog(sql) {
   });
 }
 
-// What the data says of the models a statement names, read once per model as it was opened
-// (defineView): which relationships' many side holds a key its one side lacks (dax-sql's orphans),
-// and which text columns end in spaces (trailingSpaces). With them a relationship whose keys all
-// match has no blank-row test, and a padded column reads trimmed, as Power BI loads it. `run`
-// runs SQL on the engine: { rows: [{ name: value }] }. A check that fails leaves its keys
+// What the data says of the models a statement names: which relationships' many side holds a key
+// its one side lacks (dax-sql's orphans), and which text columns end in spaces (trailingSpaces). With
+// them a relationship whose keys all match has no blank-row test, and a padded column reads trimmed, as
+// Power BI loads it. They are facts of the rows at the DuckLake snapshots they were read at, so they
+// are read again when one of the model's tables is at another snapshot. `run` runs SQL on the engine
+// ({ rows: [{ name: value }] }); `snapshots(names)` is each table's snapshot by its SQL name, null for
+// one the lake doesn't hold, whose keys stay tested in the SQL. A check that fails leaves its keys
 // tested in the SQL, as before.
-export async function takeStats(sql, run) {
+export async function takeStats(sql, run, snapshots) {
   const s = String(sql);
   if (!views || !lc(s).includes(SUFFIX)) return;
   for (const m of s.matchAll(DOTTED)) {
     const ref = m[1] && modelRef(partsOf(m[1]));
     const v = ref && views.get(modelKey(ref.workspace, ref.model));
-    if (v) await takeStatsOf(fullName(v), run);
+    if (v) await takeStatsOf(fullName(v), run, snapshots);
   }
 }
 
-// The same, of one view by its name (defineView's `name`).
-export function takeStatsOf(name, run) {
+// The same, of one view by its name (defineView's `name`). One look at a time for a model: a second
+// query waits for the first's.
+export function takeStatsOf(name, run, snapshots) {
   const rec = stats.get(lc(name));
   if (!rec) return Promise.resolve();
-  rec.s.taken = rec.s.taken || readStats(rec, run).catch(e => console.warn(`[stats] ${name}: ${e.message}`));
-  return rec.s.taken;
+  rec.pending = (rec.pending || Promise.resolve())
+    .then(() => freshStats(rec, run, snapshots))
+    .catch(e => console.warn(`[stats] ${name}: ${e.message}`));
+  return rec.pending;
 }
 
-async function readStats({ s, compiler }, run) {
+async function freshStats({ s, compiler, tables }, run, snapshots) {
+  const names = [...tables.keys()];
+  const at = async () => {
+    const list = await snapshots(names.map(t => tables.get(t)));
+    return new Map(names.map((t, i) => [t, list?.[i] ?? null]));
+  };
+  const now = await at();
+  if (s.at && names.every(t => s.at.get(t) === now.get(t))) return;
+  s.orphans.clear();
+  s.padded.clear();
+  s.at = null;
   const row = async check => {
     const res = await run(check.sql);
     const r = res.rows[0] || [];
     return Array.isArray(r) ? r : Object.values(r);   // one boolean a column, in the check's order
   };
-  const o = compiler.orphanCheck();
+  const o = compiler.orphanCheck(), t = compiler.trailingSpacesCheck();
+  const orphans = o.rels.length ? await row(o) : [];
+  const padded = t.columns.length ? await row(t) : [];
+  // A table the answers hold for: in the lake, at the snapshot it was at before the checks (or the first,
+  // when the checks are what brought it here), so its rows didn't move under them.
+  const after = await at();
+  const pinned = table => {
+    const a = after.get(lc(table)), b = now.get(lc(table));
+    return a != null && (b == null || a === b);
+  };
   // Only a boolean is an answer: anything else leaves that key tested in the SQL.
-  if (o.rels.length) (await row(o)).forEach((b, i) => { if (typeof b === "boolean") s.orphans.set(o.rels[i].key, b); });
-  const t = compiler.trailingSpacesCheck();
-  if (t.columns.length) (await row(t)).forEach((b, i) => { if (b === true) s.padded.add(t.columns[i].key); });
+  orphans.forEach((b, i) => {
+    const r = o.rels[i];
+    if (typeof b === "boolean" && pinned(r.many.table) && pinned(r.one.table)) s.orphans.set(r.key, b);
+  });
+  padded.forEach((b, i) => { if (b === true && pinned(t.columns[i].table)) s.padded.add(t.columns[i].key); });
+  s.at = after;
 }
 
 // A model's SQL name read back: { workspace, model }, or null when it is not one.

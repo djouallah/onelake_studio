@@ -258,7 +258,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (!v.schema) continue;   // named before models were ws.model_semanticmodel
       try {
         if (v.error) throw new Error(v.error);
-        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema, v.lakehouse || null, true);
+        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema, v.lakehouse || null);
         defined.add(m.name.toLowerCase());
         names.add(m.name.toLowerCase());
       } catch (e) { note(`semantic view ${v.schema ? `${v.schema}.` : ''}${v.name} skipped: ${e.message}`); }
@@ -679,7 +679,9 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
           defined.add(m.name.toLowerCase());
         }
         // What the data says of each model it names, read once (semantic.takeStats), as in a tab.
-        await semantic.takeStats(text, async q => (await engine()).agentQuery(q, { signal: opts.signal, used: false }));
+        const eng = await engine();
+        await semantic.takeStats(text, q => eng.agentQuery(q, { signal: opts.signal, used: false }),
+          names => (eng.tableSnapshots ? eng.tableSnapshots(names) : names.map(() => null)));
         return semantic.statement(text, compiler);
       };
       // Several statements run in turn, in order, and the first that fails stops them. Each one before the last

@@ -502,4 +502,25 @@ async function localAll(c) {
     GROUP BY s.folder`)).map(r => ({ folder: r.folder, files: Number(r.files), remote: Number(r.remote) }));
 }
 
-module.exports = { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, localAll, rows, META };
+/**
+ * The DuckLake snapshot each lake table is at: the last one that changed it (made it, or added or ended a data file
+ * or a delete file of it), by name. A table the lake doesn't have is left out. What a fact read from a table's rows
+ * holds for: while its snapshot stays, so do its rows.
+ */
+async function snapshotsOf(c, names) {
+  if (!names.length) return {};
+  const out = {};
+  for (const r of await rows(c, `SELECT t.table_name AS name, max(x.s)::BIGINT AS snap
+      FROM ${META}.ducklake_table t JOIN (
+        SELECT table_id, begin_snapshot AS s FROM ${META}.ducklake_table
+        UNION ALL SELECT table_id, begin_snapshot FROM ${META}.ducklake_data_file
+        UNION ALL SELECT table_id, end_snapshot FROM ${META}.ducklake_data_file WHERE end_snapshot IS NOT NULL
+        UNION ALL SELECT table_id, begin_snapshot FROM ${META}.ducklake_delete_file
+        UNION ALL SELECT table_id, end_snapshot FROM ${META}.ducklake_delete_file WHERE end_snapshot IS NOT NULL) x
+        ON x.table_id = t.table_id
+      WHERE t.end_snapshot IS NULL AND t.table_name IN (${names.map(q).join(', ')})
+      GROUP BY t.table_name`)) out[r.name] = Number(r.snap);
+  return out;
+}
+
+module.exports = { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, localAll, snapshotsOf, rows, META };

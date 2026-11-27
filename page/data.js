@@ -619,6 +619,8 @@ export function createEngine({
   const setOffline = x => callHost("model.setOffline", [x]);
   // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).
   const nameTables = list => callHost("onelake.nameTables", [list]);
+  // The DuckLake snapshot each table is at, by its SQL name, in order: null for one the lake doesn't hold.
+  const tableSnapshots = names => callHost("lake.snapshots", [{ names }]);
   // A OneLake table, by its SQL name, in a tab of its own (the Model page's double-click).
   const openTable = sqlName => callHost("host.openTable", [{ sqlName }]);
   // Export: the host asks for a format and a file and writes every row of `sql`.
@@ -638,5 +640,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, tableHealth, lakehouseHealth, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticViewFiles, publishView, tableFields, semanticOpen, offlineState, setOffline, nameTables, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticViewFiles, publishView, tableFields, semanticOpen, offlineState, setOffline, nameTables, tableSnapshots, openTable, saveQuery, saveFileText, saveDraft, askVariable, copyText, exportResult, openDocument };
 }
