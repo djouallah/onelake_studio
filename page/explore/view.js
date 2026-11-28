@@ -42,7 +42,9 @@ const PAGES = [['model', 'Model'], ['pivot', 'Pivot']];
 //   loadState(key), saveState(key, s)  the shelves, between visits
 //   setStatus(text, kind)  (optional) the host's status line
 //   publishView()  (optional) a Fabric semantic view's Publish button, on the Model page: what to say after
-//   fabricView       (optional) true for a Fabric semantic view: its YAML shows what Fabric's Publish refuses, in red
+//   fabricView       (optional) true for a Fabric semantic view
+//   refusalsOf       (optional) text -> Map(line -> why): what Fabric's Publish refuses of it, shown in red
+//   dialectStandard  (optional) the spec's own SQL dialect: an expression in another is set apart
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
 //                    table of this model on this machine (core/models/modeldata.js); both answer what it shows:
 //                    { on, say, tone, meter, tip, busy }
@@ -242,6 +244,8 @@ export function mountExplore(root, ctx) {
   // --- Model ---
   if (pages.some(([k]) => k === 'model')) renderModel(modelPage, ctx.tmsl, { title: `Semantic model ${ctx.name}`, openTable: ctx.openTable });
   let coloured = false;   // the file, coloured the first time it is shown
+  // What the YAML is coloured by: the spec's own dialect, and for a Fabric semantic view what Publish refuses (both dax-sql's).
+  const colourBy = text => ({ standard: ctx.dialectStandard || null, refused: ctx.refusalsOf ? ctx.refusalsOf(text) : null });
   function showText(on) {
     for (const [b, active] of [[diagramTab, !on], [fileTab, on]]) {
       b.classList.toggle('active', active);
@@ -253,7 +257,7 @@ export function mountExplore(root, ctx) {
         textBox.value = ctx.text;
         colourBox();
       } else {
-        const html = prettyModelText(ctx.text, ctx.ext, { publish: !!ctx.fabricView });
+        const html = prettyModelText(ctx.text, ctx.ext, colourBy(ctx.text));
         if (html == null) textPre.textContent = ctx.text; else textPre.innerHTML = html;
       }
     }
@@ -275,7 +279,7 @@ export function mountExplore(root, ctx) {
   function colourBox() {
     clearTimeout(colourTimer);
     const text = textBox.value;
-    const html = prettyModelText(text, ctx.ext, { asIs: true, max: LIVE_COLOUR_MAX, publish: !!ctx.fabricView });
+    const html = prettyModelText(text, ctx.ext, { asIs: true, max: LIVE_COLOUR_MAX, ...colourBy(text) });
     if (html == null) textPre.textContent = text + '\n'; else textPre.innerHTML = html + '\n';
   }
   if (editable) {

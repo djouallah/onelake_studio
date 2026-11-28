@@ -59,8 +59,9 @@ export function compilerBundle(c, t, o, m, d, y) {
     createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
     directLakeTables: t.directLakeTables, storageMode: t.storageMode,
     ossieToTmsl: o.ossieToTmsl, tmslToOssie: o.tmslToOssie, ossieSources: o.ossieSources, tmslType: o.tmslType,
+    fabricRefusals: o.fabricRefusals, OSSIE: o.OSSIE,
     readModel: m.readModel, formatOf: m.formatOf, tmdlToTmsl: d.tmdlToTmsl,
-    parseYaml: y.parse, stringifyYaml: y.stringify,
+    parseYaml: y.parse, parseDocument: y.parseDocument, stringifyYaml: y.stringify,
   };
 }
 
@@ -91,6 +92,53 @@ export function modelName(fileName) {
   let name = stem.replace(/[^A-Za-z0-9_]/g, "_") || "model";
   if (/^\d/.test(name)) name = "_" + name;
   return name;
+}
+
+// The Ossie SQL dialect of the spec dax-sql reads (OSSIE.dialects.standard): Model's YAML sets any other apart.
+// null until dax-sql is loaded.
+export const ossieStandard = () => (mods && mods.OSSIE ? mods.OSSIE.dialects.standard : null);
+
+// What Fabric's Publish refuses in a view's YAML as it is shown, line index -> why: dax-sql's fabricRefusals says
+// where in each file's document ([file, path]), and the YAML parser says which lines that is. `files`: [{ path, text,
+// offset }], `offset` the line the file's text starts at in what is shown. A text that is not YAML yet (typing)
+// refuses nothing: Save says why it doesn't open.
+export function publishRefusalLines(files) {
+  const out = new Map();
+  if (!mods || !mods.fabricRefusals) return out;
+  const docs = new Map();
+  try {
+    for (const f of files) docs.set(String(f.path), { f, doc: mods.parseDocument(stripBom(f.text)) });
+    if ([...docs.values()].some(({ doc }) => doc.errors.length)) return out;
+    const refusals = mods.fabricRefusals(Object.fromEntries([...docs].map(([p, { doc }]) => [p, doc.toJS()])));
+    for (const r of refusals) {
+      const at = docs.get(String(r.file)) || (docs.size === 1 ? [...docs.values()][0] : null);
+      if (!at) continue;
+      for (const line of linesAt(at.doc, stripBom(at.f.text), r.path || [])) {
+        const i = line + (at.f.offset || 0);
+        if (!out.has(i)) out.set(i, r.why);
+      }
+    }
+  } catch (e) {
+    console.warn(`[semantic] what Publish refuses could not be read: ${e.message}`);
+  }
+  return out;
+}
+// The lines a path of a YAML document covers: its key's line, and its value's lines.
+function linesAt(doc, text, path) {
+  const lineOf = offset => text.slice(0, offset).split("\n").length - 1;
+  const out = [];
+  const last = path[path.length - 1];
+  if (typeof last === "string") {
+    const parent = path.length > 1 ? doc.getIn(path.slice(0, -1), true) : doc.contents;
+    const pair = parent && Array.isArray(parent.items) ? parent.items.find(p => p && p.key && (p.key.value ?? p.key) === last) : null;
+    if (pair && pair.key && pair.key.range) out.push(lineOf(pair.key.range[0]));
+  }
+  const node = path.length ? doc.getIn(path, true) : doc.contents;
+  if (node && node.range) {
+    const a = lineOf(node.range[0]), b = lineOf(Math.max(node.range[0], node.range[1] - 1));
+    for (let i = a; i <= b; i++) out.push(i);
+  }
+  return out;
 }
 
 // The parts of a dotted SQL name, as written ("my ws" keeps its quotes), and one without them.

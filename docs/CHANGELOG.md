@@ -7,7 +7,7 @@
 - **Every model file is read by dax-sql now.** Its `readModel` and `formatOf` read a `.bim`, a TMDL model or an Apache
   Ossie YAML, and tell a model from any other YAML; its TMDL reader replaces OneLake Studio's own; a Fabric semantic
   view opens as Fabric's Publish makes it through dax-sql's `as: 'fabric'`; a Direct Lake model's tables are found by
-  its `directLakeTables`. A model's first query reads its two facts (keys a relationship lacks, text ending in spaces)
+  its `directLakeTables`; what Fabric's Publish refuses in a view's YAML (shown in red) is its `fabricRefusals`, and the dialect and versions Model's YAML goes by are its `OSSIE`. A model's first query reads its two facts (keys a relationship lacks, text ending in spaces)
   in one statement instead of two. dax-sql is pinned to a commit of its main branch until its next release.
 
 ### Added

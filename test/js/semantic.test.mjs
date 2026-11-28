@@ -3,8 +3,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 // The real dax-sql (vendored), which semantic.js reads models with.
-import "./daxsql.mjs";
-const { formatOf } = await import("../../page/semantic.js");
+import { bundle } from "./daxsql.mjs";
+const { formatOf, publishRefusalLines } = await import("../../page/semantic.js");
+// What Model's YAML is coloured by: the spec's own dialect (dax-sql's OSSIE), and for a Fabric view what Publish refuses.
+const STANDARD = bundle.OSSIE.dialects.standard;
 
 test("an Ossie model is told from any other YAML by its text (dax-sql's formatOf)", async () => {
   const ossie = "# models/aac/model.bim as Apache Ossie\nversion: 0.3.0.dev0\nname: aac\ndatasets:\n  - name: dim_calendar\n";
@@ -160,7 +162,7 @@ test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, i
     "      - vendor_name: POWER_BI",         // 17 amber
     "version: 0.3.0.dev0",                   // 18
   ].join("\n");
-  const html = prettyModelText(yaml, "yaml");
+  const html = prettyModelText(yaml, "yaml", { standard: STANDARD });
   const amber = html.split("\n").map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
   assert.deepEqual(amber, [4, 5, 6, 7, 8, 9, 16, 17]);
   assert.doesNotMatch(html, /tk-bad/, "red only for a Fabric semantic view");
@@ -205,14 +207,19 @@ test("a Fabric semantic view's YAML shows in red what Fabric's Publish refuses, 
     "  - name: total",                            // 33 red: Total again, whatever its case
     "  - name: FCT",                              // 34 red: a dataset's name
   ].join("\n");
-  const lines = prettyModelText(yaml, "yaml", { publish: true }).split("\n");
+  // Two files, as a view of several shows them: each after its `# <file>` line.
+  const all = yaml.split("\n");
+  const a = all.slice(1, 29).join("\n"), b = all.slice(30).join("\n");
+  const refused = publishRefusalLines([{ path: "a.yaml", text: a, offset: 1 }, { path: "b.yaml", text: b, offset: 30 }]);
+  const lines = prettyModelText(yaml, "yaml", { refused, standard: STANDARD }).split("\n");
   const red = lines.map((l, i) => (l.startsWith('<span class="tk-bad"') ? i : -1)).filter(i => i >= 0);
   assert.deepEqual(red, [1, 6, 7, 8, 12, 15, 17, 18, 19, 20, 28, 33, 34]);
-  assert.match(lines[1], /title="Fabric&#39;s Publish reads version 0\.2\.0\.dev0 only"/);
-  assert.match(lines[33], /title="A metric named total is in this view already/);
+  assert.match(lines[1], /title="[^"]*0\.2\.0\.dev0/);
+  assert.match(lines[33], /title="[^"]*total/i);
   const amber = lines.map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
   assert.deepEqual(amber, [25, 26], "red wins over amber; DAX stays amber");
-  assert.doesNotMatch(prettyModelText("version: 0.2.0.dev0\nname: v\ndatasets:\n  - name: a\n    source: dbo.a\n", "yaml", { publish: true }), /tk-bad/);
+  const fine = "version: 0.2.0.dev0\nname: v\ndatasets:\n  - name: a\n    source: dbo.a\n";
+  assert.equal(publishRefusalLines([{ path: "v.yaml", text: fine, offset: 0 }]).size, 0);
 });
 
 test("a dialect Publish knows no name for is red: Fabric refuses the view, even beside DAX", async () => {
@@ -230,10 +237,11 @@ test("a dialect Publish knows no name for is red: Fabric refuses the view, even 
     "        - dialect: ansi_sql",            // 9 amber: Publish leaves it out, with a warning
     "          expression: SUM(x)",           // 10 amber
   ].join("\n");
-  const lines = prettyModelText(yaml, "yaml", { publish: true }).split("\n");
+  const refused = publishRefusalLines([{ path: "v.yaml", text: yaml, offset: 0 }]);
+  const lines = prettyModelText(yaml, "yaml", { refused, standard: STANDARD }).split("\n");
   const red = lines.map((l, i) => (l.startsWith('<span class="tk-bad"') ? i : -1)).filter(i => i >= 0);
   assert.deepEqual(red, [5]);
-  assert.match(lines[5], /knows no dialect OSSIE_SQL_2026/);
+  assert.match(lines[5], /title="[^"]*OSSIE_SQL_2026/);
 });
 
 test("a profile shows no planning or rows scanned it doesn't carry", async () => {

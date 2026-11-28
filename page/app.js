@@ -331,7 +331,7 @@ async function openFabricView(file, view, { openOnText = false } = {}) {
     const viewText = files.length === 1 ? files[0].text
       : files.map(f => `# ${String(f.path).slice(lead.length)}\n${f.text}`).join('\n');
     await openModelView({ name: `${view}.bim`, path: file.path, localWorkspace: lakehouse.workspace, modelName: view,
-                          fabricView: true, viewText, viewFile: files.length === 1 ? files[0].path : null,
+                          fabricView: true, viewText, viewFile: files.length === 1 ? files[0].path : null, viewFiles: files,
                           label: `${view} (semantic view)` }, JSON.stringify(bim), { fromOneLake: false, openOnText });
   } catch (e) {
     if (my !== selSeq) return;
@@ -428,6 +428,17 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
       prepare: () => modelStats(() => semantic.takeStatsOf(m.name, runStats, engine.tableSnapshots)),
       text: file.viewText ?? bim, ext: file.viewText != null ? 'yaml' : (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
       fabricView: !!file.fabricView,
+      dialectStandard: semantic.ossieStandard(),
+      // Where each file of the view starts in what is shown: one file, its text; several, each after a `# <file>` line.
+      refusalsOf: file.fabricView ? text => {
+        if (file.viewFile) return semantic.publishRefusalLines([{ path: file.viewFile, text, offset: 0 }]);
+        let at = 0;
+        return semantic.publishRefusalLines((file.viewFiles || []).map(f => {
+          const one = { path: f.path, text: f.text, offset: at + 1 };
+          at += 1 + String(f.text).split('\n').length;
+          return one;
+        }));
+      } : null,
       run: runModelSql,
       cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,
