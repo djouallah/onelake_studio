@@ -59,6 +59,7 @@ class LakehouseTree {
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's local copy is, if it has one
    * @param {(n: object) => string|null} [deps.cachedNotebook]  where a notebook's local copy is, if it has one
    * @param {(n: object) => boolean|null} [deps.notebookEdited]  whether that copy has changes Fabric does not
+   * @param {(n: object, ipynb: object) => Promise<void>} [deps.keepNotebook]  keep a definition read for its kind as its copy
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
    * @param {() => string|null} [deps.filter]  the one type to show (TREE_FILTERS' `only`), if any
@@ -68,7 +69,7 @@ class LakehouseTree {
    * @param {() => Promise<string[]>} [deps.internalTables]  system_internal's tables, the lake's metadata, from the engine
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
-                favorites = { get: () => [] }, cachedModel = () => null, cachedNotebook = () => null, notebookEdited = () => false, unsupportedModel = () => null,
+                favorites = { get: () => [] }, cachedModel = () => null, cachedNotebook = () => null, notebookEdited = () => false, keepNotebook = async () => {}, unsupportedModel = () => null,
                 queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {},
                 keepLimitBytes = () => 0, internalTables = null, tableLocal = null }) {
     this.keepLimitBytes = keepLimitBytes;
@@ -83,6 +84,7 @@ class LakehouseTree {
     this.cachedModel = cachedModel;
     this.cachedNotebook = cachedNotebook;
     this.notebookEdited = notebookEdited;
+    this.keepNotebook = keepNotebook;
     this.unsupportedModel = unsupportedModel;
     this.favorites = favorites;
     this.fabric = fabric;
@@ -451,7 +453,7 @@ class LakehouseTree {
           'A Fabric Python notebook. Its cells run on this machine, in a local Python kernel: what it reads by abfss:// ' +
           'paths it reads from OneLake as it would in Fabric.',
           edited ? `Changed here and not yet published (${there}). A click opens your version; Publish sends it to Fabric.`
-            : there ? `Kept at ${there}, as Fabric has it. A click reads it from Fabric again.`
+            : there ? `Kept at ${there}, as Fabric had it when last read. Refresh on Notebooks reads it again on the next click.`
             : 'Click to read it from Fabric and open it here.',
           'Only Publish writes to Fabric.'].filter(Boolean).join('\n\n');
         break;
@@ -634,7 +636,8 @@ class LakehouseTree {
       if (unknown.length) {
         mapPool(unknown, async x => {
           try {
-            x.nbKind = await this.onelake.notebookKind(x.workspace, x.notebookId);
+            // The definition read to learn it is kept as the notebook's copy: the click after costs no call.
+            x.nbKind = await this.onelake.notebookKind(x.workspace, x.notebookId, { onNotebook: nb => this.keepNotebook(x, nb) });
             this._emitter.fire(x);
           } catch (e) {
             const why = (e && e.message) || String(e);

@@ -368,10 +368,14 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   // A Fabric Python notebook's local copy, the one VS Code opens, edits and runs: notebookCopyPath, beside its
   // workspace's models. Beside it, <copy>.sync.json says what the copy and Fabric held when they last agreed (a
   // read, or a Publish), as hashes: `local`, the copy's text then, and `fabric`, Fabric's definition then.
-  // - A click reads Fabric again, unless the copy changed since (edits, or outputs from a run): those stay until
-  //   they are published or given up. Offline, the copy is what there is.
+  // Fewest Fabric calls: a definition is read once and kept, whoever read it (the tree's check of what a notebook
+  // runs on keeps it too, keepNotebook), and served from here after.
+  // - A click opens the copy kept, with no call. It reads Fabric only when there is none, or a Refresh of the
+  //   workspace's notebooks marked it `stale`; never over changes made here (edits, or a run's outputs), which stay
+  //   until they are published or given up.
   // - Publish writes the copy to Fabric, unless Fabric's definition changed since they last agreed: then the person
-  //   picks, overwrite theirs or take theirs. With no record of agreeing, Fabric's differing from the copy is a change.
+  //   picks, overwrite theirs or take theirs (what the check read, kept with no second read). With no record of
+  //   agreeing, Fabric's differing from the copy is a change.
   const notebookPath = n => notebookCopyPath(modelsFolder(), account(), n.workspace, n.notebook);
   const cachedNotebook = n => (existsSync(notebookPath(n)) ? notebookPath(n) : null);
   const syncPath = path => `${path}.sync.json`;
@@ -391,27 +395,54 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     const sync = readSync(path);
     return !!sync && hashOf(text) !== sync.local;
   }
-  // { path, fresh, edited }: `fresh` when just read from Fabric, `edited` when the copy's own changes were kept.
-  // `discard`: Fabric's version over the copy, changes and all (Take theirs).
-  async function fetchNotebook(n, { offline = false, discard = false } = {}) {
-    const path = notebookPath(n);
-    if (!discard && notebookEdited(n)) return { path, fresh: false, edited: true };
-    if (offline) {
-      if (existsSync(path)) return { path, fresh: false, edited: false };
-      throw new Error(`${n.notebook} was never opened here, and reading it from Fabric needs a connection`);
-    }
-    const nb = await fabric.getNotebook(n.workspace, n.notebookId);
-    if (notebookKind(nb) === 'spark') {
-      throw Object.assign(new Error(`${n.notebook} is a Spark notebook: it runs on Fabric's Spark only, not on this machine`), { spark: true });
-    }
+  // Fabric's .ipynb as the copy, over whatever the copy held.
+  async function writeCopy(path, nb) {
     const text = JSON.stringify(nb, null, 1);
     await fsp.mkdir(dirname(path), { recursive: true });
     await writeWhole(path, text);
     await writeSync(path, text, hashOf(JSON.stringify(nb)));
+  }
+  const sparkError = n => Object.assign(
+    new Error(`${n.notebook} is a Spark notebook: it runs on Fabric's Spark only, not on this machine`), { spark: true });
+  // { path, fresh, edited }: `fresh` when just read from Fabric, `edited` when the copy's own changes were kept.
+  // `discard`: Fabric's version over the copy, changes and all (Take theirs); `theirs`, that version as already read.
+  async function fetchNotebook(n, { offline = false, discard = false, theirs = null } = {}) {
+    const path = notebookPath(n);
+    if (!discard) {
+      if (notebookEdited(n)) return { path, fresh: false, edited: true };
+      const sync = readSync(path);
+      if (existsSync(path) && (offline || !(sync && sync.stale))) return { path, fresh: false, edited: false };
+    }
+    if (offline && !theirs) {
+      if (existsSync(path)) return { path, fresh: false, edited: false };
+      throw new Error(`${n.notebook} was never opened here, and reading it from Fabric needs a connection`);
+    }
+    const nb = theirs || await fabric.getNotebook(n.workspace, n.notebookId);
+    if (notebookKind(nb) === 'spark') throw sparkError(n);
+    await writeCopy(path, nb);
     return { path, fresh: true, edited: false };
   }
-  // The copy, to Fabric. { conflict: true } when Fabric changed since they last agreed and `overwrite` is not set:
-  // nothing is written. Else { published: true }.
+  // A definition read for another reason (what the notebook runs on), kept as its copy: a Python notebook's, and
+  // never over changes made here.
+  async function keepNotebook(n, nb) {
+    if (notebookKind(nb) !== 'python' || notebookEdited(n)) return;
+    await writeCopy(notebookPath(n), nb);
+  }
+  // Refresh of a workspace's notebooks: each copy kept with no changes of its own is read from Fabric again on its
+  // next click, not before (no call now).
+  async function staleNotebooks(workspace) {
+    const dir = dirname(notebookCopyPath(modelsFolder(), account(), workspace, 'x'));
+    const names = await fsp.readdir(dir).catch(() => []);
+    for (const name of names.filter(f => f.endsWith('.ipynb.sync.json'))) {
+      const at = resolve(dir, name);
+      try {
+        const sync = JSON.parse(await fsp.readFile(at, 'utf8'));
+        if (!sync.stale) await writeWhole(at, JSON.stringify({ ...sync, stale: true }));
+      } catch (_) { /* one that cannot be read is read again anyway */ }
+    }
+  }
+  // The copy, to Fabric. { conflict: true, theirs } when Fabric changed since they last agreed and `overwrite` is not
+  // set: nothing is written, and `theirs` is Fabric's version, for Take theirs. Else { published: true }.
   async function publishNotebook(n, { overwrite = false } = {}) {
     const path = notebookPath(n);
     const text = await fsp.readFile(path, 'utf8').catch(() => null);
@@ -420,8 +451,8 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     try { nb = JSON.parse(stripBom(text)); } catch (e) { throw new Error(`${n.notebook} is not a valid .ipynb: ${e.message}`); }
     if (!overwrite) {
       const sync = readSync(path);
-      const theirs = hashOf(JSON.stringify(await fabric.getNotebook(n.workspace, n.notebookId)));
-      if (theirs !== (sync ? sync.fabric : hashOf(text))) return { conflict: true };
+      const theirs = await fabric.getNotebook(n.workspace, n.notebookId);
+      if (hashOf(JSON.stringify(theirs)) !== (sync ? sync.fabric : hashOf(text))) return { conflict: true, theirs };
     }
     await fabric.updateNotebook(n.workspace, n.notebookId, nb);
     // What Fabric holds now, as it says it: the next Publish compares with this.
@@ -436,7 +467,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   return {
     adoptModels, adopted: () => modelsAdopted,
     modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
-    notebookPath, cachedNotebook, notebookEdited, fetchNotebook, publishNotebook,
+    notebookPath, cachedNotebook, notebookEdited, fetchNotebook, keepNotebook, staleNotebooks, publishNotebook,
     fetchModel, walkTables, openSqlModel, completionNames, modelFile,
     forgetNames: () => { namesKept = null; },
   };

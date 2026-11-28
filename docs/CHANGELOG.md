@@ -7,7 +7,8 @@
 - **Python notebooks: open, run here, publish.** Each workspace has a *Notebooks* node that lists its Fabric
   notebooks at once. Spark notebooks run only on Fabric, so they are marked red and don't open; what each notebook
   runs on is read once, behind you, and kept. A click on a Python notebook opens it in VS
-  Code's notebook editor, Fabric's latest unless you have changes not yet published. Nothing runs until you run it,
+  Code's notebook editor, from the copy read with that check: no wait, and no second call to Fabric. Refresh on
+  Notebooks reads them again on their next click. Changes you haven't published are never overwritten. Nothing runs until you run it,
   on a local Python kernel; a notebook that reaches OneLake by `abfss://` paths reads the same tables as it would in
   Fabric. **Publish** (⬆ beside it) sends your version to Fabric. If someone changed it in Fabric since you opened
   it, you pick: overwrite theirs, or take theirs. The tree's filter has *Notebooks* too.

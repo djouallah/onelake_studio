@@ -261,7 +261,9 @@ test("a workspace's notebooks are listed in one request; what each runs on is re
       { id: "n2", name: "spark job", description: "" },
     ]);
     assert.ok(!calls.some(c => c.method === "POST"), "listing reads no definition: it is one request");
-    assert.equal(await fabric.notebookKindOf(WS_ID, "n1"), "python");
+    let given = null;
+    assert.equal(await fabric.notebookKindOf(WS_ID, "n1", { onNotebook: nb => { given = nb; } }), "python");
+    assert.equal(given.metadata.microsoft.language_group, "jupyter_python", "the definition read is handed on, to be kept");
     assert.equal(await fabric.notebookKindOf(WS_ID, "n2"), "spark", "a long-running definition is waited for");
     await assert.rejects(fabric.notebookKindOf(WS_ID, "n3"), /HTTP 403/);
   } finally { restore(); }

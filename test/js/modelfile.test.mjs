@@ -235,7 +235,7 @@ test("a .tmdl that is one file of a Power BI project's definition is no model; a
   await done();
 });
 
-test("a Python notebook's local copy is read from Fabric each time, kept for offline, and a Spark one is refused", async () => {
+test("a Python notebook is read from Fabric once and opened from its copy after, until a Refresh; a Spark one is refused", async () => {
   const { readFile } = await import("node:fs/promises");
   let kind = "jupyter_python", asked = 0;
   const nb = () => ({ nbformat: 4, metadata: { microsoft: { language_group: kind } }, cells: [{ cell_type: "code", source: [`${asked}`] }] });
@@ -248,13 +248,19 @@ test("a Python notebook's local copy is read from Fabric each time, kept for off
     assert.equal(first.fresh, true);
     assert.ok(first.path.endsWith(join("a", "sales", "load.ipynb")), first.path);
     assert.equal(models.cachedNotebook(n), first.path);
-    await models.fetchNotebook(n);
-    assert.equal(asked, 2, "each open reads Fabric again");
+    assert.deepEqual(await models.fetchNotebook(n), { path: first.path, fresh: false, edited: false });
+    assert.equal(asked, 1, "the next open is the copy: no call");
+    await models.staleNotebooks("sales");
+    assert.equal(asked, 1, "a Refresh calls nothing itself");
+    assert.deepEqual(await models.fetchNotebook(n, { offline: true }), { path: first.path, fresh: false, edited: false },
+      "offline, the copy marked stale is still what there is");
+    assert.equal((await models.fetchNotebook(n)).fresh, true, "online, the open after a Refresh reads Fabric");
+    assert.equal(asked, 2);
     assert.deepEqual(JSON.parse(await readFile(first.path, "utf8")).cells[0].source, ["2"]);
-    assert.deepEqual(await models.fetchNotebook(n, { offline: true }), { path: first.path, fresh: false, edited: false });
-    assert.equal(asked, 2, "offline asks nothing");
+    await models.fetchNotebook(n);
+    assert.equal(asked, 2, "and once only");
     kind = "synapse_pyspark";
-    await assert.rejects(models.fetchNotebook(n), /Spark notebook/);
+    await assert.rejects(models.fetchNotebook(n, { discard: true }), /Spark notebook/);
   } finally { await done(); }
 });
 
@@ -286,8 +292,9 @@ test("a notebook changed here keeps its changes on a click, and Publish sends th
     assert.deepEqual(await models.publishNotebook(n), { published: true });
     assert.deepEqual(fabric.held.cells.map(c => c.source[0]), ["a", "mine"]);
     assert.equal(models.notebookEdited(n), false, "published: nothing left to publish");
-    // Fabric moves on; the copy has no changes, so a click reads it again.
+    // Fabric moves on; after a Refresh the copy, with no changes, is read again on the next click.
     fabric.held = PY(["theirs"]);
+    await models.staleNotebooks("sales");
     assert.equal((await models.fetchNotebook(n)).fresh, true);
     assert.deepEqual(JSON.parse(await readFile(path, "utf8")).cells[0].source, ["theirs"]);
   } finally { await done(); }
@@ -302,19 +309,44 @@ test("Publish over a change made in Fabric meanwhile writes nothing, until overw
     const { path } = await models.fetchNotebook(n);
     await writeFile(path, JSON.stringify(PY(["mine"])));
     fabric.held = PY(["theirs"]);
-    assert.deepEqual(await models.publishNotebook(n), { conflict: true });
+    const first = await models.publishNotebook(n);
+    assert.equal(first.conflict, true);
+    assert.deepEqual(first.theirs.cells[0].source, ["theirs"], "what Fabric holds, for Take theirs");
     assert.equal(fabric.writes.length, 0, "nothing is written over their change");
     assert.deepEqual(await models.publishNotebook(n, { overwrite: true }), { published: true });
     assert.deepEqual(fabric.held.cells[0].source, ["mine"]);
 
     await writeFile(path, JSON.stringify(PY(["mine again"])));
     fabric.held = PY(["theirs again"]);
-    assert.deepEqual(await models.publishNotebook(n), { conflict: true });
-    const taken = await models.fetchNotebook(n, { discard: true });
+    const again = await models.publishNotebook(n);
+    assert.equal(again.conflict, true);
+    const reads = fabric.reads;
+    const taken = await models.fetchNotebook(n, { discard: true, theirs: again.theirs });
     assert.equal(taken.fresh, true);
+    assert.equal(fabric.reads, reads, "Take theirs keeps what the check read: no second call");
     assert.deepEqual(JSON.parse(await readFile(path, "utf8")).cells[0].source, ["theirs again"]);
     assert.equal(models.notebookEdited(n), false);
     assert.equal(fabric.writes.length, 1);
+  } finally { await done(); }
+});
+
+test("a definition read to learn what a notebook runs on is kept as its copy, never over changes made here", async () => {
+  const { readFile, writeFile } = await import("node:fs/promises");
+  const fabric = fabricNotebook(PY(["a"]));
+  const { models, done } = await setup({ fabric });
+  const n = { kind: "notebook", workspace: "sales", notebook: "load", notebookId: "n1" };
+  try {
+    await models.keepNotebook(n, PY(["kept"]));
+    const opened = await models.fetchNotebook(n);
+    assert.deepEqual(opened.fresh, false);
+    assert.equal(fabric.reads, 0, "the click after the check costs no call");
+    assert.deepEqual(JSON.parse(await readFile(opened.path, "utf8")).cells[0].source, ["kept"]);
+    await writeFile(opened.path, JSON.stringify(PY(["mine"])));
+    await models.keepNotebook(n, PY(["newer"]));
+    assert.deepEqual(JSON.parse(await readFile(opened.path, "utf8")).cells[0].source, ["mine"], "changes here are not overwritten");
+    const spark = { kind: "notebook", workspace: "sales", notebook: "job", notebookId: "n2" };
+    await models.keepNotebook(spark, { nbformat: 4, metadata: { microsoft: { language_group: "synapse_pyspark" } }, cells: [] });
+    assert.equal(models.cachedNotebook(spark), null, "a Spark notebook is not kept");
   } finally { await done(); }
 });
 

@@ -268,8 +268,11 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   // What a notebook runs on — 'python' (a Fabric Python notebook, which runs on any machine with a Python kernel),
   // 'spark' (PySpark, Scala, R, SQL: Fabric's Spark only) or '' — from its definition, as Fabric's listing does not
   // say. Seconds of work each; a notebook's kind does not change, so the cache keeps it (onelake.js notebookKind).
-  async function notebookKindOf(workspace, notebookId) {
-    return notebookKind(await getNotebook(workspace, notebookId));
+  // `onNotebook`: given the .ipynb read for it, so a caller keeps it rather than read it again.
+  async function notebookKindOf(workspace, notebookId, { onNotebook = null } = {}) {
+    const nb = await getNotebook(workspace, notebookId);
+    if (onNotebook) await Promise.resolve(onNotebook(nb)).catch(() => {});
+    return notebookKind(nb);
   }
 
   function reset() { wsIds = null; }

@@ -483,16 +483,20 @@ machine, because a notebook that reaches OneLake only by `abfss://` paths reads 
 - **A click** opens the notebook in VS Code's notebook editor, to read, edit and run. It is kept as `<name>.ipynb`,
   beside the workspace's model copies, with `<name>.ipynb.sync.json` beside it: hashes of the copy and of Fabric's
   definition when the two last agreed (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)).
-  The click reads Fabric again unless the copy changed since (edits, or a run's outputs): then the copy opens as it
-  is, and the tree marks it *not published*. If it is open here already, that tab comes forward. Offline, the copy
-  kept is opened.
+  **Fewest Fabric calls:** a definition is read once and kept. The check of what a notebook runs on keeps the
+  definition it read as the copy (`keepNotebook`), so the first click opens it with no call, and so does every click
+  after. Fabric is read again only on the click after a **Refresh** of the workspace's notebooks, which marks the
+  copies `stale` and calls nothing itself (`staleNotebooks`). A copy changed here (edits, or a run's outputs) is never
+  overwritten: it opens as it is, and the tree marks it *not published*. If it is open here already, that tab comes
+  forward.
 - **Nothing runs on a click.** Cells run when the person runs them, on a local kernel (the Jupyter extension's). The
   kernel's Python needs whatever the notebook imports, such as `duckdb`, and its own way to sign in to OneLake:
   outside Fabric there is no `notebookutils`, so a DuckDB notebook makes a `credential_chain` secret (az login).
 - **Publish** (the notebook's ⬆ button) is the one way back to Fabric (`publishNotebook`, `updateDefinition`). It
   saves the open editor first, then reads Fabric's definition: if that changed since the two last agreed, nothing
   is written and the person picks **Overwrite** (theirs is replaced) or **Take theirs** (the copy's changes are
-  dropped and Fabric's version opens). Nothing is merged. Outputs are published with the code, as Fabric keeps them.
+  dropped and Fabric's version, as the check read it, opens: no second read). Nothing is merged. Outputs are
+  published with the code, as Fabric keeps them.
 
 ## The SQL box and results
 

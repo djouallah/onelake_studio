@@ -249,7 +249,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   // change, so no TTL.
   const notebookKind = (ws, id, o = {}) => {
     if (!fabric || !fabric.notebookKindOf) return Promise.reject(new Error('notebooks are not available here'));
-    return get(keys.notebookKind(ws, id), () => fabric.notebookKindOf(ws, id), { ttl: Infinity, ...o }).then(value);
+    const { onNotebook, ...rest } = o;
+    return get(keys.notebookKind(ws, id), () => fabric.notebookKindOf(ws, id, { onNotebook }), { ttl: Infinity, ...rest }).then(value);
   };
   // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }.
   // No TTL: nothing refreshes it behind the caller. It is read again (`fresh`) when the name it

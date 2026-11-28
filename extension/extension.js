@@ -461,6 +461,7 @@ async function activateInner(context) {
     cachedModel: n => cachedModel(n),
     cachedNotebook: n => cachedNotebook(n),
     notebookEdited: n => notebookEdited(n),
+    keepNotebook: (n, nb) => core.models.keepNotebook(n, nb),
     queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
     tableLocal: (lh, t) => core.tableLocal(lh, t),
@@ -721,7 +722,7 @@ async function activateInner(context) {
           'Overwrite', 'Take theirs');
         if (pick === 'Overwrite') done = await publish({ overwrite: true });
         else if (pick === 'Take theirs') {
-          await fetchNotebook(n, { discard: true });
+          await fetchNotebook(n, { discard: true, theirs: done.theirs });
           tree.notebookChanged(n);
           const open = notebookDoc(n);
           if (open) {
@@ -1023,6 +1024,10 @@ async function activateInner(context) {
       tree.refresh(n);
       postLive({ type: 'reset' });
       if (n && (n.kind === 'models' || n.kind === 'workspace')) refreshModelCopies(n.workspace);
+      // Its notebooks' copies are read from Fabric again when next opened, not now.
+      if (n && (n.kind === 'notebooks' || n.kind === 'workspace')) {
+        core.models.staleNotebooks(n.workspace).then(() => tree.notebooksChanged(), () => {});
+      }
     }),
 
     vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
