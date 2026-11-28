@@ -234,6 +234,9 @@ test("a notebook's kind is in its .ipynb: a Python notebook runs anywhere, a Spa
   assert.equal(notebookKind({ metadata: { kernel_info: { name: "jupyter" } } }), "python");
   assert.equal(notebookKind(ipynb("synapse_pyspark", "synapse_pyspark")), "spark");
   assert.equal(notebookKind({ metadata: { kernel_info: { name: "synapse_spark" } } }), "spark");
+  assert.equal(notebookKind({ metadata: { kernelspec: { name: "synapse_pyspark" } } }), "spark", "an older notebook names it in kernelspec only");
+  assert.equal(notebookKind({ metadata: { microsoft: { language_group: "jupyter_python" }, kernelspec: { name: "jupyter" } } }), "python",
+    "a kernelspec VS Code rewrote");
   assert.equal(notebookKind({ metadata: {} }), "");
   assert.equal(notebookKind(null), "");
 });
@@ -343,5 +346,20 @@ test("a 401 is retried once with a fresh token", async () => {
   try {
     await assert.rejects(fabric.workspaceId("x"), /does not list/, "the retry's answer is the one used");
     assert.deepEqual(calls.map(c => c.auth), ["Bearer old", "Bearer new"]);
+  } finally { restore(); }
+});
+
+test("a definition is asked about after 1 s, then 2, 4…, never past the Retry-After Fabric gave", async () => {
+  const OP = "https://api.fabric.microsoft.com/v1/operations/slow";
+  const waits = [];
+  let polls = 0;
+  const { fabric, restore } = fabricWith([
+    [/getDefinition/, () => res(202, {}, { location: OP, "retry-after": "20" })],
+    [/operations\/slow\/result$/, () => res(200, definition)],
+    [/operations\/slow$/, () => res(200, { status: ++polls < 7 ? "Running" : "Succeeded" }, { "retry-after": "20" })],
+  ], { sleep: async ms => { waits.push(ms); } });
+  try {
+    await fabric.getBim(WS_ID, "m1");
+    assert.deepEqual(waits, [1000, 2000, 4000, 8000, 16000, 20000, 20000]);
   } finally { restore(); }
 });

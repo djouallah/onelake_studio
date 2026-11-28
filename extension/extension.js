@@ -686,6 +686,7 @@ async function activateInner(context) {
         const { path, fresh, edited } = await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: `Opening ${n.notebook}` },
           () => fetchNotebook(n, { offline: connectivity.offline() }));
+        n.kindFailed = null;
         if (edited) vscode.window.setStatusBarMessage(`${n.notebook}: your changes, not yet published`, 5000);
         else if (!fresh) vscode.window.setStatusBarMessage(`Offline: ${n.notebook} as it was last read from Fabric`, 5000);
         tree.notebookChanged(n);

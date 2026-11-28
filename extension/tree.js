@@ -430,6 +430,17 @@ class LakehouseTree {
           break;
         }
         const there = this.cachedNotebook(n);
+        // What it runs on is still being read (or could not be): never drawn as a Python notebook until it is known.
+        // One opened here before is one, whatever this says.
+        if (!there && n.nbKind == null) {
+          item.iconPath = n.kindFailed ? new vscode.ThemeIcon('question') : new vscode.ThemeIcon('loading~spin');
+          item.description = n.kindFailed ? 'Python or Spark?' : 'checking…';
+          item.command = { command: 'onelakeStudio.openNotebook', title: 'Open notebook', arguments: [n] };
+          item.tooltip = [n.description, n.kindFailed
+            ? `Whether it is a Python or a Spark notebook could not be read: ${n.kindFailed}. A click tries again.`
+            : 'Reading whether it is a Python or a Spark notebook.'].filter(Boolean).join('\n\n');
+          break;
+        }
         const edited = there ? this.notebookEdited(n) : false;
         item.iconPath = edited ? new vscode.ThemeIcon('edit', new vscode.ThemeColor('list.warningForeground'))
           : there ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
@@ -625,7 +636,12 @@ class LakehouseTree {
           try {
             x.nbKind = await this.onelake.notebookKind(x.workspace, x.notebookId);
             this._emitter.fire(x);
-          } catch (e) { this.log(`tree: what ${x.workspace}/${x.notebook} runs on could not be read — ${(e && e.message) || e}`); }
+          } catch (e) {
+            const why = (e && e.message) || String(e);
+            this.log(`tree: what ${x.workspace}/${x.notebook} runs on could not be read — ${why}`);
+            x.kindFailed = why;
+            this._emitter.fire(x);
+          }
         }, 4).catch(() => {});
       }
       return nodes;

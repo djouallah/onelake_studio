@@ -476,8 +476,10 @@ machine, because a notebook that reaches OneLake only by `abfss://` paths reads 
   `notebookKind` in [`core/models/fabric.js`](../core/models/fabric.js)), behind the user, four at a time, and each
   node is redrawn as its answer comes. A notebook's kind never changes, so it is kept with no TTL
   (`notebookKind` in [`core/onelake/onelake.js`](../core/onelake/onelake.js)): only a notebook never seen before is
-  read. A **Spark** notebook (`synapse_*` kernels) is marked red, *Spark · Fabric only*, and a click says why it
-  does not open.
+  read. Until it is known a notebook says *checking…*, never drawn as a Python one. A **Spark** notebook
+  (`synapse_*` kernels) is marked red, *Spark · Fabric only*, and a click says why it does not open. A definition is
+  a long-running operation whose Retry-After is 20 s, but it is done in about one: it is asked after 1 s, then 2,
+  4…, never past the Retry-After.
 - **A click** opens the notebook in VS Code's notebook editor, to read, edit and run. It is kept as `<name>.ipynb`,
   beside the workspace's model copies, with `<name>.ipynb.sync.json` beside it: hashes of the copy and of Fabric's
   definition when the two last agreed (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)).

@@ -57,8 +57,12 @@ function notebookKind(ipynb) {
   const meta = (ipynb && ipynb.metadata) || {};
   const group = String((meta.microsoft && meta.microsoft.language_group) || '').toLowerCase();
   const kernel = String((meta.kernel_info && meta.kernel_info.name) || '').toLowerCase();
-  if (group === 'jupyter_python' || kernel === 'jupyter') return 'python';
+  // An older notebook may name its kernel only here; VS Code rewrites it when a local kernel is picked, so it is
+  // read last, and only for Spark.
+  const spec = String((meta.kernelspec && meta.kernelspec.name) || '').toLowerCase();
   if (/^synapse_/.test(group) || /^synapse_/.test(kernel)) return 'spark';
+  if (group === 'jupyter_python' || kernel === 'jupyter') return 'python';
+  if (/^synapse_/.test(spec)) return 'spark';
   return '';
 }
 
@@ -199,9 +203,11 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     if (!location) throw new Error(`${what}: Fabric accepted it but gave no operation to follow`);
     const deadline = Date.now() + lroTimeoutMs;
     let wait = retryAfterMs(r, 2000);
-    for (;;) {
+    // Fabric says to wait 20 s before asking about a definition (Retry-After), and it is done in one: asked after
+    // 1 s, then 2, 4…, never past what it said.
+    for (let i = 0; ; i++) {
       if (Date.now() > deadline) throw new Error(`${what} did not finish within ${Math.round(lroTimeoutMs / 1000)} s`);
-      await sleep(wait);
+      await sleep(Math.min(wait, 1000 * 2 ** i));
       const p = await fabricJson(location, `Waiting for the ${thing}`);
       const op = await p.json().catch(() => ({}));
       if (op.status === 'Succeeded') return location;
