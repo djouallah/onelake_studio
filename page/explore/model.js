@@ -15,24 +15,33 @@ import { folderPaths } from './explore.js';
 
 const lines = v => Array.isArray(v) ? v.join('\n') : v ?? '';
 
-// Power BI injects a hidden date-table pair per date column; they are plumbing, not model.
-const AUTO_DATE = /^(DateTableTemplate|LocalDateTable)/;
-
-// The .bim's model as the view reads it: every list there (a .bim may leave one out), no
-// auto date tables, no row-number columns, and only relationships between tables it keeps.
-export function tmslOf(bim) {
-  const m = bim?.model ?? bim ?? {};
-  const tables = (m.tables ?? []).filter(t => !AUTO_DATE.test(t.name)).map(t => ({
-    ...t,
-    columns: (t.columns ?? []).filter(c => c.type !== 'rowNumber'),
-    measures: t.measures ?? [],
+// The model as the views draw and list it, from dax-sql's describe() (its contract: tables, columns, measures and
+// relationships as dax-sql reads any format): no Power BI auto date tables, and only relationships between tables
+// kept. A relationship's `one` is the table on its one side when the other is many (a dimension), else null: one to
+// one and many to many have none. `derived`: columns the host worked out from another (a table's date grains),
+// { [table]: { [column]: { from, as } } }.
+export function modelOf(described, { derived = {} } = {}) {
+  const measuresOf = name => described.measures.filter(m => m.table === name).map(m => ({
+    name: m.name, expression: m.expression, isHidden: !!m.hidden, description: m.description,
+    formatString: m.formatString, displayFolder: m.displayFolder }));
+  const tables = described.tables.filter(t => !t.autoDate).map(t => ({
+    name: t.name, isHidden: !!t.hidden, description: t.description,
+    columns: t.columns.map(c => ({ name: c.name, dataType: c.type, isHidden: !!c.hidden, description: c.description,
+      formatString: c.formatString, displayFolder: c.displayFolder,
+      ...(derived[t.name]?.[c.name] ? { derivedFrom: derived[t.name][c.name].from, derivedAs: derived[t.name][c.name].as } : {}) })),
+    measures: measuresOf(t.name),
   }));
   const names = new Set(tables.map(t => t.name));
-  const relationships = (m.relationships ?? []).filter(r => names.has(r.fromTable) && names.has(r.toTable));
-  return { ...m, tables, relationships };
+  const relationships = (described.relationships ?? []).filter(r => names.has(r.from.table) && names.has(r.to.table)).map(r => ({
+    name: r.name, fromTable: r.from.table, fromColumn: r.from.column, toTable: r.to.table, toColumn: r.to.column,
+    fromCardinality: r.fromCardinality, toCardinality: r.toCardinality, crossFilter: r.crossFilter, isActive: r.active !== false,
+    one: r.toCardinality === 'one' && r.fromCardinality === 'many' ? r.to.table
+      : r.fromCardinality === 'one' && r.toCardinality === 'many' ? r.from.table : null,
+  }));
+  return { tables, relationships };
 }
 
-// Draws `model` (tmslOf's) into `root`, which it fills with the diagram and the side panel.
+// Draws `model` (modelOf's) into `root`, which it fills with the diagram and the side panel.
 // A card can be dragged anywhere: its lines follow, and Auto arrange puts every card back in the
 // star. Where a card was dragged to lasts as long as the drawing: nothing is written to the model.
 export function renderModel(root, model, { title = 'Semantic model', openTable = null } = {}) {
@@ -41,8 +50,8 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
   const keys = name => [...new Set(rels.flatMap(r => [
     ...(r.fromTable === name ? [r.fromColumn] : []), ...(r.toTable === name ? [r.toColumn] : [])]))];
   const linked = new Set(rels.flatMap(r => [r.fromTable, r.toTable]));
-  const dimNames = new Set(rels.map(r => r.toTable));
-  // What a table is to the model: a dimension (a relationship points to it), a table of measures
+  const dimNames = new Set(rels.map(r => r.one).filter(Boolean));
+  // What a table is to the model: a dimension (the one side of a relationship to many), a table of measures
   // (in no relationship, no column shown, measures only), or a fact.
   const kindOf = t => dimNames.has(t.name) ? 'dimension'
     : !linked.has(t.name) && t.measures.length && !t.columns.some(c => !c.isHidden) ? 'measures' : 'fact';
@@ -230,8 +239,9 @@ export function renderModel(root, model, { title = 'Semantic model', openTable =
           return [a, `[${column}]`];
         };
         const li = el('li');
-        li.append(...end(r.fromTable, r.fromColumn), ' * → ', ...end(r.toTable, r.toColumn), ' 1');
-        if (r.crossFilteringBehavior === 'bothDirections') li.append(el('span', { class: 'm-tag' }, 'both directions'));
+        const card = c => (c === 'one' ? '1' : '*');
+        li.append(...end(r.fromTable, r.fromColumn), ` ${card(r.fromCardinality)} → `, ...end(r.toTable, r.toColumn), ` ${card(r.toCardinality)}`);
+        if (r.crossFilter === 'both') li.append(el('span', { class: 'm-tag' }, 'both directions'));
         if (r.isActive === false) li.append(el('span', { class: 'm-tag' }, 'inactive'));
         ul.append(li);
       }

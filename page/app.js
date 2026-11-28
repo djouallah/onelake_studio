@@ -22,7 +22,7 @@ import * as semantic from './semantic.js';
 import { mountExplore } from './explore/view.js';
 import { setRowCap } from './explore/explore.js';
 import { PINS, npmFile } from './cdn.js';
-import { tmslOf } from './explore/model.js';
+import { modelOf } from './explore/model.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './explore/profile.js';
 import { vscodeApi } from './vscode-api.js';
 import { statements, statementAt, errorOffset, setVariable, variablesIn, literal } from './querytext.js';
@@ -424,7 +424,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null, op
     $('modelView').hidden = false;
     modelView = mountExplore($('modelView'), {
       // The tab and the header already say the file: the bar says only the model's name.
-      name: m.name, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
+      name: m.name, tmsl: modelOf(m.exploreCompiler.describe()), compiler: m.exploreCompiler,
       prepare: () => modelStats(() => semantic.takeStatsOf(m.name, runStats, engine.tableSnapshots)),
       text: file.viewText ?? bim, ext: file.viewText != null ? 'yaml' : (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
       fabricView: !!file.fabricView,
@@ -1428,7 +1428,7 @@ async function openPivot() {
     if (!tablePivot || tablePivot.table !== t) return;
     tablePivot.view = mountExplore($('pivotView'), {
       name: m.name,
-      tmsl: tmslOf(m.tmsl), compiler: m.compiler,
+      tmsl: modelOf(m.compiler.describe(), { derived: m.derived }), compiler: m.compiler,
       pages: ['pivot'], stateKey: `pivot.${sqlName}`,
       run: runModelSql,
       cancel: () => engine.cancelLoad(),

@@ -178,11 +178,13 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     try {
       const { semantic, compiler } = await modules();
       const bim = semantic.bimOf(path, await fsp.readFile(path, 'utf8'), compiler);
-      const tables = ((bim.model && bim.model.tables) || []).filter(t => !t.isHidden || (t.measures || []).length);
+      // As dax-sql lists the model (describe()): no auto date table, a hidden one only for its measures.
+      const d = compiler.createCompiler(compiler.tmslToModel(bim)).describe();
+      const measuresOf = name => d.measures.filter(m => m.table === name).map(m => m.name);
+      const tables = d.tables.filter(t => !t.autoDate && (!t.hidden || measuresOf(t.name).length));
       return {
-        tables: tables.map(t => ({ name: t.name, columns: (t.columns || []).map(c => c.name),
-                                   measures: (t.measures || []).map(m => m.name) })),
-        measures: tables.reduce((n, t) => n + (t.measures || []).length, 0),
+        tables: tables.map(t => ({ name: t.name, columns: t.columns.map(c => c.name), measures: measuresOf(t.name) })),
+        measures: tables.reduce((n, t) => n + measuresOf(t.name).length, 0),
       };
     } catch (_) { return null; }
   }
@@ -635,10 +637,12 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       io.data({ name: m.name, workspace: ws, model: name, path, directLake: m.directLake, example: m.sample });
       io.out(`# ${m.name} — semantic view of ${ws}/${name}, from ${path}\n`);
       io.out(`Query it as \`FROM ${m.name}\`; a measure is \`AGG("name")\`. Direct Lake tables: ${m.directLake}.\n`);
-      const rels = ((m.bim.model && m.bim.model.relationships) || []).map(r =>
-        [`${r.fromTable}[${r.fromColumn}]`, `${r.toTable}[${r.toColumn}]`, r.isActive !== false]);
+      // As dax-sql reads them (describe()): each side with its cardinality.
+      const rels = (m.exploreCompiler.describe().relationships || []).map(r =>
+        [`${r.from.table}[${r.from.column}]`, r.fromCardinality, `${r.to.table}[${r.to.column}]`, r.toCardinality, r.active !== false]);
       if (rels.length) {
-        io.table([col('from', 'text', 'from (many)'), col('to', 'text', 'to (one)'), col('active', 'boolean', '', v => (v ? '' : 'inactive'))],
+        io.table([col('from', 'text'), col('from_cardinality', 'text', 'from is'), col('to', 'text'), col('to_cardinality', 'text', 'to is'),
+                  col('active', 'boolean', '', v => (v ? '' : 'inactive'))],
                  rels, { name: 'relationships', limit: Infinity });
         io.out('');
       }

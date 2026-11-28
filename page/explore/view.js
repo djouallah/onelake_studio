@@ -29,7 +29,7 @@ const PAGES = [['model', 'Model'], ['pivot', 'Pivot']];
 // `ctx`:
 //   name             the model's name: what SQL calls it (FROM <name>)
 //   text, ext        (optional) the model's file and its extension: Model's Diagram | YAML switch
-//   tmsl             the model, as model.js's tmslOf reads it
+//   tmsl             the model, as model.js's modelOf draws it (dax-sql's describe())
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
 //                    query.js's EXPLORE_CASTS
 //   run(sql)         a compiled SQL's result: { fields, rows, numRows, truncated?, limit? }

@@ -8,9 +8,9 @@ const BOROUGH = '"dim_zone"."Borough"';
 const MODEL = { tables: [
   { name: "dim_zone", columns: [{ name: "Borough", dataType: "string" }, { name: "Zone", dataType: "string" },
                                 { name: "Lat", dataType: "double" }, { name: "Lon", dataType: "double" }] },
-  { name: "dim_date", columns: [{ name: "Date", dataType: "dateTime" }, { name: "Year", dataType: "int64" }] },
+  { name: "dim_date", columns: [{ name: "Date", dataType: "datetime" }, { name: "Year", dataType: "int" }] },
   { name: "trips", columns: [{ name: "fare", dataType: "double" }], measures: [{ name: "Total Fare" }] },
-], relationships: [{ fromTable: "trips", toTable: "dim_zone" }, { fromTable: "trips", toTable: "dim_date" }] };
+], relationships: [{ fromTable: "trips", toTable: "dim_zone", one: "dim_zone" }, { fromTable: "trips", toTable: "dim_date", one: "dim_date" }] };
 const PIVOT_SQL = 'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare"\nFROM model\nGROUP BY ALL\n' +
                   'ORDER BY "Borough"\nFETCH FIRST 1000 ROWS WITH TIES';
 
@@ -199,7 +199,7 @@ const { modelPlaces, modelEdges } = await import("../../page/explore/draw.js");
 
 test("the model's lines are drawn from wherever its cards are", () => {
   const tables = [{ name: "sales", lines: 2 }, { name: "date", lines: 2 }];
-  const rels = [{ fromTable: "sales", fromColumn: "d", toTable: "date", toColumn: "d" }];
+  const rels = [{ fromTable: "sales", fromColumn: "d", toTable: "date", toColumn: "d", fromCardinality: "many", toCardinality: "one", one: "date" }];
   const boxes = modelPlaces(tables, rels);
   const [star] = modelEdges(boxes, rels);
   assert.equal(star.many.anchor, "start", "the fact is left of the dimension: its line leaves its right side");
@@ -219,7 +219,7 @@ test("the model's lines are drawn from wherever its cards are", () => {
 test("a table in no relationship (a table of measures) goes under the facts, not first", () => {
   const tables = [{ name: "Metrics", lines: 1 }, { name: "sales", lines: 3 }, { name: "budget", lines: 3 },
     { name: "date", lines: 2 }, { name: "store", lines: 2 }];
-  const rels = [{ fromTable: "sales", toTable: "date" }, { fromTable: "sales", toTable: "store" }, { fromTable: "budget", toTable: "date" }];
+  const rels = [{ fromTable: "sales", toTable: "date", one: "date" }, { fromTable: "sales", toTable: "store", one: "store" }, { fromTable: "budget", toTable: "date", one: "date" }];
   const b = modelPlaces(tables, rels);
   const sameSide = ["sales", "budget"].find(f => b[f].x === b.Metrics.x);
   assert.ok(sameSide, "on a fact's side");
@@ -247,9 +247,32 @@ test("a field's display folders: several split by ';', each a path split by a ba
   assert.deepEqual(folderPaths(String.raw`Sales\Margins\ Ratios `), [["Sales", "Margins", "Ratios"]]);
   assert.deepEqual(folderPaths(String.raw`Sales\Margins;KPIs;;`), [["Sales", "Margins"], ["KPIs"]]);
   const fields = modelFields({ tables: [{ name: "Sales",
-    columns: [{ name: "Order Date", dataType: "dateTime", displayFolder: "Dates" }, { name: "Amount", dataType: "double" }],
+    columns: [{ name: "Order Date", dataType: "datetime", displayFolder: "Dates" }, { name: "Amount", dataType: "double" }],
     measures: [{ name: "Margin %", displayFolder: String.raw`Margins\Ratios` }, { name: "Total" }] }] });
   const [t] = fields.tables;
   assert.deepEqual(t.columns.map(c => c.folders), [[["Dates"]], []]);
   assert.deepEqual(t.measures.map(m => m.folders), [[["Margins", "Ratios"]], []]);
+});
+
+test("the model as the views draw it is dax-sql's describe(): a dimension is a relationship's one side, whatever the order", async () => {
+  const { bundle } = await import("./daxsql.mjs");
+  const { modelOf } = await import("../../page/explore/model.js");
+  const bim = { model: { tables: [
+    { name: "fct", columns: [{ name: "k", dataType: "int64" }, { name: "j", dataType: "int64" }], measures: [{ name: "n", expression: "COUNTROWS(fct)" }] },
+    { name: "dim", columns: [{ name: "k", dataType: "int64" }, { name: "Region", dataType: "string", isHidden: true }] },
+    { name: "peer", columns: [{ name: "j", dataType: "int64" }] },
+    { name: "LocalDateTable_9a8b7c6d-1234-5678-9abc-def012345678", columns: [{ name: "Date", dataType: "dateTime" }],
+      annotations: [{ name: "__PBI_LocalDateTable", value: "true" }] },
+  ], relationships: [
+    // Written from the one side: dim is still the dimension.
+    { name: "r1", fromTable: "dim", fromColumn: "k", toTable: "fct", toColumn: "k", fromCardinality: "one", toCardinality: "many" },
+    { name: "r2", fromTable: "fct", fromColumn: "j", toTable: "peer", toColumn: "j", fromCardinality: "one", toCardinality: "one", crossFilteringBehavior: "bothDirections" },
+  ] } };
+  const m = modelOf(bundle.createCompiler(bundle.tmslToModel(bim)).describe());
+  assert.deepEqual(m.tables.map(t => t.name), ["fct", "dim", "peer"], "no auto date table");
+  assert.deepEqual(m.relationships.map(r => [r.name, r.one, r.crossFilter]), [["r1", "dim", "single"], ["r2", null, "both"]]);
+  assert.equal(m.tables[1].columns[1].isHidden, true);
+  assert.equal(m.tables[0].columns[0].dataType, "int", "dax-sql's type names");
+  const fields = modelFields(m);
+  assert.deepEqual(fields.tables.map(t => [t.name, t.kind]), [["dim", "dimension"], ["fct", "fact"], ["peer", "fact"]]);
 });

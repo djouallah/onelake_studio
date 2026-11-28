@@ -31,7 +31,8 @@ const MAX_CELLS = 200_000;    // cells a pivot's table draws at most
 const SERIES_CAP = 24;        // series a chart draws at most
 const MULTIPLES = 4;          // measures a chart draws, one plot each
 const ROW_TOTAL = '__rows_total', COL_TOTAL = '__columns_total';
-const TYPES = { string: 'text', int64: 'number', double: 'number', decimal: 'number', dateTime: 'date', boolean: 'bool' };
+// dax-sql's type names (describe(), its contract) as the page's.
+const TYPES = { string: 'text', int: 'number', double: 'number', decimal: 'number', datetime: 'date', bool: 'bool' };
 // A field's type, before its name: letters, or one of the page's icons for a date.
 const ICONS = { text: 'Abc', number: '#', bool: 'T|F', measure: 'Σ' };
 // The page's icons, each one path on a 16 by 16 square, drawn as lines in the text's colour
@@ -94,11 +95,11 @@ export const folderPaths = displayFolder => String(displayFolder ?? '').split(';
 // relationship points to: the model says it, not the names). A hidden table hides all it holds,
 // its measures too, as Power BI does. Each field has its display folders (folderPaths).
 export function modelFields(model) {
-  const dims = new Set((model.relationships ?? []).map(r => r.toTable));
+  const dims = new Set((model.relationships ?? []).map(r => r.one).filter(Boolean));
   const tables = (model.tables ?? []).filter(t => !t.isHidden).map(t => ({
     // A model of one table (a lakehouse table's Pivot) has neither.
     name: t.name, dimension: dims.has(t.name), kind: dims.size ? (dims.has(t.name) ? 'dimension' : 'fact') : null,
-    columns: (t.columns ?? []).filter(c => !c.isHidden && c.type !== 'rowNumber').map(c => ({ id: `${t.name}.${c.name}`, kind: 'column', table: t.name,
+    columns: (t.columns ?? []).filter(c => !c.isHidden).map(c => ({ id: `${t.name}.${c.name}`, kind: 'column', table: t.name,
       name: c.name, type: TYPES[c.dataType] ?? 'text', format: c.formatString, description: c.description,
       folders: folderPaths(c.displayFolder),
       // A column the host worked out from another (a table's date grains), not one the data has.

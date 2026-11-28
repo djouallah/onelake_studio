@@ -182,12 +182,13 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
           const idents = await nameTables(lake.map(([, l]) => ({ ...l.lh, ...l.t })));
           // ws.item.schema.table, an item other than a lakehouse with its kind after it: the item is its name alone
           // in item.schema.table.
+          // dax-sql's nameParts: each part unquoted.
           const parts = idents.map(semantic.nameParts);
-          const items = new Set(parts.map(p => JSON.stringify(p.slice(0, 2).map(semantic.unquote)).toLowerCase()));
-          const part = parts.length ? semantic.unquote(parts[0][1]) : null;
+          const items = new Set(parts.map(p => JSON.stringify(p.slice(0, 2)).toLowerCase()));
+          const part = parts.length ? parts[0][1] : null;
           const item = part == null ? null : (splitItem(part) || { item: part }).item;
-          if (items.size === 1 && item != null && same(semantic.unquote(parts[0][0]), n.workspace)) {
-            names = new Map(lake.map(([table], i) => [table, [sqlPart(item), ...parts[i].slice(2)].join('.')]));
+          if (items.size === 1 && item != null && same(parts[0][0], n.workspace)) {
+            names = new Map(lake.map(([table], i) => [table, [item, ...parts[i].slice(2)].map(sqlPart).join('.')]));
           }
         } catch (e) {
           log(`${n.workspace}/${n.model}: its tables could not be named, so the copy keeps their Direct Lake expression — ${e.message}`);
@@ -355,7 +356,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         try {
           const { semantic, compiler } = await modules();
           const bim = semantic.bimOf(v.path, await fsp.readFile(v.path, 'utf8'), compiler);
-          for (const t of (bim.model || bim).tables || []) for (const x of t.measures || []) m.measures.push(x.name);
+          for (const x of compiler.createCompiler(compiler.tmslToModel(bim)).describe().measures) m.measures.push(x.name);
         } catch (_) { /* a file in OneLake, or one that cannot be read: its name alone */ }
       }
       return { tables, models: [...models.values()] };

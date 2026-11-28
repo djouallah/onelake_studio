@@ -56,7 +56,7 @@ function compilerModules() {
 // (compilerModules) and the command line's (cli/agent.js) alike. The readers of model files are all dax-sql's.
 export function compilerBundle(c, t, o, m, d, y) {
   return {
-    createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
+    createCompiler: c.createCompiler, createViews: c.createViews, nameParts: c.nameParts, tmslToModel: t.tmslToModel,
     directLakeTables: t.directLakeTables, unplacedTables: t.unplacedTables, storageMode: t.storageMode,
     ossieToTmsl: o.ossieToTmsl, tmslToOssie: o.tmslToOssie, ossieSources: o.ossieSources, tmslType: o.tmslType,
     fabricRefusals: o.fabricRefusals, OSSIE: o.OSSIE,
@@ -141,9 +141,8 @@ function linesAt(doc, text, path) {
   return out;
 }
 
-// The parts of a dotted SQL name, as written ("my ws" keeps its quotes), and one without them.
-export const nameParts = ident => String(ident).match(/"(?:[^"]|"")*"|[^.]+/g) ?? [];
-export const unquote = p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p);
+// The parts of a dotted SQL name, unquoted: dax-sql's nameParts.
+export const nameParts = ident => need().nameParts(String(ident));
 
 // The bim's Direct Lake tables, by lower-cased table name: where each one lives in OneLake, as dax-sql's
 // directLakeTables reads them from the TMSL. { lh: { workspace, item }, t: { schema, table } } for one its
@@ -236,17 +235,16 @@ async function bimWithColumns(path, text, m, { lakehouse = null, workspace = nul
   if (m.formatOf(path, text) !== "ossie" || !columnReader || !workspace) return bimOf(path, text, m, { lakehouse });
   let doc;
   try { doc = m.parseYaml(stripBom(text)); } catch (_) { return bimOf(path, text, m, { lakehouse }); }   // readModel says why
+  // Where each dataset's table is, as dax-sql places it (ossieSources: { catalog, schema, entity }), and columnsOf
+  // is asked with the same: one with no catalog is no lakehouse table to read.
   const read = new Map();
-  await Promise.all(m.ossieSources(doc).map(async ({ source }) => {
-    const parts = nameParts(String(source ?? "")).map(unquote);
-    const at = parts.length === 3 ? { lakehouse: parts[0], schema: parts[1], table: parts[2] }
-      : lakehouse && parts.length === 2 ? { lakehouse, schema: parts[0], table: parts[1] }
-      : lakehouse && parts.length === 1 ? { lakehouse, schema: "dbo", table: parts[0] } : null;
-    if (!at) return;
-    try { read.set(String(source), await columnReader({ workspace, ...at })); }
-    catch (e) { console.warn(`[semantic] the columns of ${source} could not be read: ${e.message}`); }
+  const at = x => JSON.stringify([x.catalog, x.schema, x.entity]);
+  await Promise.all(m.ossieSources(doc, lakehouse ? { catalog: lakehouse } : {}).map(async x => {
+    if (!x.catalog) return;
+    try { read.set(at(x), await columnReader({ workspace, lakehouse: x.catalog, schema: x.schema, table: x.entity })); }
+    catch (e) { console.warn(`[semantic] the columns of ${x.catalog}.${x.schema}.${x.entity} could not be read: ${e.message}`); }
   }));
-  return bimOf(path, text, m, { lakehouse, columnsOf: ({ source }) => read.get(String(source)) ?? null });
+  return bimOf(path, text, m, { lakehouse, columnsOf: x => read.get(at(x)) ?? null });
 }
 
 // Where a table's SQL name says it lives: its first two parts (ws.lakehouse), as written.
@@ -342,15 +340,13 @@ export async function fabricViewBim(view, files, { lakehouse, columnsOf }, modul
   // The columns of every dataset the view keeps, read before dax-sql asks: its readers are not asynchronous.
   const cols = new Map();
   let sources = null;
-  try { sources = m.ossieSources(Object.fromEntries(files.map(f => [String(f.path), m.parseYaml(stripBom(f.text))])), { as: "fabric" }); }
+  try { sources = m.ossieSources(Object.fromEntries(files.map(f => [String(f.path), m.parseYaml(stripBom(f.text))])), { as: "fabric", catalog: lakehouse }); }
   catch (_) { /* not YAML, or not a view: readModel says which, by file */ }
+  const at = x => JSON.stringify([x.schema, x.entity]);
   if (sources) {
-    await Promise.all(sources.map(async ({ source }) => {
-      const [schema, table] = nameParts(String(source)).map(unquote);
-      cols.set(String(source), await columnsOf(schema, table).catch(() => []));
-    }));
+    await Promise.all(sources.map(async x => { cols.set(at(x), await columnsOf(x.schema, x.entity).catch(() => [])); }));
   }
-  const { bim, skipped } = m.readModel(`Semantic Views/${view}`, folder, { ...read, columnsOf: ({ source }) => cols.get(String(source)) ?? [] });
+  const { bim, skipped } = m.readModel(`Semantic Views/${view}`, folder, { ...read, columnsOf: x => cols.get(at(x)) ?? [] });
   Object.defineProperty(bim, "skipped", { value: skipped, enumerable: false, configurable: true });
   return bim;
 }
@@ -425,7 +421,9 @@ export async function tableModel(table, sqlName, columns, modules = null) {
     measure: n => (n === rows ? "COUNT(*)" : null),
     column: (n, q) => grains.get(n)?.(q) ?? null,
   };
-  return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
+  // The grains it worked out, which the views mark apart: { [table]: { [column]: { from, as } } }.
+  const derived = { [table]: Object.fromEntries(cols.filter(c => c.derivedFrom).map(c => [c.name, { from: c.derivedFrom, as: c.derivedAs }])) };
+  return { name: modelName(table), tmsl: bim.model, compiler, plainSql, derived };
 }
 
 // A part of a model's SQL name: bare, or quoted in double quotes or backticks (modelNameParts).

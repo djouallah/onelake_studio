@@ -311,8 +311,8 @@ test("the sample query is a measure by a text column of a table that slices it, 
 test("CREATE and DROP SEMANTIC VIEW are refused as dax-sql's entries say, and REFRESH is told apart", async () => {
   const { statement } = await import("../../page/semantic.js");
   await assert.rejects(statement("CREATE SEMANTIC VIEW ws.m_semanticmodel FROM 'x.bim'"), /not made or dropped in SQL/);
-  // A DROP of a model not open here: dax-sql says there is no such view (one open here is refused as CREATE is).
-  await assert.rejects(statement("DROP SEMANTIC VIEW ws.m_semanticmodel"), /does not exist/);
+  // Open here or not: dax-sql gives the entry whether the view exists (dax-sql#36), and it is refused all the same.
+  await assert.rejects(statement("DROP SEMANTIC VIEW ws.m_semanticmodel"), /not made or dropped in SQL/);
   // A REFRESH is not refused as one of those: of a model not open here, it says so.
   await assert.rejects(statement("REFRESH SEMANTIC VIEW onelake.ws.m_semanticmodel"), e => !/not made or dropped/.test(e.message));
 });

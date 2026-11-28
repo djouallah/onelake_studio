@@ -83,7 +83,7 @@ export const MODEL_CARD = { w: 210, head: 30, line: 16, pad: 10, gap: 130, vgap:
 /** Each table's box, { name: { x, y, w, h, dim } }: the star. */
 export function modelPlaces(tables, rels) {
   const { w, head, line, pad, gap, vgap } = MODEL_CARD;
-  const dims = new Set(rels.map(r => r.toTable));
+  const dims = new Set(rels.map(r => r.one).filter(Boolean));
   const boxes = {};
   let y = 0;
   for (const t of tables.filter(t => dims.has(t.name))) {
@@ -95,7 +95,9 @@ export function modelPlaces(tables, rels) {
   // that ends higher: it reaches nothing, so it should not take a place a fact's lines want.
   const linked = new Set(rels.flatMap(r => [r.fromTable, r.toTable]));
   const facts = tables.filter(t => !dims.has(t.name) && linked.has(t.name)).map(t => {
-    const reach = rels.filter(r => r.fromTable === t.name && boxes[r.toTable]).map(r => middle(boxes[r.toTable]));
+    // The dimensions it reaches: the one side of each of its relationships to them.
+    const reach = rels.filter(r => r.one && r.one !== t.name && (r.fromTable === t.name || r.toTable === t.name) && boxes[r.one])
+      .map(r => middle(boxes[r.one]));
     return { t, at: reach.length ? reach.reduce((s, v) => s + v, 0) / reach.length : 0 };
   }).sort((a, b) => a.at - b.at);
   const next = [0, 0];
@@ -147,10 +149,11 @@ export function modelEdges(boxes, rels) {
     const reach = stacked(a.box, b.box) ? 50 : Math.max(30, Math.min(gap, Math.abs(b.x - a.x)) / 2);
     const c1 = [a.x + out(a.side) * reach, a.y], c2 = [b.x + out(b.side) * reach, b.y];
     return {
-      from: r.fromTable, to: r.toTable, both: r.crossFilteringBehavior === 'bothDirections', active: r.isActive !== false,
+      from: r.fromTable, to: r.toTable, both: r.crossFilter === 'both', active: r.isActive !== false,
       d: `M${a.x},${a.y} C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${b.x},${b.y}`,
       mid: { x: (a.x + 3 * c1[0] + 3 * c2[0] + b.x) / 8, y: (a.y + 3 * c1[1] + 3 * c2[1] + b.y) / 8 },
-      many: label(a, '*'), one: label(b, '1'),
+      // Each end's cardinality, as dax-sql reads it (describe()): one is 1, many is *.
+      many: label(a, r.fromCardinality === 'one' ? '1' : '*'), one: label(b, r.toCardinality === 'many' ? '*' : '1'),
     };
   });
 }

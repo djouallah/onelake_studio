@@ -43,8 +43,10 @@ export function fakeOneLake() {
 // TMSL it stands for, so nothing here exercises model parsing: cli-engine.test.mjs does.
 export async function stubVendor(dir) {
   for (const [p, body] of [
-    ["npm/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
-    ["npm/pin/formats/tmsl.js", "export const tmslToModel = 0, storageMode = () => 'import', directLakeTables = () => new Map();"],
+    ["npm/pin/src/index.js", "export const createViews = 0, createCompiler = m => ({ describe: () => ({ " +
+      "tables: (m.tables || []).map(t => ({ name: t.name, hidden: !!t.isHidden, autoDate: false, columns: (t.columns || []).map(c => ({ name: c.name })) })), " +
+      "measures: (m.tables || []).flatMap(t => (t.measures || []).map(x => ({ name: x.name, table: t.name }))), relationships: [] }) });"],
+    ["npm/pin/formats/tmsl.js", "export const tmslToModel = b => b.model || b, storageMode = () => 'import', directLakeTables = () => new Map();"],
     ["npm/pin/formats/ossie.js", "export const ossieToTmsl = doc => doc.tmsl, tmslToOssie = 0, ossieSources = () => [], tmslType = () => 'string', " +
       "fabricRefusals = () => [], OSSIE = { dialects: { standard: 'OSSIE_SQL_2026' } };"],
     ["npm/pin/formats/model.js", "export const formatOf = p => (/\\.ya?ml$/i.test(p) ? 'ossie' : 'tmsl'), " +

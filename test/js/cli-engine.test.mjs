@@ -170,7 +170,7 @@ test("the skill's path: list, read the model, run what it printed, compute a mea
     const model = JSON.parse(r.stdout);
     assert.equal(model.data.name, "shop.sales_model_semanticmodel");
     assert.equal(model.data.directLake, 2);
-    assert.deepEqual(model.tables.relationships.rows, [["fct_sales[customer_id]", "dim_customer[customer_id]", true]]);
+    assert.deepEqual(model.tables.relationships.rows, [["fct_sales[customer_id]", "many", "dim_customer[customer_id]", "one", true]]);
     const nameOf = t => { const i = t.columns.findIndex(c => c.name === "name"); return t.rows.map(row => row[i]); };
     assert.deepEqual(nameOf(model.tables.metrics).sort(), ["Customer Count", "Total Sales"]);
     assert.ok(nameOf(model.tables.dimensions).includes("Region"));
