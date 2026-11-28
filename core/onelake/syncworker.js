@@ -62,6 +62,7 @@ function readJob(onelake, t, { onWait } = {}) {
     : t.kind === 'files' ? onelake.files(lhOf(t), t.dir || '', { fresh: true })
     : t.kind === 'models' ? onelake.models(t.workspace, { fresh: true })
     : t.kind === 'table' ? onelake.table(lhOf(t), { schema: t.schema, table: t.table }, { fresh: true, onWait })
+    : t.kind === 'notebooks' ? onelake.notebooks(t.workspace, { fresh: true })
     : onelake.apps(t.workspace, { fresh: true });
 }
 
@@ -107,6 +108,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
     : t.kind === 'files' ? onelake.cached.files(lhOf(t), t.dir || '')
     : t.kind === 'models' ? onelake.cached.models(t.workspace)
     : t.kind === 'table' ? onelake.cached.table(lhOf(t), t)
+    : t.kind === 'notebooks' ? onelake.cached.notebooks(t.workspace)
     : onelake.cached.apps(t.workspace));
 
   // One request at a time, and whoever is waiting goes ahead of the background's next one.

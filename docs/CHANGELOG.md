@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- **Python notebooks, run on this machine.** Each workspace has a *Notebooks* node that lists its Fabric Python
+  notebooks; Spark notebooks run only on Fabric, so they aren't listed. A click opens the notebook in VS Code's
+  notebook editor, read from Fabric again first. ▶ runs every cell on a local Python kernel (this needs the Jupyter
+  extension). A notebook that reaches OneLake by `abfss://` paths reads the same tables as it would in Fabric.
+  Nothing is written back to Fabric. The tree's filter has *Python notebooks* too.
+
 ### Changed
 
 - **dax-sql 0.2.5: a model's first query reads two facts from its tables:** which relationships have keys the other table lacks,

@@ -31,15 +31,19 @@ const TREE_FILTERS = [
   { label: 'Mirrored databases', only: 'Mirrored database' },
   { label: 'Semantic models', only: 'models' },
   { label: 'Apps', only: 'apps' },
+  { label: 'Python notebooks', only: 'notebooks' },
 ];
-const isFabricFilter = only => only === 'models' || only === 'apps';
+const FABRIC_LISTS = ['models', 'apps', 'notebooks'];
+const isFabricFilter = only => FABRIC_LISTS.includes(only);
+// What a Fabric listing is called where it needs a sign-in.
+const FABRIC_WHAT = { models: 'semantic models', apps: 'apps', notebooks: 'notebooks' };
 
 // A node is a plain object; getTreeItem turns it into what VS Code renders. Keeping the
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
 // the panel a { workspace, item, schema, table } with nothing to parse back out.
 const node = (kind, label, extra) => ({ kind, label, ...extra });
 // The nodes a listing is behind.
-const LISTS = new Set(['workspace', 'tables', 'dir', 'models', 'apps']);
+const LISTS = new Set(['workspace', 'tables', 'dir', 'models', 'apps', 'notebooks']);
 
 // A table node's SQL name (ws.lakehouse.schema.table), or null for an item SQL cannot name.
 const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return null; } };
@@ -48,11 +52,12 @@ class LakehouseTree {
   /**
    * @param {object} deps
    * @param {ReturnType<import('../core/onelake/onelake').createOneLake>} deps.onelake  cache-first OneLake
-   * @param {import('../core/models/fabric').createFabric} [deps.fabric]  semantic models and apps (Fabric REST)
+   * @param {import('../core/models/fabric').createFabric} [deps.fabric]  semantic models, apps and notebooks (Fabric REST)
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's local copy is, if it has one
+   * @param {(n: object) => string|null} [deps.cachedNotebook]  where a notebook's local copy is, if it has one
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
    * @param {() => string|null} [deps.filter]  the one type to show (TREE_FILTERS' `only`), if any
@@ -62,7 +67,7 @@ class LakehouseTree {
    * @param {() => Promise<string[]>} [deps.internalTables]  system_internal's tables, the lake's metadata, from the engine
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
-                favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
+                favorites = { get: () => [] }, cachedModel = () => null, cachedNotebook = () => null, unsupportedModel = () => null,
                 queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {},
                 keepLimitBytes = () => 0, internalTables = null, tableLocal = null }) {
     this.keepLimitBytes = keepLimitBytes;
@@ -75,6 +80,7 @@ class LakehouseTree {
     this.onelake = onelake;
     this.filter = filter;
     this.cachedModel = cachedModel;
+    this.cachedNotebook = cachedNotebook;
     this.unsupportedModel = unsupportedModel;
     this.favorites = favorites;
     this.fabric = fabric;
@@ -163,12 +169,13 @@ class LakehouseTree {
     if (c.kind === 'table') return this._cachedChanged(this._tableNode(c));
     if (c.kind === 'workspaces') return this._emitter.fire(undefined);
     // Filtered, a listing decides which workspaces show at all.
-    if (this.filter() && ['items', 'models', 'apps'].includes(c.kind)) return this._emitter.fire(undefined);
+    if (this.filter() && ['items', ...FABRIC_LISTS].includes(c.kind)) return this._emitter.fire(undefined);
     const id = c.kind === 'items' ? `workspace|${c.workspace}`
              : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
              : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.area || 'Files'}|${c.dir || ''}`
              : c.kind === 'models' ? `models|${c.workspace}`
              : c.kind === 'apps' ? `apps|${c.workspace}`
+             : c.kind === 'notebooks' ? `notebooks|${c.workspace}`
              : null;
     const n = id && this._nodes.get(id);
     if (n) this._emitter.fire(n);
@@ -192,7 +199,7 @@ class LakehouseTree {
     if (this.fabric) this.fabric.reset();
     if (!n) return this._emitter.fire(undefined);
     const on = this._nodes.get(this._idOf(n));
-    if (on || !['workspace', 'tables', 'dir', 'models', 'apps'].includes(n.kind)) this._emitter.fire(on || n);
+    if (on || !['workspace', 'tables', 'dir', ...FABRIC_LISTS].includes(n.kind)) this._emitter.fire(on || n);
   }
 
   _idOf(n) {
@@ -202,6 +209,8 @@ class LakehouseTree {
          : n.kind === 'models' ? `models|${n.workspace}`
          : n.kind === 'semanticModel' ? `model|${n.workspace}|${n.modelId}`
          : n.kind === 'apps' ? `apps|${n.workspace}`
+         : n.kind === 'notebooks' ? `notebooks|${n.workspace}`
+         : n.kind === 'notebook' ? `notebook|${n.workspace}|${n.notebookId}`
          : n.kind === 'queries' ? 'queries'
          : n.kind === 'table' ? `table|${n.workspace}|${n.item}|${n.schema || ''}|${n.table}`
          : n.kind === 'file' ? `file|${n.workspace}|${n.path}`
@@ -212,6 +221,12 @@ class LakehouseTree {
   // whole tree — that would list every open workspace's models from Fabric again.
   modelChanged(n) {
     const on = this._nodes.get(`model|${n.workspace}|${n.modelId}`);
+    if (on) this._emitter.fire(on);
+  }
+
+  // A notebook's local copy was just written: redraw its node, so its icon says so.
+  notebookChanged(n) {
+    const on = this._nodes.get(`notebook|${n.workspace}|${n.notebookId}`);
     if (on) this._emitter.fire(on);
   }
 
@@ -265,6 +280,7 @@ class LakehouseTree {
         // Context/ and SystemContext/ beside Files/: the same folder path, a different node.
         + (n.area ? `|${n.area}` : '')
         + (n.appId ? `|${n.appId}` : '')
+        + (n.notebookId ? `|${n.notebookId}` : '')
         // A filter opens its groups and workspaces without touching what was open before it.
         + (n.filter ? `|${n.filter}` : '');
     }
@@ -388,6 +404,25 @@ class LakehouseTree {
         if (n.url) item.command = { command: 'onelakeStudio.openApp', title: 'Open App', arguments: [n] };
         break;
       }
+      // A workspace's Python notebooks — from the Fabric API. Spark ones run only on Fabric's Spark, so
+      // they are not listed.
+      case 'notebooks':
+        item.iconPath = new vscode.ThemeIcon('notebook');
+        break;
+      // A click opens its local copy, read from Fabric first; ▶ runs it there, on this machine's Python.
+      case 'notebook': {
+        const there = this.cachedNotebook(n);
+        item.iconPath = there
+          ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
+          : new vscode.ThemeIcon('notebook');
+        item.command = { command: 'onelakeStudio.openNotebook', title: 'Open notebook', arguments: [n] };
+        item.tooltip = [n.description,
+          'A Fabric Python notebook. ▶ runs it on this machine, in a local Python kernel: what it reads by abfss:// paths ' +
+          'it reads from OneLake as it would in Fabric.',
+          there ? `Kept at ${there}. A click reads it from Fabric again, unless it is open here already; nothing is written back.`
+            : 'Click to read it from Fabric and open it here. Nothing is written back to Fabric.'].filter(Boolean).join('\n\n');
+        break;
+      }
       case 'fabricSignIn':
         item.iconPath = new vscode.ThemeIcon('sign-in');
         item.command = { command: 'onelakeStudio.signInFabric', title: 'Sign in to the Fabric API' };
@@ -435,7 +470,7 @@ class LakehouseTree {
       if (n.kind === 'workspace') out.push({ kind: 'items', workspace: n.workspace });
       else if (n.kind === 'tables') out.push({ kind: 'tables', workspace: n.workspace, item: n.item });
       else if (n.kind === 'dir') out.push({ kind: 'files', workspace: n.workspace, item: n.item, ...areaOfNode(n), dir: n.dir || '' });
-      else if (n.kind === 'models' || n.kind === 'apps') out.push({ kind: n.kind, workspace: n.workspace });
+      else if (FABRIC_LISTS.includes(n.kind)) out.push({ kind: n.kind, workspace: n.workspace });
     }
     return out;
   }
@@ -479,7 +514,7 @@ class LakehouseTree {
       if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true }), ...this._local()];
       const only = this.filter();
       if (isFabricFilter(only) && !await this.hasFabric()) {
-        const what = only === 'models' ? 'semantic models' : 'apps';
+        const what = FABRIC_WHAT[only];
         return [node('fabricSignIn', `Sign in to list ${what}`, { leaf: true, group: only }), ...this._local()];
       }
       const shown = only ? await this._holding(names, only) : names;
@@ -532,6 +567,7 @@ class LakehouseTree {
       if (this.fabric && !only) {
         kids.push(this._track(node('models', 'Semantic models', { workspace: n.workspace })));
         kids.push(this._track(node('apps', 'Apps', { workspace: n.workspace })));
+        kids.push(this._track(node('notebooks', 'Notebooks', { workspace: n.workspace })));
       }
       return kids;
     }
@@ -545,6 +581,20 @@ class LakehouseTree {
       return apps.length
         ? apps.map(a => this._app(n.workspace, a))
         : [node('empty', 'No apps', { leaf: true })];
+    }
+
+    if (n.kind === 'notebooks') {
+      if (!await this.hasFabric()) {
+        return [node('fabricSignIn', 'Sign in to list notebooks', { leaf: true, group: 'notebooks', workspace: n.workspace })];
+      }
+      const list = await this.onelake.notebooks(n.workspace,
+        { fresh: this._isFresh(`notebooks|${n.workspace}`, n.workspace) });
+      const python = list.filter(nb => nb.kind === 'python');
+      return python.length
+        ? python.map(nb => this._track(node('notebook', nb.name, {
+            workspace: n.workspace, notebook: nb.name, notebookId: nb.id, description: nb.description, leaf: true,
+          })))
+        : [node('empty', 'No Python notebooks', { leaf: true })];
     }
 
     if (n.kind === 'models') {
@@ -659,6 +709,7 @@ class LakehouseTree {
       try {
         const list = only === 'models' ? await this.onelake.models(ws, { fresh: this._isFresh(`models|${ws}`, ws) })
           : only === 'apps' ? await this.onelake.apps(ws, { fresh: this._isFresh(`apps|${ws}`, ws) })
+          : only === 'notebooks' ? (await this.onelake.notebooks(ws, { fresh: this._isFresh(`notebooks|${ws}`, ws) })).filter(nb => nb.kind === 'python')
           : await this._items(ws, only);
         return list.length > 0;
       } catch (_) { return true; }

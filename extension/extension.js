@@ -421,7 +421,7 @@ async function activateInner(context) {
   ({ engines, onelake, semviews, rebindStore, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
-  const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
+  const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames, cachedNotebook, fetchNotebook } = core.models;
 
   // The explorer's filter: one type only, until the picker says otherwise. Not remembered: left
   // on from last time it would look like missing workspaces, and read them all at startup.
@@ -458,6 +458,7 @@ async function activateInner(context) {
     hasFabric: async () => connectivity.offline() || !!await fabricToken().catch(() => null),
     isSignedIn: () => core.signedIn(),
     cachedModel: n => cachedModel(n),
+    cachedNotebook: n => cachedNotebook(n),
     queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
     tableLocal: (lh, t) => core.tableLocal(lh, t),
@@ -661,6 +662,39 @@ async function activateInner(context) {
       }
       if (out) out.appendLine(`opening ${n.model} failed — ${(e && e.stack) || e}`);
       showError(`Could not open ${n.model}: ${(e && e.message) || e}`);
+    }
+  }
+
+  // A Fabric Python notebook from the tree, opened in VS Code's notebook editor and, with `run`, run there on a
+  // local Python kernel (Jupyter's). A notebook that reaches OneLake by abfss:// paths reads the same tables here as
+  // in Fabric. Its local copy is read from Fabric again first, unless it is open here already: then that is what is
+  // shown and run, edits and all. Nothing is written back to Fabric.
+  async function openNotebook(n, { run = false } = {}) {
+    if (!n || n.kind !== 'notebook') return;
+    if (run && !vscode.extensions.getExtension('ms-toolsai.jupyter')) {
+      const pick = await vscode.window.showInformationMessage(
+        `Running ${n.notebook} here needs the Jupyter extension, for a Python kernel on this machine.`, 'Install Jupyter');
+      if (pick === 'Install Jupyter') await vscode.commands.executeCommand('workbench.extensions.installExtension', 'ms-toolsai.jupyter');
+      return;
+    }
+    try {
+      const kept = cachedNotebook(n);
+      const same = p => d => d.uri.scheme === 'file' && pathKey(d.uri.fsPath) === pathKey(p);
+      let doc = kept ? vscode.workspace.notebookDocuments.find(same(kept)) : null;
+      if (!doc) {
+        const { path, fresh } = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Opening ${n.notebook}` },
+          () => fetchNotebook(n, { offline: connectivity.offline() }));
+        if (!fresh) vscode.window.setStatusBarMessage(`Offline: ${n.notebook} as it was last read from Fabric`, 5000);
+        tree.notebookChanged(n);
+        doc = await vscode.workspace.openNotebookDocument(vscode.Uri.file(path));
+      }
+      await vscode.window.showNotebookDocument(doc);
+      // The active notebook's cells, all of them. Jupyter asks for a kernel the first time.
+      if (run) await vscode.commands.executeCommand('notebook.execute');
+    } catch (e) {
+      if (out) out.appendLine(`opening the notebook ${n.workspace}/${n.notebook} failed — ${(e && e.stack) || e}`);
+      showError(`Could not open ${n.notebook}: ${(e && e.message) || e}`);
     }
   }
 
@@ -940,8 +974,8 @@ async function activateInner(context) {
       // An error node names nothing itself: its Refresh is the listing that failed. Without
       // this it refreshed every lakehouse's table metadata and redrew nothing.
       if (n && n.kind === 'error') n = n.parent;
-      // A model or app list is the Fabric API's; it says nothing about any table's metadata.
-      if (!n || !['models', 'apps'].includes(n.kind)) onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
+      // A model, app or notebook list is the Fabric API's; it says nothing about any table's metadata.
+      if (!n || !['models', 'apps', 'notebooks'].includes(n.kind)) onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
       tree.refresh(n);
       postLive({ type: 'reset' });
       if (n && (n.kind === 'models' || n.kind === 'workspace')) refreshModelCopies(n.workspace);
@@ -1288,6 +1322,9 @@ async function activateInner(context) {
     })),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
+    // A Python notebook in the tree: a click opens it, ▶ runs it, on this machine.
+    vscode.commands.registerCommand('onelakeStudio.openNotebook', onClick(n => openNotebook(n))),
+    vscode.commands.registerCommand('onelakeStudio.runNotebook', n => openNotebook(n, { run: true })),
     vscode.commands.registerCommand('onelakeStudio.openPath', arg => openPath(arg)),
     vscode.commands.registerCommand('onelakeStudio.pickLakehouse', arg => pickLakehouse(arg)),
     // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.

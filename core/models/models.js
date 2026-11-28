@@ -1,13 +1,13 @@
 'use strict';
 // =============================================================================
-// models.js — a semantic model's local copy, and what the cache can name
+// models.js — a semantic model's local copy, a notebook's, and what the cache can name
 // =============================================================================
 
 const { dirname, basename, resolve } = require('node:path');
 const { existsSync, renameSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { walkCached } = require('../onelake/onelake');
-const { modelAccountDir, modelCopyPath } = require('./fabric');
+const { modelAccountDir, modelCopyPath, notebookCopyPath, notebookKind } = require('./fabric');
 const { readFromOneLake } = require('./sqlendpoint');
 const { fmtBytes, sqlKind, displayName, MODEL_KIND, modelSqlName, stripBom, splitItem, sqlPart } = require('../names');
 
@@ -364,9 +364,30 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return value;
   }
 
+  // A Fabric Python notebook's local copy, the one VS Code opens and runs: notebookCopyPath, beside its
+  // workspace's models. Read from Fabric (getDefinition, as .ipynb) each time it is fetched, so it runs what
+  // Fabric has now; offline, the copy kept is what there is. Nothing is ever written back to Fabric.
+  const notebookPath = n => notebookCopyPath(modelsFolder(), account(), n.workspace, n.notebook);
+  const cachedNotebook = n => (existsSync(notebookPath(n)) ? notebookPath(n) : null);
+  async function fetchNotebook(n, { offline = false } = {}) {
+    const path = notebookPath(n);
+    if (offline) {
+      if (existsSync(path)) return { path, fresh: false };
+      throw new Error(`${n.notebook} was never opened here, and reading it from Fabric needs a connection`);
+    }
+    const nb = await fabric.getNotebook(n.workspace, n.notebookId);
+    if (notebookKind(nb) === 'spark') {
+      throw new Error(`${n.notebook} is a Spark notebook: it runs on Fabric's Spark only, not on this machine`);
+    }
+    await fsp.mkdir(dirname(path), { recursive: true });
+    await writeWhole(path, JSON.stringify(nb, null, 1));
+    return { path, fresh: true };
+  }
+
   return {
     adoptModels, adopted: () => modelsAdopted,
     modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
+    notebookPath, cachedNotebook, fetchNotebook,
     fetchModel, walkTables, openSqlModel, completionNames, modelFile,
     forgetNames: () => { namesKept = null; },
   };

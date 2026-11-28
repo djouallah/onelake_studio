@@ -12,7 +12,7 @@
 // immutable, so rows read from it can never be stale, and a table opened once opens
 // again — even after a restart — without a single request to OneLake. A Files/ object's
 // bytes are kept the same way, under the version its cached listing gave (readBytes).
-// A workspace's semantic models and apps (Fabric's API, not OneLake) are listings like the others.
+// A workspace's semantic models, apps and notebooks (Fabric's API, not OneLake) are listings like the others.
 //
 // No `vscode` import: catalog.js does the HTTP, store.js the disk, and the tests drive
 // this with fakes of both.
@@ -174,6 +174,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     rows: loc => `rows\u0000${loc}`,
     models: ws => `models\u0000${ws}`,
     apps: ws => `apps\u0000${ws}`,
+    notebooks: ws => `notebooks\u0000${ws}`,
     itemNamed: (wsId, itemId) => `item-named\u0000${wsId}\u0000${itemId}`.toLowerCase(),
     bytes: (ws, path, version) => `bytes\u0000${ws}\u0000${path}\u0000${version}`,
     fileRead: (ws, path, version) => `file-read\u0000${ws}\u0000${names.strip(path)}\u0000${version}`,
@@ -192,7 +193,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (kind === 'tables' || kind === 'schemas') return { kind: 'tables', workspace: a, item: b };
     if (kind === 'files') return { kind, workspace: a, item: b, ...dirOfKey(c) };
     if (kind === 'table') return { kind, workspace: a, item: b, schema: c, table: d };
-    if (kind === 'models' || kind === 'apps') return { kind, workspace: a };
+    if (kind === 'models' || kind === 'apps' || kind === 'notebooks') return { kind, workspace: a };
     return { kind };
   }
 
@@ -237,6 +238,11 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   const apps = (ws, o = {}) => {
     if (!fabric) return Promise.reject(new Error('apps are not available here'));
     return get(keys.apps(ws), () => fabric.listApps(ws), o).then(value);
+  };
+  // A workspace's notebooks, each with its kind (Python or Spark), from the Fabric API.
+  const notebooks = (ws, o = {}) => {
+    if (!fabric || !fabric.listNotebooks) return Promise.reject(new Error('notebooks are not available here'));
+    return get(keys.notebooks(ws), () => fabric.listNotebooks(ws), o).then(value);
   };
   // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }.
   // No TTL: nothing refreshes it behind the caller. It is read again (`fresh`) when the name it
@@ -589,6 +595,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     files: (lh, dir = '') => store.known(keys.files(lh, dir)),
     models: ws => store.known(keys.models(ws)),
     apps: ws => store.known(keys.apps(ws)),
+    notebooks: ws => store.known(keys.notebooks(ws)),
     table: (lh, t) => store.known(keys.table(lh, t)),
     allTables: () => store.allTables(),
     // Why this is not a valid table, if it was found not to be one, or null.
@@ -622,6 +629,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     : t.kind === 'files' ? keys.files(t, t.dir || '')
     : t.kind === 'models' ? keys.models(t.workspace)
     : t.kind === 'table' ? keys.table(t, t)
+    : t.kind === 'notebooks' ? keys.notebooks(t.workspace)
     : keys.apps(t.workspace));
   // Whether a table's rows can't be read from here at all: offline, with none of them read before.
   // Online they are one read away.
@@ -632,12 +640,13 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       : n.kind === 'tables' ? keys.tables(n)
       : n.kind === 'dir' ? keys.files(n, n.dir)
       : n.kind === 'models' ? keys.models(n.workspace)
+      : n.kind === 'notebooks' ? keys.notebooks(n.workspace)
       : keys.apps(n.workspace));
 
   return {
     rowsOutOfReach, listingFailure, listingAt,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables, refreshedSince,
-    models, apps, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead, usage,
+    models, apps, notebooks, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead, usage,
     // The prefix OneLake's Iceberg catalog answers an item to: its GUIDs (a write's catalog, sqltables.js).
     icebergPrefix: lh => (catalog.ircPrefixFor ? catalog.ircPrefixFor(lh) : Promise.resolve(null)),
     // A workspace's GUID from the Fabric API, or null where there is none to ask (sqltables.js lakehouseOf).

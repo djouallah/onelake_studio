@@ -20,11 +20,13 @@ const WORKSPACES = {
     items: [{ name: "gold.Lakehouse", kind: "Lakehouse" }, { name: "wh.Warehouse", kind: "Warehouse" }],
     models: [{ name: "revenue", id: "m1" }],
     apps: [],
+    notebooks: [{ name: "load", id: "n1", kind: "python" }, { name: "spark job", id: "n2", kind: "spark" }],
   },
   ops: {
     items: [{ name: "pg.MountedRelationalDatabase", kind: "MountedRelationalDatabase" }],
     models: [],
     apps: [{ name: "site", id: "a1" }],
+    notebooks: [{ name: "spark only", id: "n3", kind: "spark" }],
   },
   broken: { fails: true },
 };
@@ -40,6 +42,7 @@ const treeOf = (only, { hasFabric = true } = {}) => new LakehouseTree({
     items: listing("items"),
     models: listing("models"),
     apps: listing("apps"),
+    notebooks: listing("notebooks"),
     onChanged: () => () => {},
   },
   fabric: { reset() {} },
@@ -62,7 +65,7 @@ async function shown(tree) {
 test("no filter lists every workspace, with its items and its Fabric headings", async () => {
   const { sales } = await shown(treeOf(null));
   assert.deepEqual(sales,
-    ["item:gold", "item:wh", "models:Semantic models", "apps:Apps"]);
+    ["item:gold", "item:wh", "models:Semantic models", "apps:Apps", "notebooks:Notebooks"]);
 });
 
 test("Semantic models lists them directly, in the workspaces that have any", async () => {
@@ -75,6 +78,24 @@ test("Apps lists them directly, in the workspaces that have any", async () => {
   const got = await shown(treeOf("apps"));
   assert.deepEqual(got.ops, ["fabricApp:site"]);
   assert.ok(!("sales" in got));
+});
+
+test("Python notebooks lists them directly, in the workspaces that have one: a Spark notebook is not listed", async () => {
+  const got = await shown(treeOf("notebooks"));
+  assert.deepEqual(got.sales, ["notebook:load"]);
+  assert.ok(!("ops" in got), "a workspace with only Spark notebooks holds none");
+});
+
+test("a workspace's Notebooks node lists its Python notebooks, and asks for a sign-in without Fabric", async () => {
+  const tree = treeOf(null);
+  const kids = await tree.getChildren({ kind: "notebooks", workspace: "sales" });
+  assert.deepEqual(kids.map(n => [n.kind, n.label, n.notebookId]), [["notebook", "load", "n1"]]);
+  const ops = await tree.getChildren({ kind: "notebooks", workspace: "ops" });
+  assert.deepEqual(ops.map(n => `${n.kind}:${n.label}`), ["empty:No Python notebooks"]);
+  const signedOut = treeOf(null, { hasFabric: false });
+  signedOut.onelake.notebooks = async () => { throw new Error("read"); };
+  const [ask] = await signedOut.getChildren({ kind: "notebooks", workspace: "sales" });
+  assert.deepEqual([ask.kind, ask.label], ["fabricSignIn", "Sign in to list notebooks"]);
 });
 
 test("an item type shows only those items, without the Fabric headings", async () => {
@@ -114,7 +135,7 @@ test("every filter on offer names something the tree can match", async () => {
     assert.ok(Array.isArray(await tree.getChildren()));
   }
   assert.deepEqual(TREE_FILTERS.map(f => f.only),
-    ["Lakehouse", "Warehouse", "SQL database", "Mirrored database", "models", "apps"]);
+    ["Lakehouse", "Warehouse", "SQL database", "Mirrored database", "models", "apps", "notebooks"]);
 });
 
 test("system_internal comes after the workspaces, and lists the engine's tables", async () => {

@@ -515,6 +515,18 @@ test("a workspace's apps are a cached listing too", async () => {
   assert.equal(asked, 2);
 });
 
+test("a workspace's notebooks are a cached listing too", async () => {
+  let asked = 0;
+  const fabric = { listNotebooks: async ws => { asked++; return [{ id: "n1", name: `nb of ${ws}`, description: "", kind: "python" }]; } };
+  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }), fabric });
+  assert.deepEqual(await onelake.notebooks("ws"), [{ id: "n1", name: "nb of ws", description: "", kind: "python" }]);
+  await onelake.notebooks("ws");
+  assert.equal(asked, 1);
+  await onelake.notebooks("ws", { fresh: true });
+  assert.equal(asked, 2);
+  assert.deepEqual((await onelake.cached.notebooks("ws")).value.map(n => n.id), ["n1"]);
+});
+
 test("a Files/ object's bytes are kept under the version its listing gave", async () => {
   const { mkdtemp, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");

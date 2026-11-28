@@ -422,7 +422,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 ## The explorer
 
 The tree ([`extension/tree.js`](../extension/tree.js)) lists workspaces, then lakehouses, warehouses, SQL and
-mirrored databases, their tables and files, semantic models and apps. *Queries* and **Logs**
+mirrored databases, their tables and files, semantic models, apps and Python notebooks. *Queries* and **Logs**
 come after them, and stay there when a listing fails or finds nothing. Workspaces can be pinned, and the tree can be filtered to one type.
 
 **A table's icon** says whether its data is on this machine: a check when every data file of its current snapshot is
@@ -468,6 +468,22 @@ shows offline, and it is asked again when the table is opened or its Tables node
   as a lock.
 - That is two reads per app when *Apps* is expanded, then cached. A button copies the URL, and a click opens it in
   the browser. Nothing is changed.
+
+**Each workspace's Notebooks node** lists its Fabric **Python** notebooks. These run on this machine, because a
+notebook that reaches OneLake only by `abfss://` paths reads the same tables anywhere.
+- **Which ones are listed.** Fabric's listing (`GET …/notebooks`) doesn't say whether a notebook is Python or Spark,
+  so each notebook's definition is read (`getDefinition?format=ipynb`, four at a time) and its kind is taken from the
+  `.ipynb` metadata (`notebookKind` in [`core/models/fabric.js`](../core/models/fabric.js)). The listing is cached
+  like *Apps*. Spark notebooks (`synapse_*` kernels) run only on Fabric's Spark, so they aren't listed.
+- **A click** reads the notebook from Fabric again and keeps it as `<name>.ipynb`, beside the workspace's model
+  copies (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)). It then opens in VS Code's
+  notebook editor. If it is open here already, that copy is shown, edits included. Offline, the copy kept is opened.
+- **▶ (Run on This Machine)** does the same, then runs every cell (`notebook.execute`) on a local Jupyter kernel.
+  That needs the Jupyter extension; if it is missing, OneLake Studio offers to install it. The kernel's Python
+  needs whatever the notebook imports, such as `duckdb`. It also needs its own way to sign in to OneLake: outside
+  Fabric there is no `notebookutils`, so a DuckDB notebook makes a `credential_chain` secret (az login).
+- **Nothing is written back to Fabric.** The local copy is for running here, and the next click replaces it with
+  what Fabric has.
 
 ## The SQL box and results
 
@@ -862,7 +878,7 @@ offline in full, the tree draws the table as read at once, and neither waits for
 | --- | --- |
 | **Open OneLake Studio** | Brings the last tab forward, or opens one, signing in if needed. In the Command Palette only: the tree opens a tab with **New Query**. |
 | **Sign in to OneLake** | Signs in and fills the explorer, without opening a tab. |
-| **Sign in to the Fabric API** | Asks for the second token, for semantic models and apps. |
+| **Sign in to the Fabric API** | Asks for the second token, for semantic models, apps and notebooks. |
 | **Switch Microsoft Account** | Asks which account to use, closes every tab and opens a new one, so the previous account's tables do not survive the switch. |
 | **Sign Out** | Signs out of OneLake Studio, closes every tab and stops the server. What is cached stays on show. In the explorer's "..." menu. |
 | **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
@@ -968,8 +984,8 @@ holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/ex
 | `lake/tableservice.js` | The files statements read, brought here as they are read, and let go when no snapshot names them. |
 | `lake/tableread.js` | A table with OneLake security, read through OneLake's table read API and kept in the cache folder. |
 | `lake/deltalog.js`, `lake/filecache.js` | A Delta table's own log, for Stats and History. An older cache folder, tidied once. |
-| `models/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
-| `models/models.js`, `models/modeldata.js`, `models/semviews.js` | A model's local copy, Keep offline, and the models opened, per account. |
+| `models/fabric.js` | A workspace's semantic models, apps and notebooks, and a model's or notebook's definition. |
+| `models/models.js`, `models/modeldata.js`, `models/semviews.js` | A model's or notebook's local copy, Keep offline, and the models opened, per account. |
 | `models/sqlendpoint.js` | A Direct Lake model over a SQL endpoint, pointed at the item behind it. |
 
 ### extension/

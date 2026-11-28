@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const fabricModule = require("../../core/models/fabric.js");
-const { createFabric, modelFileName, modelCopyPath } = fabricModule;
+const { createFabric, modelFileName, modelCopyPath, notebookCopyPath, notebookKind } = fabricModule;
 
 const WS_ID = "11111111-2222-3333-4444-555555555555";
 
@@ -223,6 +223,63 @@ test("a long-running operation that never finishes gives up", async () => {
   finally { restore(); Date.now = realNow; }
 });
 
+const ipynb = (group, kernel) => ({ nbformat: 4, metadata: { microsoft: { language_group: group }, kernel_info: { name: kernel } }, cells: [] });
+const nbDefinition = nb => ({ definition: { parts: [
+  { path: ".platform", payload: Buffer.from("{}").toString("base64") },
+  { path: "notebook-content.ipynb", payload: Buffer.from("\uFEFF" + JSON.stringify(nb)).toString("base64") },
+] } });
+
+test("a notebook's kind is in its .ipynb: a Python notebook runs anywhere, a Spark one in Fabric only", () => {
+  assert.equal(notebookKind(ipynb("jupyter_python", "jupyter")), "python");
+  assert.equal(notebookKind({ metadata: { kernel_info: { name: "jupyter" } } }), "python");
+  assert.equal(notebookKind(ipynb("synapse_pyspark", "synapse_pyspark")), "spark");
+  assert.equal(notebookKind({ metadata: { kernel_info: { name: "synapse_spark" } } }), "spark");
+  assert.equal(notebookKind({ metadata: {} }), "");
+  assert.equal(notebookKind(null), "");
+});
+
+test("a workspace's notebooks are listed with their kind, each read from its definition", async () => {
+  const OP = "https://api.fabric.microsoft.com/v1/operations/nb2";
+  const { fabric, calls, restore } = fabricWith([
+    [/\/v1\/workspaces$/, () => res(200, { value: [{ id: WS_ID, displayName: "Sales" }] })],
+    [`/workspaces/${WS_ID}/notebooks/n1/getDefinition?format=ipynb`, () => res(200, nbDefinition(ipynb("jupyter_python", "jupyter")))],
+    [`/workspaces/${WS_ID}/notebooks/n2/getDefinition?format=ipynb`, () => res(202, {}, { location: OP })],
+    [/operations\/nb2\/result$/, () => res(200, nbDefinition(ipynb("synapse_pyspark", "synapse_pyspark")))],
+    [/operations\/nb2$/, () => res(200, { status: "Succeeded" })],
+    [`/workspaces/${WS_ID}/notebooks/n3/getDefinition`, () => res(403, { message: "no" })],
+    [`/workspaces/${WS_ID}/notebooks`, () => res(200, { value: [
+      { id: "n2", displayName: "spark job" }, { id: "n1", displayName: "Ossie", description: "d" }, { id: "n3", displayName: "locked" },
+    ] })],
+  ]);
+  try {
+    assert.deepEqual(await fabric.listNotebooks("Sales"), [
+      { id: "n3", name: "locked", description: "", kind: "" },
+      { id: "n1", name: "Ossie", description: "d", kind: "python" },
+      { id: "n2", name: "spark job", description: "", kind: "spark" },
+    ], "a notebook whose definition can't be read is still listed");
+    assert.ok(calls.filter(c => c.method === "POST").every(c => /getDefinition\?format=ipynb$/.test(c.url)), "only definitions are asked for");
+  } finally { restore(); }
+});
+
+test("getNotebook answers the parsed .ipynb, and says so when there is none", async () => {
+  const nb = ipynb("jupyter_python", "jupyter");
+  const a = fabricWith([[/getDefinition\?format=ipynb/, () => res(200, nbDefinition(nb))]]);
+  try { assert.deepEqual(await a.fabric.getNotebook(WS_ID, "n1"), nb, "its byte-order mark is no trouble"); }
+  finally { a.restore(); }
+  const b = fabricWith([[/getDefinition/, () => res(200, { definition: { parts: [{ path: "notebook-content.py", payload: "" }] } })]]);
+  try { await assert.rejects(b.fabric.getNotebook(WS_ID, "n1"), /no notebook-content\.ipynb part \(it has notebook-content\.py\)/); }
+  finally { b.restore(); }
+  const c = fabricWith([[/getDefinition/, () => res(200, { definition: { parts: [{ path: "notebook-content.ipynb", payload: Buffer.from("{nope").toString("base64") }] } })]]);
+  try { await assert.rejects(c.fabric.getNotebook(WS_ID, "n1"), /not an \.ipynb/); }
+  finally { c.restore(); }
+});
+
+test("a notebook's local copy is under its account, beside its workspace's models", () => {
+  assert.equal(notebookCopyPath("root", "me@contoso.com", "sales", "Ossie"), join("root", "me@contoso.com", "sales", "Ossie.ipynb"));
+  const climbed = notebookCopyPath("root", "a", "../x", "../../y");
+  assert.ok(climbed.startsWith(join("root", "a", "_x")) && !climbed.split(/[\\/]/).includes(".."), `nothing climbs out: ${climbed}`);
+});
+
 test("a model's name becomes a safe local file name", () => {
   assert.equal(modelFileName("Sales Model"), "Sales Model.ossie.yaml", "named as Ossie's own tools name a model");
   assert.match(modelFileName('a/b\\c:d*e?"f<g>h|i'), /^a_b_c_d_e__f_g_h_i~[0-9a-f]{6}\.ossie\.yaml$/);
@@ -247,9 +304,10 @@ test("a model's local copy is under its account: two tenants can each have sales
 });
 
 test("the module can only read: no write, no existence check, no storage token", () => {
-  assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName"]);
+  assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName", "notebookCopyPath", "notebookKind"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
-  assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems", "listSemanticModels", "reset", "workspaceId"]);
+  assert.deepEqual(Object.keys(f).sort(), ["getBim", "getNotebook", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems",
+    "listNotebooks", "listSemanticModels", "reset", "workspaceId"]);
 });
 
 test("a 401 is retried once with a fresh token", async () => {

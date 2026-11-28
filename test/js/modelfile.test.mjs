@@ -234,3 +234,26 @@ test("a .tmdl that is one file of a Power BI project's definition is no model; a
   assert.equal(semantic.isTmdlModel("database m\n\tcompatibilityLevel: 1604\n"), false, "database.tmdl alone has no tables");
   await done();
 });
+
+test("a Python notebook's local copy is read from Fabric each time, kept for offline, and a Spark one is refused", async () => {
+  const { readFile } = await import("node:fs/promises");
+  let kind = "jupyter_python", asked = 0;
+  const nb = () => ({ nbformat: 4, metadata: { microsoft: { language_group: kind } }, cells: [{ cell_type: "code", source: [`${asked}`] }] });
+  const { models, done } = await setup({ fabric: { getNotebook: async () => { asked++; return nb(); } } });
+  const n = { kind: "notebook", workspace: "sales", notebook: "load", notebookId: "n1" };
+  try {
+    assert.equal(models.cachedNotebook(n), null);
+    await assert.rejects(models.fetchNotebook(n, { offline: true }), /never opened here/);
+    const first = await models.fetchNotebook(n);
+    assert.equal(first.fresh, true);
+    assert.ok(first.path.endsWith(join("a", "sales", "load.ipynb")), first.path);
+    assert.equal(models.cachedNotebook(n), first.path);
+    await models.fetchNotebook(n);
+    assert.equal(asked, 2, "each open reads Fabric again");
+    assert.deepEqual(JSON.parse(await readFile(first.path, "utf8")).cells[0].source, ["2"]);
+    assert.deepEqual(await models.fetchNotebook(n, { offline: true }), { path: first.path, fresh: false });
+    assert.equal(asked, 2, "offline asks nothing");
+    kind = "synapse_pyspark";
+    await assert.rejects(models.fetchNotebook(n), /Spark notebook/);
+  } finally { await done(); }
+});

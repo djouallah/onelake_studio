@@ -33,7 +33,8 @@ function setup({ workspaces = ["a", "b"], jobsPerTick = 100, ...more } = {}) {
     loadTable: async (lh, t) => call(`table ${t.table}`, { metadataLocation: world.location(t), metadata: {
       "current-snapshot-id": 1, snapshots: [{ "snapshot-id": 1, summary: world.summary(t) }] } }),
   };
-  const fabric = { reset() {}, listSemanticModels: async ws => call(`models ${ws}`, []), listApps: async ws => call(`apps ${ws}`, []) };
+  const fabric = { reset() {}, listSemanticModels: async ws => call(`models ${ws}`, []), listApps: async ws => call(`apps ${ws}`, []),
+                   listNotebooks: async ws => call(`notebooks ${ws}`, []) };
   const onelake = createOneLake({ catalog, fabric, prefetchEnabled: () => false, isOffline: () => world.offline,
     store: createStore({ dir: null, ttlMs: 10 * DAY, now: () => world.now }) });
   const worker = createSyncWorker({ onelake, ttlMs: () => 5 * MIN, isOffline: () => world.offline, now: () => world.now,
@@ -83,10 +84,11 @@ test("models are swept only with a Fabric token already there", async () => {
 });
 
 test("what is open is kept current past the listing's TTL, in any window, lease or not", async () => {
-  const opened = [{ kind: "tables", workspace: "a", item: "gold.Lakehouse" }, { kind: "files", workspace: "a", item: "gold.Lakehouse", dir: "raw" }, { kind: "apps", workspace: "a" }];
+  const opened = [{ kind: "tables", workspace: "a", item: "gold.Lakehouse" }, { kind: "files", workspace: "a", item: "gold.Lakehouse", dir: "raw" }, { kind: "apps", workspace: "a" },
+                  { kind: "notebooks", workspace: "a" }];
   const { world, onelake, worker } = setup({ opened: () => opened, lease: () => false });
   await worker.tick();
-  assert.deepEqual(world.calls, ["workspaces", "tables a", "files a/raw", "apps a"]);
+  assert.deepEqual(world.calls, ["workspaces", "tables a", "files a/raw", "apps a", "notebooks a"]);
   world.calls.length = 0;
   world.now += 4 * MIN;
   await worker.tick();

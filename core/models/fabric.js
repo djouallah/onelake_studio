@@ -1,6 +1,6 @@
 'use strict';
 // =============================================================================
-// fabric.js — a workspace's semantic models and apps, and a model's definition
+// fabric.js — a workspace's semantic models, apps and notebooks, and their definitions
 // =============================================================================
 // A semantic model is not in OneLake: its list and its definition come from the Fabric
 // REST API, which wants a token in a different audience — asked for only when someone
@@ -14,6 +14,7 @@
 const { join } = require('node:path');
 const { createHash } = require('node:crypto');
 const { FABRIC_API, authedFetch, discard, fabricOk, listPages, mapPool, okJson, retryAfterMs } = require('../onelake/http');
+const { stripBom } = require('../names');
 
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_PAGES = 200;
@@ -43,6 +44,22 @@ const modelFileName = modelName => `${safeName(modelName)}.ossie.yaml`;
 const modelAccountDir = (root, account) => join(root, account || 'signed-out');
 function modelCopyPath(root, account, workspace, model) {
   return join(modelAccountDir(root, account), safeName(workspace), modelFileName(model));
+}
+// A notebook's local copy, the one VS Code runs: beside its workspace's models, as <name>.ipynb.
+function notebookCopyPath(root, account, workspace, notebook) {
+  return join(modelAccountDir(root, account), safeName(workspace), `${safeName(notebook)}.ipynb`);
+}
+
+// What a Fabric notebook runs on, from its .ipynb: 'python' for a Python notebook (Fabric's "jupyter" kernel,
+// language group jupyter_python), which runs anywhere Python does; 'spark' for one on Fabric's Spark
+// (synapse_pyspark and the other synapse_* kernels); '' when it says neither.
+function notebookKind(ipynb) {
+  const meta = (ipynb && ipynb.metadata) || {};
+  const group = String((meta.microsoft && meta.microsoft.language_group) || '').toLowerCase();
+  const kernel = String((meta.kernel_info && meta.kernel_info.name) || '').toLowerCase();
+  if (group === 'jupyter_python' || kernel === 'jupyter') return 'python';
+  if (/^synapse_/.test(group) || /^synapse_/.test(kernel)) return 'spark';
+  return '';
 }
 
 /**
@@ -164,45 +181,77 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     return apps.sort((a, b) => byName(a.name, b.name));
   }
 
-  // The model's TMSL definition — model.bim — as bytes. getDefinition answers 200 with the
-  // definition, or 202 with an operation to poll; the definition is then that operation's
-  // /result.
-  async function getBim(workspace, modelId) {
-    const id = await workspaceId(workspace);
-    const url = `${apiBase}/workspaces/${id}/semanticModels/${encodeURIComponent(modelId)}/getDefinition?format=TMSL`;
-    let r = await fabricJson(url, 'Exporting the model definition', { method: 'POST' });
+  // An item's definition parts. getDefinition answers 200 with the definition, or 202 with an
+  // operation to poll; the definition is then that operation's /result. `thing` names it in what
+  // is said: "model definition", "notebook definition".
+  async function definitionParts(url, thing) {
+    let r = await fabricJson(url, `Exporting the ${thing}`, { method: 'POST' });
     if (r.status === 202) {
       const location = r.headers.get('location');
-      if (!location) throw new Error('Exporting the model definition: Fabric accepted it but gave no operation to follow');
+      if (!location) throw new Error(`Exporting the ${thing}: Fabric accepted it but gave no operation to follow`);
       const deadline = Date.now() + lroTimeoutMs;
       let wait = retryAfterMs(r, 2000);
       for (;;) {
-        if (Date.now() > deadline) throw new Error(`Exporting the model definition did not finish within ${Math.round(lroTimeoutMs / 1000)} s`);
+        if (Date.now() > deadline) throw new Error(`Exporting the ${thing} did not finish within ${Math.round(lroTimeoutMs / 1000)} s`);
         await sleep(wait);
-        const p = await fabricJson(location, 'Waiting for the model definition');
+        const p = await fabricJson(location, `Waiting for the ${thing}`);
         const op = await p.json().catch(() => ({}));
         if (op.status === 'Succeeded') break;
         if (op.status === 'Failed' || op.status === 'Undefined') {
           const said = (op.error && (op.error.message || op.error.errorCode)) || op.status;
-          throw new Error(`Exporting the model definition failed — ${said}`);
+          throw new Error(`Exporting the ${thing} failed — ${said}`);
         }
         wait = retryAfterMs(p, 2000);
       }
-      r = await fabricJson(`${location.replace(/\/+$/, '')}/result`, 'Reading the model definition');
+      r = await fabricJson(`${location.replace(/\/+$/, '')}/result`, `Reading the ${thing}`);
     }
     const j = await r.json().catch(() => ({}));
-    const parts = (j.definition && j.definition.parts) || [];
-    const part = parts.find(p => /(^|\/)model\.bim$/i.test(p.path || ''));
+    return (j.definition && j.definition.parts) || [];
+  }
+  const partNamed = (parts, re, thing, file) => {
+    const part = parts.find(p => re.test(p.path || ''));
     if (!part) {
-      throw new Error('The model definition has no model.bim part' +
+      throw new Error(`The ${thing} has no ${file} part` +
         (parts.length ? ` (it has ${parts.map(p => p.path).join(', ')})` : ''));
     }
     return Buffer.from(part.payload || '', 'base64');
+  };
+
+  // The model's TMSL definition — model.bim — as bytes.
+  async function getBim(workspace, modelId) {
+    const id = await workspaceId(workspace);
+    const url = `${apiBase}/workspaces/${id}/semanticModels/${encodeURIComponent(modelId)}/getDefinition?format=TMSL`;
+    return partNamed(await definitionParts(url, 'model definition'), /(^|\/)model\.bim$/i, 'model definition', 'model.bim');
+  }
+
+  // A notebook as Jupyter's .ipynb, parsed. Read only, as a model's definition is: nothing is written back.
+  async function getNotebook(workspace, notebookId) {
+    const id = await workspaceId(workspace);
+    const url = `${apiBase}/workspaces/${id}/notebooks/${encodeURIComponent(notebookId)}/getDefinition?format=ipynb`;
+    const bytes = partNamed(await definitionParts(url, 'notebook definition'), /(^|\/)notebook-content\.ipynb$/i,
+      'notebook definition', 'notebook-content.ipynb');
+    try { return JSON.parse(stripBom(bytes.toString('utf8'))); }
+    catch (e) { throw new Error(`The notebook definition is not an .ipynb: ${e.message}`); }
+  }
+
+  // A workspace's notebooks by name, each with its kind: [{ id, name, description, kind }], kind 'python' (a
+  // Fabric Python notebook, which runs on any machine with a Python kernel), 'spark' (PySpark, Scala, R, SQL:
+  // Fabric's Spark only), or '' when its definition could not be read. Fabric's listing does not say which, so
+  // each notebook's definition is read, a few at a time.
+  async function listNotebooks(workspace) {
+    const id = await workspaceId(workspace);
+    const list = await listAll(`/workspaces/${id}/notebooks`, `Listing notebooks in ${workspace}`);
+    const notebooks = await mapPool(list, async nb => {
+      let kind = '';
+      try { kind = notebookKind(await getNotebook(id, nb.id)); } catch (_) { /* listed all the same */ }
+      return { id: nb.id, name: nb.displayName, description: nb.description || '', kind };
+    }, 4);
+    return notebooks.sort((a, b) => byName(a.name, b.name));
   }
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, getBim, reset };
+  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, listNotebooks, getBim, getNotebook, reset };
 }
 
-module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath };
+module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath, notebookCopyPath, notebookKind };
