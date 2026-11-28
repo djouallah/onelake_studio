@@ -38,7 +38,7 @@ export function modelOf(described, { derived = {} } = {}) {
     one: r.toCardinality === 'one' && r.fromCardinality === 'many' ? r.to.table
       : r.fromCardinality === 'one' && r.toCardinality === 'many' ? r.from.table : null,
   }));
-  return { tables, relationships };
+  return { name: described.name ?? null, description: described.description ?? null, tables, relationships };
 }
 
 // Draws `model` (modelOf's) into `root`, which it fills with the diagram and the side panel.

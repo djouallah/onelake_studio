@@ -257,7 +257,7 @@ test("a field's display folders: several split by ';', each a path split by a ba
 test("the model as the views draw it is dax-sql's describe(): a dimension is a relationship's one side, whatever the order", async () => {
   const { bundle } = await import("./daxsql.mjs");
   const { modelOf } = await import("../../page/explore/model.js");
-  const bim = { model: { tables: [
+  const bim = { name: "shop", model: { description: "What the shop sold.", tables: [
     { name: "fct", columns: [{ name: "k", dataType: "int64" }, { name: "j", dataType: "int64" }], measures: [{ name: "n", expression: "COUNTROWS(fct)" }] },
     { name: "dim", columns: [{ name: "k", dataType: "int64" }, { name: "Region", dataType: "string", isHidden: true }] },
     { name: "peer", columns: [{ name: "j", dataType: "int64" }] },
@@ -270,6 +270,7 @@ test("the model as the views draw it is dax-sql's describe(): a dimension is a r
   ] } };
   const m = modelOf(bundle.createCompiler(bundle.tmslToModel(bim)).describe());
   assert.deepEqual(m.tables.map(t => t.name), ["fct", "dim", "peer"], "no auto date table");
+  assert.equal(m.description, "What the shop sold.", "the model's own description, for the model page's title");
   assert.deepEqual(m.relationships.map(r => [r.name, r.one, r.crossFilter]), [["r1", "dim", "single"], ["r2", null, "both"]]);
   assert.equal(m.tables[1].columns[1].isHidden, true);
   assert.equal(m.tables[0].columns[0].dataType, "int", "dax-sql's type names");
