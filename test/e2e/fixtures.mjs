@@ -111,10 +111,11 @@ export async function seedAccount({ dataDir, home }) {
              { name: "shop.sqlite", path: DB_FILE, isDir: false, bytes: dbBytes.length, version: "v1" }]),
       loadTable: async (_, t) => ({ metadata: metadata(), metadataLocation: location(t.table) }),
       readBytes: async (_, path) => (path === DB_FILE ? dbBytes : sqlFileBytes[path] || new Uint8Array()),
+      // A Direct Lake model's GUIDs, named from OneLake's own listings (catalog.itemOf).
+      itemOf: async () => ({ workspace: WORKSPACE, item: LAKEHOUSE.item }),
     },
     fabric: {
       listSemanticModels: async () => [{ id: "00000000-0000-0000-0000-000000000003", name: "shop", description: "" }],
-      itemOf: async () => ({ workspace: WORKSPACE, item: LAKEHOUSE.item }),
     },
   });
   await onelake.workspaces({ fresh: true });
