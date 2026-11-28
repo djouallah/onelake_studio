@@ -289,3 +289,30 @@ test("an Ossie metric with no DAX here is left out, not the file refused, and na
   // Not a TMSL property: never written into a model Fabric is sent.
   assert.equal("skipped" in JSON.parse(JSON.stringify(bim)), false);
 });
+
+test("the sample query is a measure by a text column of a table that slices it, from dax-sql's contract (describe, dimensionsOf)", async () => {
+  const { starterChart } = await import("../../page/semantic.js");
+  const bim = { model: {
+    tables: [
+      { name: "fct", columns: [{ name: "k", dataType: "int64" }, { name: "amt", dataType: "double" }], measures: [{ name: "Total", expression: "SUM(fct[amt])" }] },
+      { name: "hidden_dim", isHidden: true, columns: [{ name: "k", dataType: "int64" }, { name: "label", dataType: "string" }] },
+      { name: "dim", columns: [{ name: "k", dataType: "int64" }, { name: "Region", dataType: "string" }] },
+      { name: "apart", columns: [{ name: "x", dataType: "string" }] },
+    ],
+    relationships: [{ name: "r1", fromTable: "fct", fromColumn: "k", toTable: "hidden_dim", toColumn: "k" },
+                    { name: "r2", fromTable: "fct", fromColumn: "k", toTable: "dim", toColumn: "k" }],
+  } };
+  const compiler = bundle.createCompiler(bundle.tmslToModel(bim));
+  assert.deepEqual(starterChart(compiler), { measure: "Total", column: { table: "dim", name: "Region" } },
+    "not a hidden table's, nor one the measure's filters don't reach");
+  assert.equal(starterChart(bundle.createCompiler(bundle.tmslToModel({ model: { tables: [{ name: "t", columns: [{ name: "a", dataType: "string" }] }] } }))), null);
+});
+
+test("CREATE and DROP SEMANTIC VIEW are refused as dax-sql's entries say, and REFRESH is told apart", async () => {
+  const { statement } = await import("../../page/semantic.js");
+  await assert.rejects(statement("CREATE SEMANTIC VIEW ws.m_semanticmodel FROM 'x.bim'"), /not made or dropped in SQL/);
+  // A DROP of a model not open here: dax-sql says there is no such view (one open here is refused as CREATE is).
+  await assert.rejects(statement("DROP SEMANTIC VIEW ws.m_semanticmodel"), /does not exist/);
+  // A REFRESH is not refused as one of those: of a model not open here, it says so.
+  await assert.rejects(statement("REFRESH SEMANTIC VIEW onelake.ws.m_semanticmodel"), e => !/not made or dropped/.test(e.message));
+});

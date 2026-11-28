@@ -451,7 +451,7 @@ function modelsNamed(sql) {
 // the host opens each before the statement runs.
 export async function unopenedModels(sql, modules = null) {
   const s = String(sql);
-  if (!lc(s).includes(SUFFIX) || VIEW_DDL.test(s)) return [];   // CREATE / DROP: refused, not opened
+  if (!lc(s).includes(SUFFIX)) return [];
   await ready(modules);
   const out = [];
   for (const { ref } of modelsNamed(s)) {
@@ -508,9 +508,9 @@ async function freshStats({ s, compiler, tables }, run, snapshots) {
   for (const k of Object.keys(trailingSpaces)) delete trailingSpaces[k];
   s.at = null;
   // dax-sql writes the one statement of both checks and reads its row back; the engine runs it.
-  const check = compiler.factsCheck();
-  const asked = Object.keys(check.tables.orphans).length + Object.keys(check.tables.trailingSpaces).length;
-  const got = asked ? check.read((await run(check.sql)).rows[0] || {}) : { orphans: {}, trailingSpaces: {} };
+  // Only the facts that read nothing but tables the lake holds at a snapshot: no other answer could be kept.
+  const check = compiler.factsCheck({ tables: names.filter(t => now.get(t) != null) });
+  const got = check.sql ? check.read((await run(check.sql)).rows[0] || {}) : { orphans: {}, trailingSpaces: {} };
   // A table the answers hold for: in the lake, at the snapshot it was at before the check (or the first,
   // when the check is what brought it here), so its rows didn't move under it.
   const after = await at();
@@ -571,9 +571,18 @@ ORDER BY v.schema_name, v.view_name`;
 
 // dax-sql's CREATE and DROP SEMANTIC VIEW, which this extension does not take: a model is
 // there because Fabric has it (or a lakehouse's Files/ holds it), never because SQL made it.
-const VIEW_DDL = /^\s*(create(\s+or\s+replace)?|drop)\s+semantic\s+view\b/i;
 const NO_DDL ="Not run: a semantic model is not made or dropped " +
   `in SQL — open one in the tree, or name it <workspace>.<model>${SUFFIX} in a query.`;
+
+// REFRESH SEMANTIC VIEW v: what the data says of it (its facts, takeStats) is read again, by its next query. Its
+// definition is Fabric's, read again by Refresh on its workspace in the tree. Returns its name as SQL writes it.
+function refreshView(name) {
+  const v = views.get(name);
+  if (!v) throw new Error(`There is no semantic view ${name} open here`);
+  const rec = stats.get(lc(fullName(v)));
+  if (rec) rec.s.at = null;
+  return fullName(v);
+}
 
 /**
  * What a statement asks, in dax-sql's words (createViews().rewrite): null when it names no
@@ -582,8 +591,6 @@ const NO_DDL ="Not run: a semantic model is not made or dropped " +
  */
 export async function statement(sql, modules = null) {
   if (SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql() };
-  // Refused before dax-sql reads it: whether the view exists is not the question.
-  if (VIEW_DDL.test(String(sql))) throw new Error(NO_DDL);
   if (!views) {
     // Nothing defined yet: only a statement about views needs the compiler loaded.
     if (!/\bsemantic\b/i.test(String(sql))) return null;
@@ -593,7 +600,14 @@ export async function statement(sql, modules = null) {
   if (!out) return null;
   if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
   const [s] = out;
-  if (s.sql == null) throw new Error(NO_DDL);
+  // dax-sql says what a statement is by its entry: { create }, { drop } (refused: see NO_DDL), { refresh }, or { sql }.
+  if (s.create || s.drop) throw new Error(NO_DDL);
+  if (s.refresh) {
+    const name = refreshView(s.refresh.name);
+    const said = `SELECT ${sqlStr(name)} AS semantic_view, 'its facts are read again by its next query' AS refreshed`;
+    return { sql: said, compiled: said };
+  }
+  if (s.sql == null) throw new Error(`Not run: dax-sql gave nothing to run for this statement (${Object.keys(s).join(", ")})`);
   return { sql: withSource(sql, s.sql), compiled: s.sql };
 }
 
@@ -607,17 +621,16 @@ export function lakeTablesOf(name) {
   return [...lake].map(([table, l]) => ({ table, ident: l.ident, schema: l.t.schema, entity: l.t.table, lh: l.lh, item: l.item }));
 }
 
-// A model's (dax-sql's Model) first measure, and the first text column of another table it
-// can be sliced by: { measure, column: { table, name } | null }, or null with no measure.
+// A model's first measure, and the first text column of another table it can be sliced by, as dax-sql's contract
+// lists them (describe, dimensionsOf): { measure, column: { table, name } | null }, or null with no measure.
 // The editor's sample query.
-export function starterChart(model) {
-  const [measure] = model.measures.values();
+export function starterChart(compiler) {
+  const [measure] = compiler.describe().measures;
   if (!measure) return null;
   let column = null;
   try {
-    const state = model.state();
-    for (const t of model.tables.values()) {
-      if (t.hidden || t === measure.table || !model.reaches(t, measure.table, state)) continue;
+    for (const t of compiler.dimensionsOf(measure.name)) {
+      if (t.hidden || lc(t.name) === lc(measure.table)) continue;
       const c = t.columns.find(c => c.type === "string");
       if (c) { column = { table: t.name, name: c.name }; break; }
     }
@@ -632,7 +645,7 @@ function sampleQuery(v) {
   const full = fullName(v);
   const head = `-- ${full} is a semantic model: AGG(measure) is a measure, ` +
                `SHOW SEMANTIC METRICS IN ${full} lists them all.\n`;
-  const chart = starterChart(v.compiler.model);
+  const chart = starterChart(v.compiler);
   if (!chart) return `${head}SHOW SEMANTIC DIMENSIONS IN ${full}`;
   const agg = `AGG(${name(chart.measure)}) AS ${quoteIdent(chart.measure)}`;
   return chart.column
