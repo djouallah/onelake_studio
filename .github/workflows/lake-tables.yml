@@ -54,6 +54,12 @@ jobs:
           path: duckdb-extensions
           key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
       - run: node scripts/fetch-extensions.mjs linux-x64
+      # dax-sql (vendor/): npm test reads the real one (test/js/daxsql.mjs).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
+      - run: node scripts/vendor.mjs
       - run: npm test
       # A table's health from the lake's own metadata: needs DuckDB, which this job has.
       - run: node --test test/js/health.test.mjs
