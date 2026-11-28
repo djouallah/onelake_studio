@@ -175,6 +175,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     models: ws => `models\u0000${ws}`,
     apps: ws => `apps\u0000${ws}`,
     notebooks: ws => `notebooks\u0000${ws}`,
+    notebookKind: (ws, id) => `notebook-kind\u0000${ws}\u0000${id}`,
     itemNamed: (wsId, itemId) => `item-named\u0000${wsId}\u0000${itemId}`.toLowerCase(),
     bytes: (ws, path, version) => `bytes\u0000${ws}\u0000${path}\u0000${version}`,
     fileRead: (ws, path, version) => `file-read\u0000${ws}\u0000${names.strip(path)}\u0000${version}`,
@@ -243,6 +244,12 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   const notebooks = (ws, o = {}) => {
     if (!fabric || !fabric.listNotebooks) return Promise.reject(new Error('notebooks are not available here'));
     return get(keys.notebooks(ws), () => fabric.listNotebooks(ws), o).then(value);
+  };
+  // What a notebook runs on ('python', 'spark', ''), read from its definition once: a notebook's kind does not
+  // change, so no TTL.
+  const notebookKind = (ws, id, o = {}) => {
+    if (!fabric || !fabric.notebookKindOf) return Promise.reject(new Error('notebooks are not available here'));
+    return get(keys.notebookKind(ws, id), () => fabric.notebookKindOf(ws, id), { ttl: Infinity, ...o }).then(value);
   };
   // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }.
   // No TTL: nothing refreshes it behind the caller. It is read again (`fresh`) when the name it
@@ -596,6 +603,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     models: ws => store.known(keys.models(ws)),
     apps: ws => store.known(keys.apps(ws)),
     notebooks: ws => store.known(keys.notebooks(ws)),
+    notebookKind: (ws, id) => store.known(keys.notebookKind(ws, id)),
     table: (lh, t) => store.known(keys.table(lh, t)),
     allTables: () => store.allTables(),
     // Why this is not a valid table, if it was found not to be one, or null.
@@ -646,7 +654,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   return {
     rowsOutOfReach, listingFailure, listingAt,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables, refreshedSince,
-    models, apps, notebooks, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead, usage,
+    models, apps, notebooks, notebookKind, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead, usage,
     // The prefix OneLake's Iceberg catalog answers an item to: its GUIDs (a write's catalog, sqltables.js).
     icebergPrefix: lh => (catalog.ircPrefixFor ? catalog.ircPrefixFor(lh) : Promise.resolve(null)),
     // A workspace's GUID from the Fabric API, or null where there is none to ask (sqltables.js lakehouseOf).

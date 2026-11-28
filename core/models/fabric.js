@@ -250,24 +250,26 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     catch (e) { throw new Error(`The notebook definition is not an .ipynb: ${e.message}`); }
   }
 
-  // A workspace's notebooks by name, each with its kind: [{ id, name, description, kind }], kind 'python' (a
-  // Fabric Python notebook, which runs on any machine with a Python kernel), 'spark' (PySpark, Scala, R, SQL:
-  // Fabric's Spark only), or '' when its definition could not be read. Fabric's listing does not say which, so
-  // each notebook's definition is read, a few at a time.
+  // A workspace's notebooks by name: [{ id, name, description }]. One listing: what each runs on is not in it
+  // (notebookKindOf).
   async function listNotebooks(workspace) {
     const id = await workspaceId(workspace);
     const list = await listAll(`/workspaces/${id}/notebooks`, `Listing notebooks in ${workspace}`);
-    const notebooks = await mapPool(list, async nb => {
-      let kind = '';
-      try { kind = notebookKind(await getNotebook(id, nb.id)); } catch (_) { /* listed all the same */ }
-      return { id: nb.id, name: nb.displayName, description: nb.description || '', kind };
-    }, 4);
-    return notebooks.sort((a, b) => byName(a.name, b.name));
+    return list.map(nb => ({ id: nb.id, name: nb.displayName, description: nb.description || '' }))
+      .sort((a, b) => byName(a.name, b.name));
+  }
+
+  // What a notebook runs on — 'python' (a Fabric Python notebook, which runs on any machine with a Python kernel),
+  // 'spark' (PySpark, Scala, R, SQL: Fabric's Spark only) or '' — from its definition, as Fabric's listing does not
+  // say. Seconds of work each; a notebook's kind does not change, so the cache keeps it (onelake.js notebookKind).
+  async function notebookKindOf(workspace, notebookId) {
+    return notebookKind(await getNotebook(workspace, notebookId));
   }
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, listNotebooks, getBim, getNotebook, updateNotebook, reset };
+  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, listNotebooks, notebookKindOf,
+    getBim, getNotebook, updateNotebook, reset };
 }
 
 module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath, notebookCopyPath, notebookKind };

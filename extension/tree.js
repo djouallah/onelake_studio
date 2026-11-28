@@ -31,7 +31,7 @@ const TREE_FILTERS = [
   { label: 'Mirrored databases', only: 'Mirrored database' },
   { label: 'Semantic models', only: 'models' },
   { label: 'Apps', only: 'apps' },
-  { label: 'Python notebooks', only: 'notebooks' },
+  { label: 'Notebooks', only: 'notebooks' },
 ];
 const FABRIC_LISTS = ['models', 'apps', 'notebooks'];
 const isFabricFilter = only => FABRIC_LISTS.includes(only);
@@ -268,6 +268,8 @@ class LakehouseTree {
     // A pinned workspace offers Unpin, an unpinned one Pin (package.json menus).
     item.contextValue = n.kind === 'workspace' && n.pinned ? 'workspacePinned'
       : n.kind === 'fabricApp' && n.url ? 'fabricAppUrl'
+      // A Spark notebook: no Publish, as it never opens here.
+      : n.kind === 'notebook' && n.nbKind === 'spark' ? 'notebookSpark'
       // A .bim or .yaml in Files/: a file, and a model.
       : n.kind === 'file' && !n.area && /\.(bim|ya?ml)$/i.test(String(n.path)) ? 'modelFile'
       // A .yaml of a Fabric semantic view (Context/Semantic Views/<view>/…): a file, with Publish beside it.
@@ -411,14 +413,22 @@ class LakehouseTree {
         if (n.url) item.command = { command: 'onelakeStudio.openApp', title: 'Open App', arguments: [n] };
         break;
       }
-      // A workspace's Python notebooks — from the Fabric API. Spark ones run only on Fabric's Spark, so
-      // they are not listed.
+      // A workspace's notebooks — from the Fabric API.
       case 'notebooks':
         item.iconPath = new vscode.ThemeIcon('notebook');
         break;
       // A click opens its local copy, read from Fabric first unless it has changes of its own; nothing runs until the
       // person runs it. Its button publishes the copy to Fabric. A pencil while the copy has changes Fabric does not.
+      // A Spark notebook runs on Fabric's Spark only: marked red, and not opened here.
       case 'notebook': {
+        if (n.nbKind === 'spark') {
+          item.iconPath = new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('errorForeground'));
+          item.description = 'Spark · Fabric only';
+          item.command = { command: 'onelakeStudio.openNotebook', title: 'Open notebook', arguments: [n] };
+          item.tooltip = [n.description, 'A Spark notebook: it runs on Fabric\'s Spark only, so it is not opened here. ' +
+            'Python notebooks open here, to run on this machine.'].filter(Boolean).join('\n\n');
+          break;
+        }
         const there = this.cachedNotebook(n);
         const edited = there ? this.notebookEdited(n) : false;
         item.iconPath = edited ? new vscode.ThemeIcon('edit', new vscode.ThemeColor('list.warningForeground'))
@@ -601,12 +611,24 @@ class LakehouseTree {
       }
       const list = await this.onelake.notebooks(n.workspace,
         { fresh: this._isFresh(`notebooks|${n.workspace}`, n.workspace) });
-      const python = list.filter(nb => nb.kind === 'python');
-      return python.length
-        ? python.map(nb => this._track(node('notebook', nb.name, {
-            workspace: n.workspace, notebook: nb.name, notebookId: nb.id, description: nb.description, leaf: true,
-          })))
-        : [node('empty', 'No Python notebooks', { leaf: true })];
+      if (!list.length) return [node('empty', 'No notebooks', { leaf: true })];
+      // Every one at once, each with what it runs on if that was ever read (it never changes). The rest are read
+      // behind the user, four at a time, and each redrawn as its answer comes: a Spark one is marked then.
+      const kept = await Promise.all(list.map(nb => this.onelake.cached.notebookKind(n.workspace, nb.id).catch(() => null)));
+      const nodes = list.map((nb, i) => this._track(node('notebook', nb.name, {
+        workspace: n.workspace, notebook: nb.name, notebookId: nb.id, description: nb.description, leaf: true,
+        nbKind: kept[i] ? kept[i].value : null,
+      })));
+      const unknown = nodes.filter(x => x.nbKind == null);
+      if (unknown.length) {
+        mapPool(unknown, async x => {
+          try {
+            x.nbKind = await this.onelake.notebookKind(x.workspace, x.notebookId);
+            this._emitter.fire(x);
+          } catch (e) { this.log(`tree: what ${x.workspace}/${x.notebook} runs on could not be read — ${(e && e.message) || e}`); }
+        }, 4).catch(() => {});
+      }
+      return nodes;
     }
 
     if (n.kind === 'models') {
@@ -721,7 +743,7 @@ class LakehouseTree {
       try {
         const list = only === 'models' ? await this.onelake.models(ws, { fresh: this._isFresh(`models|${ws}`, ws) })
           : only === 'apps' ? await this.onelake.apps(ws, { fresh: this._isFresh(`apps|${ws}`, ws) })
-          : only === 'notebooks' ? (await this.onelake.notebooks(ws, { fresh: this._isFresh(`notebooks|${ws}`, ws) })).filter(nb => nb.kind === 'python')
+          : only === 'notebooks' ? await this.onelake.notebooks(ws, { fresh: this._isFresh(`notebooks|${ws}`, ws) })
           : await this._items(ws, only);
         return list.length > 0;
       } catch (_) { return true; }

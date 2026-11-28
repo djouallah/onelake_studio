@@ -20,29 +20,34 @@ const WORKSPACES = {
     items: [{ name: "gold.Lakehouse", kind: "Lakehouse" }, { name: "wh.Warehouse", kind: "Warehouse" }],
     models: [{ name: "revenue", id: "m1" }],
     apps: [],
-    notebooks: [{ name: "load", id: "n1", kind: "python" }, { name: "spark job", id: "n2", kind: "spark" }],
+    notebooks: [{ name: "load", id: "n1" }, { name: "spark job", id: "n2" }],
   },
   ops: {
     items: [{ name: "pg.MountedRelationalDatabase", kind: "MountedRelationalDatabase" }],
     models: [],
     apps: [{ name: "site", id: "a1" }],
-    notebooks: [{ name: "spark only", id: "n3", kind: "spark" }],
+    notebooks: [],
   },
   broken: { fails: true },
 };
+
+// What each notebook runs on, as its definition says.
+const KINDS = { n1: "python", n2: "spark" };
 
 const listing = what => async ws => {
   if (WORKSPACES[ws].fails) throw new Error(`${ws} refused`);
   return WORKSPACES[ws][what];
 };
 
-const treeOf = (only, { hasFabric = true } = {}) => new LakehouseTree({
+const treeOf = (only, { hasFabric = true, kinds = {}, onKind = () => {} } = {}) => new LakehouseTree({
   onelake: {
     workspaces: async () => Object.keys(WORKSPACES),
     items: listing("items"),
     models: listing("models"),
     apps: listing("apps"),
     notebooks: listing("notebooks"),
+    notebookKind: async (_ws, id) => { onKind(id); await new Promise(r => setTimeout(r, 5)); return KINDS[id]; },
+    cached: { notebookKind: async (_ws, id) => (id in kinds ? { value: kinds[id], at: 0 } : null) },
     onChanged: () => () => {},
   },
   fabric: { reset() {} },
@@ -80,18 +85,23 @@ test("Apps lists them directly, in the workspaces that have any", async () => {
   assert.ok(!("sales" in got));
 });
 
-test("Python notebooks lists them directly, in the workspaces that have one: a Spark notebook is not listed", async () => {
+test("Notebooks lists them directly, in the workspaces that have any", async () => {
   const got = await shown(treeOf("notebooks"));
-  assert.deepEqual(got.sales, ["notebook:load"]);
-  assert.ok(!("ops" in got), "a workspace with only Spark notebooks holds none");
+  assert.deepEqual(got.sales, ["notebook:load", "notebook:spark job"]);
+  assert.ok(!("ops" in got));
 });
 
-test("a workspace's Notebooks node lists its Python notebooks, and asks for a sign-in without Fabric", async () => {
-  const tree = treeOf(null);
+test("a workspace's Notebooks node lists every notebook at once; what each runs on comes after, and is kept", async () => {
+  const asked = [];
+  const tree = treeOf(null, { kinds: { n1: "python" }, onKind: id => asked.push(id) });
   const kids = await tree.getChildren({ kind: "notebooks", workspace: "sales" });
-  assert.deepEqual(kids.map(n => [n.kind, n.label, n.notebookId]), [["notebook", "load", "n1"]]);
+  assert.deepEqual(kids.map(n => [n.label, n.nbKind]), [["load", "python"], ["spark job", null]],
+    "the kind kept is drawn at once; the one never read is not waited for");
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(asked, ["n2"], "only the notebook whose kind was never read is asked about");
+  assert.equal(kids[1].nbKind, "spark", "and its node learns it");
   const ops = await tree.getChildren({ kind: "notebooks", workspace: "ops" });
-  assert.deepEqual(ops.map(n => `${n.kind}:${n.label}`), ["empty:No Python notebooks"]);
+  assert.deepEqual(ops.map(n => `${n.kind}:${n.label}`), ["empty:No notebooks"]);
   const signedOut = treeOf(null, { hasFabric: false });
   signedOut.onelake.notebooks = async () => { throw new Error("read"); };
   const [ask] = await signedOut.getChildren({ kind: "notebooks", workspace: "sales" });

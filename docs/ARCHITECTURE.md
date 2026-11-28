@@ -469,12 +469,15 @@ shows offline, and it is asked again when the table is opened or its Tables node
 - That is two reads per app when *Apps* is expanded, then cached. A button copies the URL, and a click opens it in
   the browser. Nothing is changed.
 
-**Each workspace's Notebooks node** lists its Fabric **Python** notebooks. These run on this machine, because a
-notebook that reaches OneLake only by `abfss://` paths reads the same tables anywhere.
-- **Which ones are listed.** Fabric's listing (`GET …/notebooks`) doesn't say whether a notebook is Python or Spark,
-  so each notebook's definition is read (`getDefinition?format=ipynb`, four at a time) and its kind is taken from the
-  `.ipynb` metadata (`notebookKind` in [`core/models/fabric.js`](../core/models/fabric.js)). The listing is cached
-  like *Apps*. Spark notebooks (`synapse_*` kernels) run only on Fabric's Spark, so they aren't listed.
+**Each workspace's Notebooks node** lists its Fabric notebooks. The **Python** ones open here and run on this
+machine, because a notebook that reaches OneLake only by `abfss://` paths reads the same tables anywhere.
+- **The listing** is one request (`GET …/notebooks`), cached like *Apps*, so every notebook shows at once.
+- **What each runs on** is not in that listing: it is read from the notebook's definition (`getDefinition?format=ipynb`,
+  `notebookKind` in [`core/models/fabric.js`](../core/models/fabric.js)), behind the user, four at a time, and each
+  node is redrawn as its answer comes. A notebook's kind never changes, so it is kept with no TTL
+  (`notebookKind` in [`core/onelake/onelake.js`](../core/onelake/onelake.js)): only a notebook never seen before is
+  read. A **Spark** notebook (`synapse_*` kernels) is marked red, *Spark · Fabric only*, and a click says why it
+  does not open.
 - **A click** opens the notebook in VS Code's notebook editor, to read, edit and run. It is kept as `<name>.ipynb`,
   beside the workspace's model copies, with `<name>.ipynb.sync.json` beside it: hashes of the copy and of Fabric's
   definition when the two last agreed (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)).

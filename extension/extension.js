@@ -678,6 +678,8 @@ async function activateInner(context) {
   };
   async function openNotebook(n) {
     if (!n || n.kind !== 'notebook') return;
+    const spark = () => vscode.window.showInformationMessage(`${n.notebook} is a Spark notebook: it runs on Fabric's Spark only, so it is not opened here.`);
+    if (n.nbKind === 'spark') return spark();
     try {
       let doc = notebookDoc(n);
       if (!doc) {
@@ -691,6 +693,8 @@ async function activateInner(context) {
       }
       await vscode.window.showNotebookDocument(doc);
     } catch (e) {
+      // Found to be Spark on the way: marked so, as its kind is read behind the tree anyway.
+      if (e && e.spark) { n.nbKind = 'spark'; tree.notebookChanged(n); return spark(); }
       if (out) out.appendLine(`opening the notebook ${n.workspace}/${n.notebook} failed — ${(e && e.stack) || e}`);
       showError(`Could not open ${n.notebook}: ${(e && e.message) || e}`);
     }

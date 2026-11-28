@@ -402,7 +402,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     }
     const nb = await fabric.getNotebook(n.workspace, n.notebookId);
     if (notebookKind(nb) === 'spark') {
-      throw new Error(`${n.notebook} is a Spark notebook: it runs on Fabric's Spark only, not on this machine`);
+      throw Object.assign(new Error(`${n.notebook} is a Spark notebook: it runs on Fabric's Spark only, not on this machine`), { spark: true });
     }
     const text = JSON.stringify(nb, null, 1);
     await fsp.mkdir(dirname(path), { recursive: true });

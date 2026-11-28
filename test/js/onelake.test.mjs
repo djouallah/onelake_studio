@@ -517,14 +517,27 @@ test("a workspace's apps are a cached listing too", async () => {
 
 test("a workspace's notebooks are a cached listing too", async () => {
   let asked = 0;
-  const fabric = { listNotebooks: async ws => { asked++; return [{ id: "n1", name: `nb of ${ws}`, description: "", kind: "python" }]; } };
+  const fabric = { listNotebooks: async ws => { asked++; return [{ id: "n1", name: `nb of ${ws}`, description: "" }]; } };
   const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }), fabric });
-  assert.deepEqual(await onelake.notebooks("ws"), [{ id: "n1", name: "nb of ws", description: "", kind: "python" }]);
+  assert.deepEqual(await onelake.notebooks("ws"), [{ id: "n1", name: "nb of ws", description: "" }]);
   await onelake.notebooks("ws");
   assert.equal(asked, 1);
   await onelake.notebooks("ws", { fresh: true });
   assert.equal(asked, 2);
   assert.deepEqual((await onelake.cached.notebooks("ws")).value.map(n => n.id), ["n1"]);
+});
+
+test("what a notebook runs on is read once and kept: it never changes", async () => {
+  let asked = 0, now = 0;
+  const fabric = { notebookKindOf: async (ws, id) => { asked++; return id === "n1" ? "spark" : "python"; } };
+  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null, now: () => now }), fabric });
+  assert.equal(await onelake.cached.notebookKind("ws", "n1"), null);
+  assert.equal(await onelake.notebookKind("ws", "n1"), "spark");
+  now += 365 * 24 * 3600 * 1000;
+  assert.equal(await onelake.notebookKind("ws", "n1"), "spark");
+  await new Promise(r => setImmediate(r));   // a refresh behind the caller would have started by now
+  assert.equal(asked, 1);
+  assert.equal((await onelake.cached.notebookKind("ws", "n1")).value, "spark");
 });
 
 test("a Files/ object's bytes are kept under the version its listing gave", async () => {

@@ -238,7 +238,7 @@ test("a notebook's kind is in its .ipynb: a Python notebook runs anywhere, a Spa
   assert.equal(notebookKind(null), "");
 });
 
-test("a workspace's notebooks are listed with their kind, each read from its definition", async () => {
+test("a workspace's notebooks are listed in one request; what each runs on is read from its definition, on its own", async () => {
   const OP = "https://api.fabric.microsoft.com/v1/operations/nb2";
   const { fabric, calls, restore } = fabricWith([
     [/\/v1\/workspaces$/, () => res(200, { value: [{ id: WS_ID, displayName: "Sales" }] })],
@@ -253,11 +253,14 @@ test("a workspace's notebooks are listed with their kind, each read from its def
   ]);
   try {
     assert.deepEqual(await fabric.listNotebooks("Sales"), [
-      { id: "n3", name: "locked", description: "", kind: "" },
-      { id: "n1", name: "Ossie", description: "d", kind: "python" },
-      { id: "n2", name: "spark job", description: "", kind: "spark" },
-    ], "a notebook whose definition can't be read is still listed");
-    assert.ok(calls.filter(c => c.method === "POST").every(c => /getDefinition\?format=ipynb$/.test(c.url)), "only definitions are asked for");
+      { id: "n3", name: "locked", description: "" },
+      { id: "n1", name: "Ossie", description: "d" },
+      { id: "n2", name: "spark job", description: "" },
+    ]);
+    assert.ok(!calls.some(c => c.method === "POST"), "listing reads no definition: it is one request");
+    assert.equal(await fabric.notebookKindOf(WS_ID, "n1"), "python");
+    assert.equal(await fabric.notebookKindOf(WS_ID, "n2"), "spark", "a long-running definition is waited for");
+    await assert.rejects(fabric.notebookKindOf(WS_ID, "n3"), /HTTP 403/);
   } finally { restore(); }
 });
 
@@ -329,7 +332,7 @@ test("the module reads, and writes only a notebook's Publish: no existence check
   assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName", "notebookCopyPath", "notebookKind"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
   assert.deepEqual(Object.keys(f).sort(), ["getBim", "getNotebook", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems",
-    "listNotebooks", "listSemanticModels", "reset", "updateNotebook", "workspaceId"]);
+    "listNotebooks", "listSemanticModels", "notebookKindOf", "reset", "updateNotebook", "workspaceId"]);
 });
 
 test("a 401 is retried once with a fresh token", async () => {
