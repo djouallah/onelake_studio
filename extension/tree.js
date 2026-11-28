@@ -409,7 +409,7 @@ class LakehouseTree {
       case 'notebooks':
         item.iconPath = new vscode.ThemeIcon('notebook');
         break;
-      // A click opens its local copy, read from Fabric first; ▶ runs it there, on this machine's Python.
+      // A click opens its local copy, read from Fabric first, read-only; nothing runs until the person runs it.
       case 'notebook': {
         const there = this.cachedNotebook(n);
         item.iconPath = there
@@ -417,8 +417,8 @@ class LakehouseTree {
           : new vscode.ThemeIcon('notebook');
         item.command = { command: 'onelakeStudio.openNotebook', title: 'Open notebook', arguments: [n] };
         item.tooltip = [n.description,
-          'A Fabric Python notebook. ▶ runs it on this machine, in a local Python kernel: what it reads by abfss:// paths ' +
-          'it reads from OneLake as it would in Fabric.',
+          'A Fabric Python notebook, opened read-only. Its cells can run on this machine, in a local Python kernel: ' +
+          'what it reads by abfss:// paths it reads from OneLake as it would in Fabric.',
           there ? `Kept at ${there}. A click reads it from Fabric again, unless it is open here already; nothing is written back.`
             : 'Click to read it from Fabric and open it here. Nothing is written back to Fabric.'].filter(Boolean).join('\n\n');
         break;

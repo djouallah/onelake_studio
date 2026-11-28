@@ -476,14 +476,15 @@ notebook that reaches OneLake only by `abfss://` paths reads the same tables any
   `.ipynb` metadata (`notebookKind` in [`core/models/fabric.js`](../core/models/fabric.js)). The listing is cached
   like *Apps*. Spark notebooks (`synapse_*` kernels) run only on Fabric's Spark, so they aren't listed.
 - **A click** reads the notebook from Fabric again and keeps it as `<name>.ipynb`, beside the workspace's model
-  copies (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)). It then opens in VS Code's
-  notebook editor. If it is open here already, that copy is shown, edits included. Offline, the copy kept is opened.
-- **▶ (Run on This Machine)** does the same, then runs every cell (`notebook.execute`) on a local Jupyter kernel.
-  That needs the Jupyter extension; if it is missing, OneLake Studio offers to install it. The kernel's Python
-  needs whatever the notebook imports, such as `duckdb`. It also needs its own way to sign in to OneLake: outside
-  Fabric there is no `notebookutils`, so a DuckDB notebook makes a `credential_chain` secret (az login).
-- **Nothing is written back to Fabric.** The local copy is for running here, and the next click replaces it with
-  what Fabric has.
+  copies (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)). It then opens **read-only** in
+  VS Code's notebook editor (read-only for the session). If it is open here already, that tab comes forward.
+  Offline, the copy kept is opened.
+- **Nothing runs on a click.** The person reads the notebook first, then runs its cells there if they choose, on a
+  local kernel (the Jupyter extension's). The kernel's Python needs whatever the notebook imports, such as `duckdb`.
+  It also needs its own way to sign in to OneLake: outside Fabric there is no `notebookutils`, so a DuckDB notebook
+  makes a `credential_chain` secret (az login).
+- **Nothing is written back to Fabric.** The local copy is for reading and running here, and the next click
+  replaces it with what Fabric has.
 
 ## The SQL box and results
 

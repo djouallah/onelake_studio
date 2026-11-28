@@ -4,11 +4,11 @@
 
 ### Added
 
-- **Python notebooks, run on this machine.** Each workspace has a *Notebooks* node that lists its Fabric Python
-  notebooks; Spark notebooks run only on Fabric, so they aren't listed. A click opens the notebook in VS Code's
-  notebook editor, read from Fabric again first. ▶ runs every cell on a local Python kernel (this needs the Jupyter
-  extension). A notebook that reaches OneLake by `abfss://` paths reads the same tables as it would in Fabric.
-  Nothing is written back to Fabric. The tree's filter has *Python notebooks* too.
+- **Python notebooks, opened here to read and run.** Each workspace has a *Notebooks* node that lists its Fabric
+  Python notebooks; Spark notebooks run only on Fabric, so they aren't listed. A click reads the notebook from Fabric
+  and opens it read-only in VS Code's notebook editor. Nothing runs until you run it, on a local Python kernel. A
+  notebook that reaches OneLake by `abfss://` paths reads the same tables as it would in Fabric. Nothing is written
+  back to Fabric. The tree's filter has *Python notebooks* too.
 
 ### Changed
 
