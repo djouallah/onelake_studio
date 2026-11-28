@@ -369,3 +369,22 @@ test("Publish with no copy, or a copy that is not JSON, says so and writes nothi
     assert.equal(fabric.writes.length, 0);
   } finally { await done(); }
 });
+
+test("a notebook whose metadata no longer says Python is not published: Fabric would take it for another kind", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const fabric = fabricNotebook(PY(["a"]));
+  const { models, done } = await setup({ fabric });
+  const n = { kind: "notebook", workspace: "sales", notebook: "load", notebookId: "n1" };
+  try {
+    const { path } = await models.fetchNotebook(n);
+    // As VS Code may save it: its kernelspec is the local Python's, the rest of its metadata as it was. Still Python.
+    const saved = PY(["mine"]);
+    saved.metadata.kernelspec = { name: "python3", display_name: "Python 3.12.10" };
+    await writeFile(path, JSON.stringify(saved));
+    assert.deepEqual(await models.publishNotebook(n), { published: true });
+    // Its Fabric metadata gone: refused, nothing written.
+    await writeFile(path, JSON.stringify({ nbformat: 4, metadata: { kernelspec: { name: "python3" } }, cells: [] }));
+    await assert.rejects(models.publishNotebook(n), /no longer says it is a Python notebook/);
+    assert.equal(fabric.writes.length, 1);
+  } finally { await done(); }
+});

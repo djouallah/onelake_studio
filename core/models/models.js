@@ -450,6 +450,12 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     if (text == null) throw new Error(`${n.notebook} has no copy here to publish: open it first`);
     let nb;
     try { nb = JSON.parse(stripBom(text)); } catch (e) { throw new Error(`${n.notebook} is not a valid .ipynb: ${e.message}`); }
+    // Fabric tells a Python notebook by its metadata (kernel_info, microsoft.language_group), which VS Code keeps when it
+    // saves. One that no longer says Python is never published: Fabric would take it for another kind of notebook.
+    if (notebookKind(nb) !== 'python') {
+      throw new Error(`${n.notebook} no longer says it is a Python notebook (its metadata's kernel_info and microsoft.language_group), ` +
+        'so it is not published: Fabric would take it for another kind of notebook. Take theirs reads Fabric\'s version again.');
+    }
     if (!overwrite) {
       const sync = readSync(path);
       const theirs = await fabric.getNotebook(n.workspace, n.notebookId);
