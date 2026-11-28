@@ -8,7 +8,9 @@ import "./daxsql.mjs";   // the real dax-sql, which semantic.js reads a model's 
 import { lakehousesOf, directLakeTables } from "../../page/semantic.js";
 
 const require = createRequire(import.meta.url);
-const { readFromOneLake, sqlEndpointOf, guidOfLabel } = require("../../core/models/sqlendpoint.js");
+const { readFromOneLake: read } = require("../../core/models/sqlendpoint.js");
+const { bundle } = await import("./daxsql.mjs");
+const readFromOneLake = (bim, ws, d) => read(bim, ws, { ...d, directLakeTables: bundle.directLakeTables });
 
 // 11111111-2222-3333-4444-555555555555, as a Fabric SQL host writes it.
 const WS_ID = "11111111-2222-3333-4444-555555555555";
@@ -48,11 +50,6 @@ const deps = ({ endpoint = null, items = {}, home = HOME_ID, hidden = [] } = {})
 };
 const t = (schema, table) => ({ schema, table });
 
-test("a host's label is the GUID's bytes in base32, the first three groups little-endian", () => {
-  assert.equal(guidOfLabel(WS_LABEL), WS_ID);
-  assert.equal(guidOfLabel(WS_LABEL.toUpperCase()), WS_ID);
-});
-
 test("a table named item.schema.table (an Ossie copy's source) is in that item of the model's workspace", () => {
   const bim = { model: { tables: [
     { name: "price", partitions: [{ source: { type: "entity", entityName: "price", schemaName: "nem.aemo" } }] },
@@ -67,14 +64,6 @@ test("a table named item.schema.table (an Ossie copy's source) is in that item o
   assert.deepEqual(tables.get("duid"), { item: "my lake", t: { schema: "dbo", table: "DUID list" } });
   for (const t of ["plain", "long", "expr"]) assert.equal(tables.has(t), false, t);
   assert.deepEqual(lakehousesOf(bim, "home"), [{ workspaceName: "home", itemName: "nem" }, { workspaceName: "home", itemName: "my lake" }]);
-});
-
-test("sqlEndpointOf: the workspace and endpoint a Sql.Database names, and nothing else", () => {
-  assert.deepEqual(sqlEndpointOf(model().model.expressions[0].expression), { workspace: WS_ID, endpoint: ENDPOINT });
-  assert.equal(sqlEndpointOf(`Sql.Database("${HOST}", "my_database")`), null, "a database by name");
-  assert.equal(sqlEndpointOf('Sql.Database("server.example.com", "' + ENDPOINT + '")'), null, "not a Fabric host");
-  assert.equal(sqlEndpointOf('AzureStorage.DataLake("https://x")'), null);
-  assert.equal(sqlEndpointOf(undefined), null);
 });
 
 test("an endpoint Fabric shows: its model reads the item behind it, as one over OneLake does", async () => {

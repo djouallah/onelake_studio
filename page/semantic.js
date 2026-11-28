@@ -57,7 +57,7 @@ function compilerModules() {
 export function compilerBundle(c, t, o, m, d, y) {
   return {
     createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
-    directLakeTables: t.directLakeTables, storageMode: t.storageMode,
+    directLakeTables: t.directLakeTables, unplacedTables: t.unplacedTables, storageMode: t.storageMode,
     ossieToTmsl: o.ossieToTmsl, tmslToOssie: o.tmslToOssie, ossieSources: o.ossieSources, tmslType: o.tmslType,
     fabricRefusals: o.fabricRefusals, OSSIE: o.OSSIE,
     readModel: m.readModel, formatOf: m.formatOf, tmdlToTmsl: d.tmdlToTmsl,
@@ -151,6 +151,8 @@ export const unquote = p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '
 export function directLakeTables(bim) {
   const out = new Map();
   for (const [name, l] of need().directLakeTables(bim)) {
+    // One over a SQL endpoint is read once the host has said the item behind it (core/models/sqlendpoint.js).
+    if (l.viaSqlEndpoint) continue;
     const t = { schema: l.schema, table: l.entity };
     out.set(name, l.inWorkspace ? { item: l.item, t } : { lh: { workspace: l.workspace, item: l.item }, t });
   }
@@ -211,18 +213,10 @@ export async function formatOf(path, text, modules = null) {
 }
 
 // The tables a model names schema.table and nothing more, as a Fabric semantic view's YAML does
-// (`source: dbo.sales`): an entity partition dax-sql places in no lakehouse, until one is said.
-// [{ table (the model's), schema, entity }].
+// (`source: dbo.sales`): dax-sql's unplacedTables, in no lakehouse until one is said. [{ table (the model's), schema, entity }].
 export function bareTables(bim) {
-  const placed = directLakeTables(bim);
-  const out = [];
-  for (const t of bim?.model?.tables ?? []) {
-    const s = t.partitions?.[0]?.source;
-    if (!s || s.expressionSource || (s.type && s.type !== "entity") || placed.has(lc(t.name))) continue;
-    if (!s.entityName && !s.schemaName) continue;
-    out.push({ table: t.name, schema: unquote(s.schemaName ?? "dbo"), entity: s.entityName ?? t.name });
-  }
-  return out;
+  const unplaced = need().unplacedTables(bim);
+  return (bim?.model?.tables ?? []).filter(t => unplaced.has(lc(t.name))).map(t => ({ table: t.name, ...unplaced.get(lc(t.name)) }));
 }
 
 // A model file's TMSL, by dax-sql's reader of its format (readModel): `lakehouse`, where its schema.table tables are

@@ -158,7 +158,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }
       catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
       const { semantic, compiler } = await modules();
-      const read = await readFromOneLake(doc, n.workspace, { fabric, onelake });
+      const read = await readFromOneLake(doc, n.workspace, { fabric, onelake, directLakeTables: compiler.directLakeTables });
       if (read.refused || !semantic.lakehousesOf(doc).length) {
         const mode = read.refused || semantic.storageMode(doc);
         if (read.why) log(`${n.workspace}/${n.model}: ${read.why}`);

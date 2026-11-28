@@ -18,10 +18,10 @@ const PINS = {
   worldMap: 'echarts@4.9.0',
   // The DAX-to-SQL compiler behind semantic models (semantic.js). Its main branch at a commit until the
   // release that carries it (DAX_SQL_FROM); then npm's dax-sql@<version> again, with DAX_SQL_FROM gone.
-  daxSql: 'dax-sql@21b8e54',
+  daxSql: 'dax-sql@026fbc4',
 };
 // Where a pin that is no npm release is fetched from: jsDelivr's GitHub route, at that commit.
-const DAX_SQL_FROM = 'gh/djouallah/dax-sql@21b8e549923f9439aa9ed0f37342700aa5bae810';
+const DAX_SQL_FROM = 'gh/djouallah/dax-sql@026fbc457f8d59b41506f5a52dab4f5b63d63862';
 
 // What vendor.mjs fetches for each pin.
 const VENDOR = {
