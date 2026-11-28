@@ -127,7 +127,7 @@ jobs:
       # so the extension's own files, which need VS Code, are not in it.
       - name: npm test, with its coverage
         run: >-
-          node --test --experimental-test-coverage --test-coverage-exclude='test/**' --test-coverage-exclude='scripts/**'
+          node --test --experimental-test-coverage --test-coverage-exclude='test/**' --test-coverage-exclude='scripts/**' --test-coverage-exclude='vendor/**'
           --test-coverage-lines=78 --test-coverage-branches=83 --test-coverage-functions=78
           $(node -p "require('./package.json').scripts.test.replace(/^node --test /, '')")
 
