@@ -87,7 +87,7 @@ function summarize(metadata, metadataLocation) {
  * @param {ReturnType<import('./catalog').createCatalog>} o.catalog
  * @param {ReturnType<import('./store').createStore>} o.store
  * @param {() => boolean} [o.prefetchEnabled]
- * @param {{ listSemanticModels(ws: string): Promise<object[]>, itemOf(wsId: string, itemId: string): Promise<object> }} [o.fabric]
+ * @param {{ listSemanticModels(ws: string): Promise<object[]> }} [o.fabric]
  */
 // Everything a cache holds (`cached`: onelake's own, above), read from it alone: every workspace
 // with its items, their tables and each table's metadata (null when it was never read), and its
@@ -252,14 +252,12 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     const { onNotebook, ...rest } = o;
     return get(keys.notebookKind(ws, id), () => fabric.notebookKindOf(ws, id, { onNotebook }), { ttl: Infinity, ...rest }).then(value);
   };
-  // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }.
-  // No TTL: nothing refreshes it behind the caller. It is read again (`fresh`) when the name it
-  // gave stops resolving (sqltables.js), past Fabric's own memo of the workspaces' names too.
-  const itemNamed = (wsId, itemId, o = {}) => {
-    if (!fabric) return Promise.reject(new Error('semantic models are not available here'));
-    if (o.fresh && fabric.reset && !isOffline()) fabric.reset();
-    return get(keys.itemNamed(wsId, itemId), () => fabric.itemOf(wsId, itemId), { ttl: Infinity, ...o }).then(value);
-  };
+  // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }, from OneLake's own
+  // listings (catalog.itemOf: the storage token, no Fabric API). No TTL: nothing refreshes it behind the caller. It is
+  // read again (`fresh`) when the name it gave stops resolving (sqltables.js), past the catalog's memo of the workspaces too.
+  const itemNamed = (wsId, itemId, o = {}) =>
+    get(keys.itemNamed(wsId, itemId), () => catalog.itemOf(wsId, itemId, { fresh: !!o.fresh && !isOffline() }),
+      { ttl: Infinity, ...o }).then(value);
 
   /**
    * A file's bytes — whole, or the `range` asked for. A Files/ object whose directory

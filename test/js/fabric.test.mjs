@@ -43,18 +43,6 @@ function fabricWith(answers, opts = {}) {
   return { fabric, calls, restore: () => { globalThis.fetch = saved; } };
 }
 
-test("itemOf: a Direct Lake expression's GUIDs, as the names the tree and OneLake use", async () => {
-  const LH = "99999999-8888-7777-6666-555555555555";
-  const { fabric, restore } = fabricWith([
-    [/\/v1\/workspaces$/, () => res(200, { value: [{ id: WS_ID, displayName: "Power BI" }] })],
-    [`/workspaces/${WS_ID}/items/${LH}`, () => res(200, { id: LH, displayName: "nem", type: "Lakehouse" })],
-  ]);
-  try {
-    assert.deepEqual(await fabric.itemOf(WS_ID.toUpperCase(), LH), { workspace: "Power BI", item: "nem.Lakehouse" });
-    await assert.rejects(fabric.itemOf("00000000-0000-0000-0000-000000000000", LH), /does not list the workspace/);
-  } finally { restore(); }
-});
-
 test("itemOfSqlEndpoint: the item behind it, or null when Fabric doesn't show it", async () => {
   const END = "aaaaaaaa-0000-0000-0000-000000000001";
   const owner = id => ({ id: "owner", properties: { sqlEndpointProperties: { id } } });
@@ -336,7 +324,7 @@ test("Publish replaces the notebook's definition with the .ipynb, and waits for 
 test("the module reads, and writes only a notebook's Publish: no existence check, no storage token", () => {
   assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName", "notebookCopyPath", "notebookKind"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
-  assert.deepEqual(Object.keys(f).sort(), ["getBim", "getNotebook", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems",
+  assert.deepEqual(Object.keys(f).sort(), ["getBim", "getNotebook", "itemOfSqlEndpoint", "listApps", "listItems",
     "listNotebooks", "listSemanticModels", "notebookKindOf", "reset", "updateNotebook", "workspaceId"]);
 });
 

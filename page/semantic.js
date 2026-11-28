@@ -183,8 +183,8 @@ export function storageMode(bim) {
   return { composite: "a composite model", directquery: "a DirectQuery model", dual: "a Dual-mode model" }[mode] ?? "an Import model";
 }
 
-// Who turns a Direct Lake table into its SQL name: the host, which asks the Fabric API what
-// an item's GUIDs are called, or finds an item named in a workspace and its kind in the tree's
+// Who turns a Direct Lake table into its SQL name: the host, which reads what an item's GUIDs are
+// called from OneLake's own listings, or finds an item named in a workspace and its kind in the tree's
 // listing. Set once by the panel and by the command line.
 let tableNamer = null;
 export const setTableNamer = fn => { tableNamer = fn; };

@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **A Direct Lake model's lakehouse is named from OneLake, not the Fabric API.** The GUIDs in its expression are
+  looked up in OneLake's own listings, with the token the data reads already use: one less sign-in, and no Fabric call.
 - **Every model file is read by dax-sql now.** Its `readModel` and `formatOf` read a `.bim`, a TMDL model or an Apache
   Ossie YAML, and tell a model from any other YAML; its TMDL reader replaces OneLake Studio's own; a Fabric semantic
   view opens as Fabric's Publish makes it through dax-sql's `as: 'fabric'`; a Direct Lake model's tables are found by

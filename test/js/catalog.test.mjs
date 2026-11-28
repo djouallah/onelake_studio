@@ -420,3 +420,25 @@ test("a 403 names the tenant setting that turns off access from outside Fabric",
       /HTTP 403.*Users can access data stored in OneLake with apps external to Fabric/);
   } finally { restore(); }
 });
+
+// The blob endpoint's XML, as OneLake answers it: a container is a workspace, a prefix an item, each with its GUID.
+const xml = body => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => body, json: async () => { throw new Error("XML"); } });
+const container = (name, id) => `<Container><Name>${name}</Name><Metadata><WorkspaceObjectId>${id}</WorkspaceObjectId></Metadata></Container>`;
+const prefix = (name, id) => `<BlobPrefix><Name>${name}/</Name><Metadata><ArtifactId>${id}</ArtifactId></Metadata></BlobPrefix>`;
+const WS1 = "11111111-1111-1111-1111-111111111111", LH1 = "22222222-2222-2222-2222-222222222222";
+
+test("an item's GUIDs are named from OneLake's own listings: no Fabric API, the workspaces listed once", async () => {
+  const { catalog, calls, restore } = catalogWith([
+    [/blob\.fabric\.microsoft\.com\/\?comp=list.*marker=m2/, () => xml(`<EnumerationResults><Containers>${container("Power &amp; Co", WS1)}</Containers><NextMarker /></EnumerationResults>`)],
+    [/blob\.fabric\.microsoft\.com\/\?comp=list/, () => xml(`<EnumerationResults><Containers>${container("other", "33333333-3333-3333-3333-333333333333")}</Containers><NextMarker>m2</NextMarker></EnumerationResults>`)],
+    [/blob\.fabric\.microsoft\.com\/Power%20%26%20Co\?restype=container/, () => xml(`<EnumerationResults><Blobs>${prefix("nb.SynapseNotebook", "44444444-4444-4444-4444-444444444444")}${prefix("nem.Lakehouse", LH1)}</Blobs></EnumerationResults>`)],
+  ]);
+  try {
+    assert.deepEqual(await catalog.itemOf(WS1.toUpperCase(), LH1), { workspace: "Power & Co", item: "nem.Lakehouse" });
+    assert.deepEqual(await catalog.itemOf(WS1, LH1), { workspace: "Power & Co", item: "nem.Lakehouse" });
+    assert.equal(calls.filter(u => /\/\?comp=list/.test(u)).length, 2, "the workspaces' two pages, once");
+    assert.ok(calls.every(u => /onelake\.blob\.fabric\.microsoft\.com/.test(u)), "OneLake only");
+    await assert.rejects(catalog.itemOf(WS1, "55555555-5555-5555-5555-555555555555"), /lists no item/);
+    await assert.rejects(catalog.itemOf("66666666-6666-6666-6666-666666666666", LH1), /lists no workspace/);
+  } finally { restore(); }
+});

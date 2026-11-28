@@ -494,8 +494,9 @@ test("offline, what is kept is the answer, however old and whoever asks; a miss 
 test("an item's name behind its GUIDs is kept for good: Fabric is asked once, whatever the case or age", async () => {
   let asked = 0;
   let now = 1000;
-  const fabric = { itemOf: async () => { asked++; return { workspace: "Sales", item: "nem.Lakehouse" }; } };
-  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null, now: () => now }), fabric });
+  // OneLake's own listings say it (catalog.itemOf): no Fabric API.
+  const catalog = { ...fakeCatalog(), itemOf: async () => { asked++; return { workspace: "Sales", item: "nem.Lakehouse" }; } };
+  const onelake = createOneLake({ catalog, store: createStore({ dir: null, now: () => now }) });
   assert.deepEqual(await onelake.itemNamed("AAA", "BBB"), { workspace: "Sales", item: "nem.Lakehouse" });
   assert.deepEqual(await onelake.itemNamed("aaa", "bbb"), { workspace: "Sales", item: "nem.Lakehouse" });
   now += 365 * 24 * 3600 * 1000;

@@ -30,12 +30,11 @@ function world({ ttlMs = 60_000 } = {}) {
     listItems: async () => { w.calls.push("items"); return w.items.map(name => ({ name, kind: "Lakehouse" })); },
     listTables: async () => { w.calls.push("tables"); return w.tables; },
     loadTable: async () => { w.calls.push("load"); return { metadata, metadataLocation: LOC }; },
+    // OneLake's own listings name an item by its GUIDs (no Fabric API); `fresh` reads them past its memo.
+    itemOf: async (_ws, _id, { fresh = false } = {}) => { w.calls.push("names"); if (fresh) w.fresh++; return { workspace: "ws", item: w.itemName }; },
   };
-  w.fabric = {
-    resets: 0,
-    reset() { this.resets++; },
-    itemOf: async () => { w.calls.push("fabric"); return { workspace: "ws", item: w.itemName }; },
-  };
+  w.fresh = 0;
+  w.fabric = { reset() {} };
   w.onelake = createOneLake({ catalog: w.catalog, fabric: w.fabric, prefetchEnabled: () => false,
                               store: createStore({ dir: null, ttlMs, now: () => w.now }) });
   w.sql = createSqlTables({ onelake: w.onelake, paths: async () => ({ emptyTableSql: () => "SELECT 1" }) });
@@ -68,17 +67,17 @@ test("a name typed by hand that exists nowhere is one listing read and the plain
   w.calls.length = 0;
   await assert.rejects(w.sql.resolve(ref("typo")), /there is no lakehouse typo in workspace ws/);
   assert.equal(count(w, "items"), 1);
-  assert.equal(count(w, "fabric"), 0, "no GUIDs behind it, so nothing to ask Fabric");
+  assert.equal(count(w, "names"), 0, "no GUIDs behind it, so nothing to look up");
 });
 
-test("an item's name, however old, asks Fabric once, ever", async () => {
+test("an item's name, however old, is looked up once, ever", async () => {
   const w = world({ ttlMs: 0 });
   assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.old.dbo.t"]);
   w.now += 365 * 24 * 3600 * 1000;
   assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.old.dbo.t"]);
   await new Promise(r => setImmediate(r));   // a refresh behind the caller would have started by now
-  assert.equal(count(w, "fabric"), 1);
-  assert.equal(w.fabric.resets, 0);
+  assert.equal(count(w, "names"), 1);
+  assert.equal(w.fresh, 0);
 });
 
 test("a bare name is a table only in a workspace OneLake has; elsewhere it is DuckDB's, asked about once a minute", async () => {
@@ -132,13 +131,13 @@ test("ws.x_warehouse is warehouse x, or the lakehouse named x_warehouse when tha
   assert.deepEqual([r.kind, r.item], ["lakehouse", "x_warehouse"]);
 });
 
-test("a table named by its GUIDs resolves as the item they stand for, asking Fabric once", async () => {
+test("a table named by its GUIDs resolves as the item they stand for, looked up once", async () => {
   const w = world();
   const byGuid = { byGuid: true, kind: null, workspace: "w-guid", item: "i-guid", schema: "dbo", table: "t" };
   const r = await w.sql.resolve(byGuid);
   assert.deepEqual([r.kind, r.workspace, r.item, r.metadataLocation], ["lakehouse", "ws", "old", LOC]);
   await w.sql.resolve(byGuid);
-  assert.equal(count(w, "fabric"), 1);
+  assert.equal(count(w, "names"), 1);
   assert.deepEqual(await w.sql.place(byGuid), { workspace: "ws", item: "old.Lakehouse", schema: "dbo", table: "t" });
 });
 
@@ -153,13 +152,13 @@ test("a renamed item: the compiled name goes on resolving, and the new name is k
   const r = await w.sql.resolve(ref("old"));
   assert.equal(r.item, "old");
   assert.equal(r.metadataLocation, LOC);
-  assert.equal(count(w, "fabric"), 1);
-  assert.equal(w.fabric.resets, 1, "past Fabric's memo of the workspaces' names too");
+  assert.equal(count(w, "names"), 1);
+  assert.equal(w.fresh, 1, "past the catalog's memo of the workspaces' names too");
 
-  // The next time the panel names the model, with no call to Fabric.
+  // The next time the panel names the model, with no lookup.
   w.calls.length = 0;
   assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.new.dbo.t"]);
-  assert.equal(count(w, "fabric"), 0);
+  assert.equal(count(w, "names"), 0);
   // And the new name resolves in its own right.
   assert.equal((await w.sql.resolve(ref("new"))).item, "new");
 });
@@ -175,7 +174,7 @@ test("offline, a rename's check gives the real error", async () => {
   const w = world();
   await w.sql.nameTables(GUIDS);
   w.items = [];
-  w.fabric.itemOf = async () => { throw new Error("connection reset"); };
+  w.catalog.itemOf = async () => { throw new Error("connection reset"); };
   await assert.rejects(w.sql.resolve(ref("old")), /there is no lakehouse old/);
 });
 

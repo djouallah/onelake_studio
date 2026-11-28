@@ -68,6 +68,7 @@ const tableDirs = (lh, t) => [t.schema ? `${lh.item}/Tables/${t.schema}/${t.tabl
  * @param {() => Promise<string|null>} opts.getToken  current access token, or null
  */
 function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_ORIGIN,
+                         blobOrigin = String(dfsOrigin).replace('.dfs.', '.blob.'),
                          backoffMs = RESOLVE_BACKOFF_MS, onRequest = () => {} }) {
   const gate = limiter(MAX_IN_FLIGHT);
 
@@ -427,7 +428,52 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // One level of any directory under an item, workspace-relative: a table's _delta_log.
   const listDir = (ws, dir) => listPaths(ws, dir);
 
-  return { listWorkspaces, listItems, listTables, listFiles, listDir, loadTable, readBytes, reset, usePrefixStore, ircPrefixFor };
+  // An item named by GUIDs (a Direct Lake expression's https://…/<workspace id>/<item id>), as the tree names it:
+  // { workspace: 'Sales', item: 'nem.Lakehouse' }. From OneLake itself, with the storage token the data reads use:
+  // its blob endpoint's listings carry each workspace's GUID (WorkspaceObjectId) and each item's (ArtifactId), which
+  // the DFS listings don't. One listing of the workspaces, kept until `fresh`, and one of the workspace's items.
+  let wsByGuid = null;
+  const lc = s => String(s).toLowerCase();
+  const xmlText = s => String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const tagOf = (xml, name) => { const m = new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml); return m ? xmlText(m[1]) : null; };
+  async function blobEntries(url, what, element) {
+    const out = [];
+    let marker = '', pages = 0;
+    do {
+      if (++pages > MAX_PAGES) throw new Error(`${what} did not finish after ${MAX_PAGES} pages — giving up`);
+      const u = new URL(url);
+      if (marker) u.searchParams.set('marker', marker);
+      const r = await authedFetch(u.toString(), { 'x-ms-version': '2023-11-03' });
+      if (!r.ok) {
+        const said = await oneLakeMessage(r);
+        const e = new Error(`${what} failed (HTTP ${r.status})` + sentence(said) + forbidden(r.status));
+        e.status = r.status;
+        throw e;
+      }
+      const xml = await r.text();
+      for (const m of xml.matchAll(new RegExp(`<${element}>([\\s\\S]*?)</${element}>`, 'g'))) out.push(m[1]);
+      marker = tagOf(xml, 'NextMarker') || '';
+    } while (marker);
+    return out;
+  }
+  async function itemOf(wsId, itemId, { fresh = false } = {}) {
+    if (fresh) wsByGuid = null;
+    const listed = () => (wsByGuid = wsByGuid || blobEntries(`${blobOrigin}/?comp=list&include=metadata`, 'Listing workspaces', 'Container')
+      .then(list => new Map(list.map(c => [lc(tagOf(c, 'WorkspaceObjectId') || ''), tagOf(c, 'Name')])))
+      .catch(e => { wsByGuid = null; throw e; }));
+    const known = !!wsByGuid;
+    let ws = (await listed()).get(lc(wsId));
+    // A workspace made since an earlier listing: listed once more before giving up.
+    if (!ws && known) { wsByGuid = null; ws = (await listed()).get(lc(wsId)); }
+    if (!ws) throw new Error(`OneLake lists no workspace ${wsId} for this account`);
+    const items = await blobEntries(`${blobOrigin}/${encodeURIComponent(ws)}?restype=container&comp=list&delimiter=/&include=metadata`,
+      `Listing the items of ${ws}`, 'BlobPrefix');
+    const hit = items.find(b => lc(tagOf(b, 'ArtifactId') || '') === lc(itemId));
+    if (!hit) throw new Error(`OneLake lists no item ${itemId} in ${ws}`);
+    return { workspace: ws, item: basename(tagOf(hit, 'Name')) };
+  }
+
+  return { listWorkspaces, listItems, listTables, listFiles, listDir, loadTable, readBytes, reset, usePrefixStore, ircPrefixFor, itemOf };
 }
 
 module.exports = { createCatalog, TABLE_ORIGIN };

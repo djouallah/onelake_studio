@@ -124,8 +124,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'tmdl.js')),
       load(join(vendorDir, 'npm', yamlPin, '+esm.js')),
     ]);
-    // A model's Direct Lake tables are named by the extension, which asks Fabric for the
-    // names behind their GUIDs: the same SQL names the panel's models use.
+    // A model's Direct Lake tables are named by the extension, which reads the names behind their GUIDs from
+    // OneLake's own listings (catalog.itemOf): the same SQL names the panel's models use.
     semantic.setTableNamer(list => (nameTables ? nameTables(list)
       : Promise.reject(new Error('Direct Lake tables cannot be named here'))));
     // An Ossie dataset with no fields has its lakehouse table's columns, as Fabric gives it them.

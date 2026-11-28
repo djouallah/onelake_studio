@@ -105,17 +105,6 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     return id;
   }
 
-  // An item named by GUIDs (a Direct Lake expression's https://…/<workspace id>/<item id>) as
-  // the tree and OneLake's DFS listing name it: { workspace: 'Sales', item: 'nem.Lakehouse' }.
-  async function itemOf(wsId, itemId) {
-    const ws = [...await workspaces()].find(([, id]) => id.toLowerCase() === String(wsId).toLowerCase());
-    if (!ws) throw new Error(`The Fabric API does not list the workspace ${wsId}`);
-    const r = await fabricJson(`${apiBase}/workspaces/${ws[1]}/items/${encodeURIComponent(itemId)}`, 'Reading the lakehouse');
-    const it = await r.json().catch(() => ({}));
-    if (!it.displayName || !it.type) throw new Error(`The Fabric API gave no name for the item ${itemId}`);
-    return { workspace: ws[0], item: `${it.displayName}.${it.type}` };
-  }
-
   // The item behind a SQL endpoint, by GUIDs: a lakehouse or a mirrored database says which endpoint
   // is its own, and a warehouse is read by its own id. null: Fabric does not show it to this
   // account, which is how a deleted one and someone else's look alike.
@@ -277,7 +266,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, listNotebooks, notebookKindOf,
+  return { workspaceId, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, listNotebooks, notebookKindOf,
     getBim, getNotebook, updateNotebook, reset };
 }
 
