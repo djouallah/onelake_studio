@@ -44,9 +44,12 @@ export function fakeOneLake() {
 export async function stubVendor(dir) {
   for (const [p, body] of [
     ["npm/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
-    ["npm/pin/formats/tmsl.js", "export const tmslToModel = 0;"],
-    ["npm/pin/formats/ossie.js", "export const ossieToTmsl = doc => doc.tmsl;"],
-    ["npm/yaml/+esm.js", "export const parse = JSON.parse;"],
+    ["npm/pin/formats/tmsl.js", "export const tmslToModel = 0, storageMode = () => 'import', directLakeTables = () => new Map();"],
+    ["npm/pin/formats/ossie.js", "export const ossieToTmsl = doc => doc.tmsl, tmslToOssie = 0, ossieSources = () => [], tmslType = () => 'string';"],
+    ["npm/pin/formats/model.js", "export const formatOf = p => (/\\.ya?ml$/i.test(p) ? 'ossie' : 'tmsl'), " +
+      "readModel = (p, text, { parseYaml }) => ({ bim: parseYaml(text).tmsl, skipped: [] });"],
+    ["npm/pin/formats/tmdl.js", "export const tmdlToTmsl = 0;"],
+    ["npm/yaml/+esm.js", "export const parse = JSON.parse, stringify = JSON.stringify;"],
   ]) {
     await mkdir(dirname(join(dir, p)), { recursive: true });
     await writeFile(join(dir, p), body);

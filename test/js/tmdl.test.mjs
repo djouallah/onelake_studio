@@ -1,10 +1,11 @@
-// page/tmdl.js: a model written as TMDL, read as TMSL. The text is cut from the TMDL Fabric's Publish wrote of the
+// TMDL read as TMSL by dax-sql (formats/tmdl.js, vendored), as OneLake Studio reads it. The text is cut from the TMDL Fabric's Publish wrote of the
 // semantic view nem (app/nem.Lakehouse/SystemContext/Semantic Views/nem/nem.tmdl, 2026-11-19), tabs as Fabric writes them.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { tmdlToTmsl } = await import("../../page/tmdl.js");
-const semantic = await import("../../page/semantic.js");
+// dax-sql's reader, as vendored: OneLake Studio reads TMDL with it, and this is the TMDL Fabric's Publish writes.
+import { m, d, semantic, bundle } from "./daxsql.mjs";
+const { tmdlToTmsl } = d;
 
 const WS = "8c945c1a-f25e-4f19-a7ad-c3a7bfbd0fc9", LH = "8775fcab-f8f0-497a-b1d8-7a0cd3133d09";
 const NEM = [
@@ -132,7 +133,7 @@ test("Fabric's TMDL of a semantic view is read as the TMSL of its model", () => 
 });
 
 test("a .tmdl opens as a model, its lakehouse found from its Direct Lake expression", () => {
-  const bim = semantic.bimOf("app.nem/SystemContext/Semantic Views/nem/nem.tmdl", NEM, {});
+  const bim = semantic.bimOf("app.nem/SystemContext/Semantic Views/nem/nem.tmdl", NEM, bundle);
   assert.deepEqual(bim.model.tables.map(t => t.name), ["dim_calendar", "fct summary", "Metrics"]);
   assert.equal(semantic.lakehousesOf(bim).length, 1);
   assert.match(semantic.storageMode(bim), /^Direct Lake on 1 lakehouse/);
@@ -144,5 +145,7 @@ test("a model at the file's root reads as well; a text with no model is refused"
   const bim = tmdlToTmsl("model Model\n\tculture: en-US\n\n\ttable t\n\t\tcolumn a\n\t\t\tdataType: int64\n\t\tcolumn b = [a] * 2\n\t\t\tdataType: int64\n");
   assert.equal(bim.name, "Model");
   assert.deepEqual(bim.model.tables[0].columns, [{ name: "a", dataType: "int64" }, { name: "b", type: "calculated", expression: "[a] * 2", dataType: "int64" }]);
-  assert.throws(() => tmdlToTmsl("table t\n\tcolumn a\n"), /no model in it/);
+  // One table alone is one file of a Power BI project, not a model: dax-sql's formatOf and readModel say so.
+  assert.equal(m.formatOf("t.tmdl", "table t\n\tcolumn a\n"), null);
+  assert.throws(() => semantic.bimOf("t.tmdl", "table t\n\tcolumn a\n", bundle), /one file of a Power BI project, not a model/);
 });

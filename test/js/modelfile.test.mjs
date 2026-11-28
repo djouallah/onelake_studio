@@ -10,7 +10,10 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createModels } = require("../../core/models/models.js");
-const semantic = await import("../../page/semantic.js");
+// The real dax-sql (vendored): formatOf, directLakeTables and the rest are its. `asRead`: dax-sql's readModel standing
+// for a model file read as `bim`, which these tests are about what is done with, not how it is read.
+const { semantic, bundle } = await import("./daxsql.mjs");
+const asRead = bim => ({ ...bundle, readModel: () => ({ bim: structuredClone(bim), skipped: [] }) });
 
 const URL_ = "https://onelake.dfs.fabric.microsoft.com/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555";
 const OSSIE = "version: 0.3.0.dev0\nname: sales\ndatasets:\n  - name: fct_sales\n";
@@ -27,7 +30,7 @@ const ITEMS = {
   empty: [{ name: "nb.Notebook", kind: "Notebook" }],
 };
 
-async function setup({ bim = named, views = [], items = ITEMS, compiler = { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bim }, fabric = {}, onelake = {} } = {}) {
+async function setup({ bim = named, views = [], items = ITEMS, compiler = asRead(bim), fabric = {}, onelake = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "modelfile-"));
   const models = createModels({
     onelake: {
@@ -162,7 +165,7 @@ test("a semantic view's model is read from the TMDL Fabric wrote of the view, th
       files: async (lh, dir) => Object.keys(stored).filter(p => p.startsWith(`${lh.item}/${lh.area}/${dir}/`))
         .map(p => ({ name: p.split("/").pop(), path: p, isDir: false })),
     },
-    compiler: { tmslToOssie: doc => ({ name: doc.name, tables: doc.model.tables.map(t => t.name) }), stringifyYaml: o => JSON.stringify(o) },
+    compiler: { ...bundle, tmslToOssie: doc => ({ name: doc.name, tables: doc.model.tables.map(t => t.name) }), stringifyYaml: o => JSON.stringify(o) },
   });
   const n = { kind: "semanticModel", workspace: "tmp", model: "v", modelId: "m1" };
   const { text } = await models.fetchModel(n);
@@ -200,8 +203,11 @@ test("tables named schema.table: the lakehouses holding them all, and every lake
   assert.deepEqual(f.bare.map(b => `${b.schema}.${b.entity}`), ["dbo.fct_sales", "dbo.dim_date"]);
   assert.deepEqual(f.candidates, [{ workspace: "aemo", lakehouse: "lake" }], "a warehouse holding them is no lakehouse; one holding some is not one");
   assert.deepEqual(f.lakehousesAll, [{ workspace: "aemo", lakehouse: "lake" }, { workspace: "sales-dev", lakehouse: "lake" }]);
-  // Placed there, they are named in it: lake.dbo.fct_sales, in that workspace.
-  const placed = semantic.placeIn(structuredClone(bare), "lake");
+  // Placed there (dax-sql's catalog), they are named in it: lake.dbo.fct_sales, in that workspace.
+  const yaml = ["version: 0.3.0.dev0", "name: dax_context", "datasets:",
+    ...["fct_sales", "dim_date"].flatMap(t => [`  - name: ${t}`, `    source: dbo.${t}`, "    fields:", "      - name: k",
+      "        expression:", "          dialects:", "            - dialect: ANSI_SQL", "              expression: k"]), ""].join("\n");
+  const placed = semantic.bimOf("dax_context.ossie.yaml", yaml, bundle, { lakehouse: "lake" });
   assert.deepEqual(semantic.lakehousesOf(placed, "aemo"), [{ workspaceName: "aemo", itemName: "lake" }]);
   assert.deepEqual(semantic.bareTables(placed), []);
   await done();
@@ -215,7 +221,7 @@ test("tables named schema.table: the lakehouse picked for the file before, asked
   const withPick = createModels({
     onelake: cachedWith(TABLES), fabric: {},
     semviews: { list: async () => [], placement: async p => (p === p2 ? picked : null) },
-    modules: async () => ({ semantic, compiler: { parseYaml: () => ({ datasets: [] }), ossieToTmsl: () => bare } }),
+    modules: async () => ({ semantic, compiler: asRead(bare) }),
     modelsFolder: () => "x", account: () => "a", oldModels: "x/old",
     nameTables: async () => [], notify() {}, onModelChanged() {}, log() {},
   });
@@ -230,8 +236,8 @@ test("a .tmdl that is one file of a Power BI project's definition is no model; a
   const { models, file, done } = await setup();
   const one = await file("Sales.tmdl", "table Sales\n\tcolumn Amount\n\t\tdataType: double\n");
   await assert.rejects(models.modelFile(one), e => e.notModel === true);
-  assert.equal(semantic.isTmdlModel("/// x\ncreateOrReplace\n\n\tdatabase m\n\t\tmodel Model\n\t\t\ttable t\n"), true);
-  assert.equal(semantic.isTmdlModel("database m\n\tcompatibilityLevel: 1604\n"), false, "database.tmdl alone has no tables");
+  assert.equal(bundle.formatOf("m.tmdl", "/// x\ncreateOrReplace\n\n\tdatabase m\n\t\tmodel Model\n\t\t\ttable t\n"), "tmdl");
+  assert.equal(bundle.formatOf("database.tmdl", "database m\n\tcompatibilityLevel: 1604\n"), null, "database.tmdl alone has no tables");
   await done();
 });
 

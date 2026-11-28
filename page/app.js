@@ -345,7 +345,7 @@ async function ossieText(file) {
   try {
     await engineReady;
     const text = new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
-    return semantic.isOssie(text) ? text : null;
+    return (await semantic.formatOf(file.name, text)) === "ossie" ? text : null;
   } catch (e) {
     console.warn(`[ossie] ${file.name}: ${e.message}`);
     return null;
@@ -523,7 +523,7 @@ async function loadViews() {
 // yet, opened by the host — a local copy of each, read from Fabric the first time, and kept —
 // and defined, so the statement compiles as if they had been open all along.
 async function openModels(sql) {
-  for (const ref of semantic.unopenedModels(sql)) {
+  for (const ref of await semantic.unopenedModels(sql)) {
     setStatus(`Opening the semantic model ${ref.workspace}.${ref.model}…`);
     const v = await engine.semanticOpen(ref);
     await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema, v.lakehouse || null);

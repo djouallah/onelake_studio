@@ -15,6 +15,8 @@ const bundleBegan = upMs();
 
 const vscode = require('vscode');
 const { join, basename, dirname } = require('node:path');
+const { pathToFileURL } = require('node:url');
+const { PINS } = require('../core/vendored');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const { randomBytes } = require('node:crypto');
@@ -950,17 +952,19 @@ async function activateInner(context) {
       }, { supportsMultipleEditorsPerDocument: false }));
     }
   }
-  // The title bar's Open in OneLake Studio, on a .bim or an Ossie .yaml open as text: by the text of
-  // every open document (page/semantic.js's isOssie: a top-level version and datasets), so a dbt
-  // schema.yml has none, and a file restored with the window has it as soon as this starts.
-  const isModelText = d => d.uri.scheme === 'file' && (/\.bim$/i.test(d.fileName)
-    || (/\.tmdl$/i.test(d.fileName) && /^\s*(createOrReplace|database)\b/m.test(d.getText()) && /^\s*table\s/m.test(d.getText()))
-    || (/\.ya?ml$/i.test(d.fileName) && /^datasets:/m.test(d.getText()) && /^version:/m.test(d.getText())));
+  // The title bar's Open in OneLake Studio, on a model file open as text: by the text of every open document, as
+  // dax-sql's formatOf tells a model (a .bim; an Ossie .yaml with a top-level version and datasets; a whole TMDL
+  // model), so a dbt schema.yml has none, and a file restored with the window has it once dax-sql is loaded.
+  let formatOf = null;
+  const isModelText = d => d.uri.scheme === 'file' && !!formatOf && /\.(bim|tmdl|ya?ml)$/i.test(d.fileName)
+    && !!formatOf(d.fileName, d.getText());
   // resourcePath is the Uri's fsPath (c:\… on Windows): both forms, so the menu's `in` finds it either way.
   const markModels = () => vscode.commands.executeCommand('setContext', 'onelakeStudio.modelPaths',
     vscode.workspace.textDocuments.filter(isModelText).flatMap(d => [d.uri.fsPath, d.uri.path]));
   if (vscode.workspace.onDidOpenTextDocument) {
-    markModels();
+    import(pathToFileURL(join(context.extensionUri.fsPath, 'vendor', 'npm', PINS.daxSql, 'formats', 'model.js')).href)
+      .then(m => { formatOf = m.formatOf; markModels(); })
+      .catch(e => { if (out) out.appendLine(`dax-sql's formatOf could not be loaded — ${(e && e.message) || e}`); });
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(markModels),
       vscode.workspace.onDidCloseTextDocument(markModels), vscode.workspace.onDidSaveTextDocument(markModels));
   }

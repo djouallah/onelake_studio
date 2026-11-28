@@ -89,12 +89,15 @@ await rm(OUT, { recursive: true, force: true });
 await Promise.all([
   ...VENDOR.esm.map(pkg => esmClosure(`/npm/${pkg}/+esm`)),
   ...VENDOR.files.map(async f => save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`))),
-  ...VENDOR.packages.map(async ({ pkg, include }) => {
+  ...VENDOR.packages.map(async ({ pkg, include, from }) => {
+    // `from`: a package fetched from elsewhere than npm (jsDelivr's gh/<user>/<repo>@<commit>), still kept
+    // under npm/<pkg>, which is where the page and the command line look for it.
+    const src = from || `npm/${pkg}`;
     // Only which files there are, each of them held to its hash below.
-    const listing = JSON.parse((await fetchRetry(`https://data.jsdelivr.com/v1/packages/npm/${pkg}?structure=flat`)).toString("utf8"));
+    const listing = JSON.parse((await fetchRetry(`https://data.jsdelivr.com/v1/packages/${src}?structure=flat`)).toString("utf8"));
     const names = (listing.files || []).map(f => f.name).filter(n => include.test(n));
-    if (!names.length) throw new Error(`npm/${pkg}: the listing has none of the files to vendor`);
-    await Promise.all(names.map(async n => save(`npm/${pkg}${n}`, await get(`${JSDELIVR}/npm/${pkg}${n}`))));
+    if (!names.length) throw new Error(`${src}: the listing has none of the files to vendor`);
+    await Promise.all(names.map(async n => save(`npm/${pkg}${n}`, await get(`${JSDELIVR}/${src}${n}`))));
   }),
 ]);
 

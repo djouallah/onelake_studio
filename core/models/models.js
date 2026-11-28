@@ -124,8 +124,8 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         .find(e => !e.isDir && /\.tmdl$/i.test(e.name));
       if (!tmdl) return null;
       const text = stripBom(Buffer.from(await onelake.readBytes(n.workspace, tmdl.path)).toString('utf8'));
-      const { semantic } = await modules();
-      return Buffer.from(JSON.stringify(semantic.tmdlToTmsl(text)));
+      const { compiler } = await modules();
+      return Buffer.from(JSON.stringify(compiler.tmdlToTmsl(text)));
     }
     return null;
   }
@@ -276,11 +276,11 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     const name = basename(path);
     const text = await fsp.readFile(path, 'utf8').catch(e => { throw new Error(`${name} could not be read: ${e.message}`); });
     const { semantic, compiler } = await modules();
-    if (semantic.isOssiePath(path) && !semantic.isOssie(text)) {
-      throw Object.assign(new Error(`${name} is not an Apache Ossie model: it has no top-level version and datasets`), { notModel: true });
-    }
-    if (/\.tmdl$/i.test(path) && !semantic.isTmdlModel(text)) {
-      throw Object.assign(new Error(`${name} is one file of a TMDL definition, not a whole model: open the model's folder in Power BI, or a TMDL script`), { notModel: true });
+    // What dax-sql's formatOf says is no model (a dbt schema.yml, one file of a Power BI project) opens as text.
+    if (/\.(ya?ml|tmdl)$/i.test(path) && !compiler.formatOf(path, text)) {
+      throw Object.assign(new Error(/\.tmdl$/i.test(path)
+        ? `${name} is one file of a TMDL definition, not a whole model: open the model's folder in Power BI, or a TMDL script`
+        : `${name} is not an Apache Ossie model: it has no top-level version and datasets`), { notModel: true });
     }
     const bim = semantic.bimOf(path, text, compiler);
     const lakes = semantic.lakehousesOf(bim);

@@ -20,17 +20,13 @@
 import { PINS, npmFile, npmEsm } from "./cdn.js";
 import { quoteIdent, sqlStr, sqlPart, stripBom, basename } from "./paths.js";
 import { EXPLORE_CASTS, withSource } from "./explore/query.js";
-import { tmdlToTmsl } from "./tmdl.js";
-
-// A model written as TMDL (Fabric's SystemContext/Semantic Views/<view>/<view>.tmdl), as TMSL.
-export { tmdlToTmsl };
 
 const lc = s => String(s).toLowerCase();
 
 // A model's SQL name is <workspace>.<model>_semanticmodel, its kind after its name as an item's
 // is, and nothing shorter (core/names.js modelSqlName). The engine lists it in its own catalog,
 // onelake, where dax-sql keeps the view: dax-sql reaches a view by db.schema.name alone, so a
-// statement's model names are given that catalog before dax-sql reads them (withCatalog).
+// statement's two-part model names are read in that catalog (createViews' db).
 export const MODEL_KIND = "semanticmodel";
 const MODEL_DB = "onelake";
 const SUFFIX = `_${MODEL_KIND}`;
@@ -48,25 +44,43 @@ function compilerModules() {
     import(npmFile(PINS.daxSql, "src/index.js")),
     import(npmFile(PINS.daxSql, "formats/tmsl.js")),
     import(npmFile(PINS.daxSql, "formats/ossie.js")),
+    import(npmFile(PINS.daxSql, "formats/model.js")),
+    import(npmFile(PINS.daxSql, "formats/tmdl.js")),
     import(npmEsm(PINS.yaml)),
-  ]).then(([c, t, o, y]) => ({
-    createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
-    ossieToTmsl: o.ossieToTmsl, parseYaml: y.parse,
-  }))
+  ]).then(([c, t, o, m, d, y]) => compilerBundle(c, t, o, m, d, y))
     .catch(e => { modulesP = null; throw new Error(`Could not load the DAX compiler: ${e.message}`); });
   return modulesP;
 }
 
+// What this module uses of dax-sql (and the YAML parser), from its modules as loaded: the panel's
+// (compilerModules) and the command line's (cli/agent.js) alike. The readers of model files are all dax-sql's.
+export function compilerBundle(c, t, o, m, d, y) {
+  return {
+    createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
+    directLakeTables: t.directLakeTables, storageMode: t.storageMode,
+    ossieToTmsl: o.ossieToTmsl, tmslToOssie: o.tmslToOssie, ossieSources: o.ossieSources, tmslType: o.tmslType,
+    readModel: m.readModel, formatOf: m.formatOf, tmdlToTmsl: d.tmdlToTmsl,
+    parseYaml: y.parse, stringifyYaml: y.stringify,
+  };
+}
+
 // The views (dax-sql's registry) and, per view, its Direct Lake tables.
 let mods = null, views = null;
+// The host hands its modules in before it reads a model (the readers below need them); ready() too.
+export const useModules = m => { mods = mods || m; };
+const need = () => {
+  if (!mods) throw new Error("the DAX compiler is not loaded yet");
+  return mods;
+};
 const lakes = new Map();   // lower-cased view name -> directLakeTables()
 // What the data says of each view's model (takeStats), by its lower-cased fullName: { s, compiler, sig, tables }.
 const stats = new Map();
 async function ready(modules) {
   if (!views) {
-    mods = modules || await compilerModules();
-    // A statement reaches a model by its whole name alone (NAMING.md): `FROM nem` is not a model.
-    views = mods.createViews({ fullNames: true });
+    mods = modules || mods || await compilerModules();
+    // A statement reaches a model by its whole name alone (NAMING.md): `FROM nem` is not a model. `db`: a model's
+    // name as SQL writes it, ws.model_semanticmodel, is read in the engine's catalog, where the views are.
+    views = mods.createViews({ fullNames: true, db: MODEL_DB });
   }
   return mods;
 }
@@ -79,32 +93,20 @@ export function modelName(fileName) {
   return name;
 }
 
-// The bim's Direct Lake tables, by table name: where each one lives in OneLake. A Direct
-// Lake model's shared expression holds its lakehouse's OneLake URL, by GUIDs; each table's
-// partition names that expression, and the schema and table it reads.
-// The bim's shared expressions that name a lakehouse: expression name -> { workspace, item }.
-export function lakeExpressions(bim) {
-  const text = e => (Array.isArray(e) ? e.join("\n") : String(e ?? ""));
-  const url = /onelake\.dfs\.fabric\.microsoft\.com\/([0-9a-f-]{36})\/([0-9a-f-]{36})/i;
-  const found = new Map();
-  for (const e of bim?.model?.expressions ?? []) {
-    const m = url.exec(text(e.expression));
-    if (m) found.set(e.name, { workspace: lc(m[1]), item: lc(m[2]) });
-  }
-  return found;
-}
-
 // The parts of a dotted SQL name, as written ("my ws" keeps its quotes), and one without them.
 export const nameParts = ident => String(ident).match(/"(?:[^"]|"")*"|[^.]+/g) ?? [];
 export const unquote = p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p);
 
-// A table an Ossie model names in its own workspace: its `source` is item.schema.table, as
-// Fabric's SQL endpoint names it, which dax-sql reads back as a partition with no expression
-// whose schema is item.schema. { item, schema, table }, unquoted, or null.
-function namedInWorkspace(s) {
-  if (!s?.entityName || s.expressionSource || !s.schemaName) return null;
-  const parts = nameParts(s.schemaName);
-  return parts.length === 2 ? { item: unquote(parts[0]), schema: unquote(parts[1]), table: unquote(s.entityName) } : null;
+// The bim's Direct Lake tables, by lower-cased table name: where each one lives in OneLake, as dax-sql's
+// directLakeTables reads them from the TMSL. { lh: { workspace, item }, t: { schema, table } } for one its
+// Direct Lake expression places by GUIDs, { item, t } for one named item.schema.table in the model's workspace.
+export function directLakeTables(bim) {
+  const out = new Map();
+  for (const [name, l] of need().directLakeTables(bim)) {
+    const t = { schema: l.schema, table: l.entity };
+    out.set(name, l.inWorkspace ? { item: l.item, t } : { lh: { workspace: l.workspace, item: l.item }, t });
+  }
+  return out;
 }
 
 // The lakehouses a model reads, each once: by GUID, { workspace, item }, from a Direct Lake
@@ -112,57 +114,23 @@ function namedInWorkspace(s) {
 // `workspace`, the model's.
 export function lakehousesOf(bim, workspace = null) {
   const out = new Map();
-  for (const l of lakeExpressions(bim).values()) out.set(`${l.workspace}/${l.item}`, l);
-  for (const t of bim?.model?.tables ?? []) {
-    const n = namedInWorkspace(t.partitions?.[0]?.source);
-    if (n) out.set(lc(JSON.stringify([n.item])), { workspaceName: workspace, itemName: n.item });
+  for (const l of directLakeTables(bim).values()) {
+    if (l.lh) out.set(`${l.lh.workspace}/${l.lh.item}`, l.lh);
+    else out.set(lc(JSON.stringify([l.item])), { workspaceName: workspace, itemName: l.item });
   }
   return [...out.values()];
 }
 
-// What kind of model it is, as a phrase for saying why it cannot be opened: "an Import
-// model", "a DirectQuery model", "a composite model", or Direct Lake over a SQL endpoint the
-// host could not read from OneLake (core/models/sqlendpoint.js). A partition without a mode
-// (or "default") takes the model's defaultMode, which is Import when absent.
+// What kind of model it is (dax-sql's storageMode), as a phrase for saying why it cannot be opened: "an
+// Import model", "a DirectQuery model", "a composite model", or Direct Lake over a SQL endpoint the host could
+// not read from OneLake (core/models/sqlendpoint.js).
 export function storageMode(bim) {
-  const fallback = lc(bim?.model?.defaultMode || "import");
-  const modes = new Set();
-  for (const t of bim?.model?.tables ?? []) {
-    for (const p of t.partitions ?? []) {
-      // Calculated tables and the like have no storage of their own to judge by.
-      if (p.source?.type === "calculated" || p.source?.type === "calculationGroup") continue;
-      const m = lc(p.mode || "default");
-      modes.add(m === "default" ? fallback : m);
-    }
-  }
-  if (!modes.size) modes.add(fallback);
-  const lakes = lakehousesOf(bim).length;
-  if (modes.size === 1 && modes.has("directlake")) {
+  const mode = need().storageMode(bim);
+  if (mode === "directlake") {
+    const lakes = lakehousesOf(bim).length;
     return lakes ? `Direct Lake on ${lakes} lakehouses` : "Direct Lake over a SQL endpoint";
   }
-  if (modes.size > 1) return "a composite model";
-  if (modes.has("directquery")) return "a DirectQuery model";
-  if (modes.has("dual")) return "a Dual-mode model";
-  return "an Import model";
-}
-
-// The bim's OneLake tables, by table name: { lh, t } for one its Direct Lake expression places
-// by GUIDs, { item, t } for one named item.schema.table in the model's workspace.
-export function directLakeTables(bim) {
-  const found = lakeExpressions(bim);
-  const tables = new Map();
-  for (const t of bim?.model?.tables ?? []) {
-    const s = t.partitions?.[0]?.source;
-    const named = namedInWorkspace(s);
-    if (named) { tables.set(lc(t.name), { item: named.item, t: { schema: named.schema, table: named.table } }); continue; }
-    const lake = s?.expressionSource && found.get(s.expressionSource);
-    if (!lake) continue;
-    tables.set(lc(t.name), {
-      lh: { workspace: lake.workspace, item: lake.item },
-      t: { schema: s.schemaName ?? "dbo", table: s.entityName ?? t.name },
-    });
-  }
-  return tables;
+  return { composite: "a composite model", directquery: "a DirectQuery model", dual: "a Dual-mode model" }[mode] ?? "an Import model";
 }
 
 // Who turns a Direct Lake table into its SQL name: the host, which asks the Fabric API what
@@ -176,39 +144,6 @@ export const setTableNamer = fn => { tableNamer = fn; };
 let columnReader = null;
 export const setColumnReader = fn => { columnReader = fn; };
 
-// The relationships' columns, as text, on each table that has no column at all: enough for the model
-// to hold together when its tables' own columns can't be read (no lakehouse picked yet, offline).
-function keyColumns(bim) {
-  const m = bim?.model;
-  for (const t of m?.tables ?? []) {
-    if ((t.columns ?? []).length || !t.partitions?.[0]?.source) continue;
-    const names = [...new Set((m.relationships ?? []).flatMap(r => [
-      ...(lc(r.fromTable) === lc(t.name) ? [r.fromColumn] : []), ...(lc(r.toTable) === lc(t.name) ? [r.toColumn] : [])]))];
-    t.columns = names.map(n => ({ name: n, dataType: "string", sourceColumn: n }));
-  }
-  return bim;
-}
-
-// An Ossie dataset may list no fields, as a Fabric semantic view's YAML need not: Fabric gives the table
-// every column its lakehouse table has. Each such table (no column, named lakehouse.schema.table in
-// `workspace`) gets those columns, from the table's metadata; one whose table can't be asked, its
-// relationships' columns (keyColumns). In place.
-async function lakeColumns(bim, workspace) {
-  const empty = (bim?.model?.tables ?? []).filter(t => !(t.columns ?? []).length && t.partitions?.[0]?.source);
-  await Promise.all(empty.map(async t => {
-    const n = namedInWorkspace(t.partitions[0].source);
-    if (!n || !columnReader || !workspace) return;
-    try {
-      t.columns = (await columnReader({ workspace, lakehouse: n.item, schema: n.schema, table: n.table }))
-        .map(c => ({ name: c.name, dataType: tmslType(c.type), sourceColumn: c.name }))
-        .filter(c => c.dataType);
-    } catch (e) {
-      console.warn(`[semantic] ${t.name}: the columns of ${n.item}.${n.schema}.${n.table} could not be read: ${e.message}`);
-    }
-  }));
-  return keyColumns(bim);
-}
-
 // directLakeTables(), each with its SQL name as `ident`; `workspace` is the model's, where a
 // table named item.schema.table is.
 async function namedLakeTables(bim, workspace) {
@@ -221,75 +156,55 @@ async function namedLakeTables(bim, workspace) {
   return lake;
 }
 
-// Whether a file of this name is an Ossie model rather than a .bim.
-export const isOssiePath = path => /\.ya?ml$/i.test(String(path));
-
-// Whether a YAML file's text is an Ossie model: its top level has the datasets and the spec's
-// version. A dbt schema.yml, a pipeline's config, has neither, and stays a document.
-export const isOssie = text =>
-  /^datasets:/m.test(String(text)) && /^version:/m.test(String(text));
-
-// Whether a .tmdl file's text is a whole model, as a TMDL script is (createOrReplace, database, its tables),
-// rather than one file of a Power BI project's definition/ folder (a table, the model's own settings).
-export const isTmdlModel = text =>
-  /^\s*(createOrReplace|database)\b/m.test(String(text)) && /^\s*table\s/m.test(String(text));
+// A model file's format, from its path and text with nothing parsed (dax-sql's formatOf): 'tmsl', 'tmdl', 'ossie',
+// or null for no model (a dbt schema.yml, one file of a Power BI project's TMDL folder). `modules`: the host's.
+export async function formatOf(path, text, modules = null) {
+  return (await ready(modules)).formatOf(path, text);
+}
 
 // The tables a model names schema.table and nothing more, as a Fabric semantic view's YAML does
-// (`source: dbo.sales`): an entity partition with a one-part schema and no expression, so in no lakehouse
-// until one is said. [{ table (the model's), schema, entity }].
+// (`source: dbo.sales`): an entity partition dax-sql places in no lakehouse, until one is said.
+// [{ table (the model's), schema, entity }].
 export function bareTables(bim) {
+  const placed = directLakeTables(bim);
   const out = [];
   for (const t of bim?.model?.tables ?? []) {
     const s = t.partitions?.[0]?.source;
-    if (!s || s.expressionSource || (s.type && s.type !== "entity")) continue;
+    if (!s || s.expressionSource || (s.type && s.type !== "entity") || placed.has(lc(t.name))) continue;
     if (!s.entityName && !s.schemaName) continue;
-    if (nameParts(s.schemaName ?? "dbo").length !== 1) continue;
     out.push({ table: t.name, schema: unquote(s.schemaName ?? "dbo"), entity: s.entityName ?? t.name });
   }
   return out;
 }
 
-// Those tables placed in `lakehouse` (its name, in the model's workspace): their schema becomes
-// "lakehouse"."schema", as Fabric reads a view's tables in the lakehouse that holds it. In place.
-export function placeIn(bim, lakehouse) {
-  if (!lakehouse) return bim;
-  const quote = x => `"${String(x).replace(/"/g, '""')}"`;
-  const bare = new Set(bareTables(bim).map(b => lc(b.table)));
-  for (const t of bim?.model?.tables ?? []) {
-    if (!bare.has(lc(t.name))) continue;
-    const s = t.partitions[0].source;
-    s.entityName = s.entityName ?? t.name;
-    s.schemaName = `${quote(lakehouse)}.${quote(unquote(s.schemaName ?? "dbo"))}`;
-  }
+// A model file's TMSL, by dax-sql's reader of its format (readModel): `lakehouse`, where its schema.table tables are
+// (dax-sql's catalog), for a file that doesn't say; `columnsOf`, the columns of an Ossie dataset that lists none, as
+// dax-sql asks them. What a metric dax-sql left out is, is `skipped` on it, as defineView says it.
+export function bimOf(path, text, m = need(), { lakehouse = null, columnsOf = null } = {}) {
+  const { bim, skipped } = m.readModel(path, text, { parseYaml: m.parseYaml, ...(lakehouse ? { catalog: lakehouse } : {}),
+    ...(columnsOf ? { columnsOf } : {}) });
+  if (bim && typeof bim === "object") Object.defineProperty(bim, "skipped", { value: skipped, enumerable: false, configurable: true });
   return bim;
 }
 
-// The TMSL a model file's text is: a .bim as it is, an Ossie model as the .bim it stands for. An Ossie
-// metric or field with no DAX and no SQL dax-sql reads (another engine's dialect alone) is left out, not
-// the file refused: its `skipped` (not enumerable, so never written into a TMSL) names each, with why.
-// `lakehouse`: where its schema.table tables are (placeIn), for a file that doesn't say.
-export function bimOf(path, text, mods, { lakehouse = null } = {}) {
-  return placeIn(readBim(path, text, mods), lakehouse);
-}
-function readBim(path, text, mods) {
-  const body = stripBom(text);
-  if (isOssiePath(path)) {
-    let doc;
-    try { doc = mods.parseYaml(body); }
-    catch (e) { throw new Error(`${basename(path)} is not YAML: ${e.message}`); }
-    if (!doc || typeof doc !== "object" || !Array.isArray(doc.datasets))
-      throw new Error(`${basename(path)} is not an Ossie model: it has no datasets`);
-    const skipped = [];
-    const bim = mods.ossieToTmsl(doc, { onSkip: s => skipped.push(s) });
-    if (bim && typeof bim === "object") Object.defineProperty(bim, "skipped", { value: skipped, enumerable: false, configurable: true });
-    return bim;
-  }
-  if (/\.tmdl$/i.test(String(path))) {
-    try { return tmdlToTmsl(body); }
-    catch (e) { throw new Error(`${basename(path)} is not a TMDL model: ${e.message}`); }
-  }
-  try { return JSON.parse(body); }
-  catch (e) { throw new Error(`${basename(path)} is not a TMSL model: ${e.message}`); }
+// The same, with the columns of each Ossie dataset that lists none read first, from its lakehouse table's metadata
+// (setColumnReader): Fabric gives such a dataset every column its table has. dax-sql says which datasets
+// (ossieSources) and asks for them as it reads. A table that can't be asked has its relationships' columns.
+async function bimWithColumns(path, text, m, { lakehouse = null, workspace = null } = {}) {
+  if (m.formatOf(path, text) !== "ossie" || !columnReader || !workspace) return bimOf(path, text, m, { lakehouse });
+  let doc;
+  try { doc = m.parseYaml(stripBom(text)); } catch (_) { return bimOf(path, text, m, { lakehouse }); }   // readModel says why
+  const read = new Map();
+  await Promise.all(m.ossieSources(doc).map(async ({ source }) => {
+    const parts = nameParts(String(source ?? "")).map(unquote);
+    const at = parts.length === 3 ? { lakehouse: parts[0], schema: parts[1], table: parts[2] }
+      : lakehouse && parts.length === 2 ? { lakehouse, schema: parts[0], table: parts[1] }
+      : lakehouse && parts.length === 1 ? { lakehouse, schema: "dbo", table: parts[0] } : null;
+    if (!at) return;
+    try { read.set(String(source), await columnReader({ workspace, ...at })); }
+    catch (e) { console.warn(`[semantic] the columns of ${source} could not be read: ${e.message}`); }
+  }));
+  return bimOf(path, text, m, { lakehouse, columnsOf: ({ source }) => read.get(String(source)) ?? null });
 }
 
 // Where a table's SQL name says it lives: its first two parts (ws.lakehouse), as written.
@@ -313,7 +228,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   if (!schema) throw new Error(`a semantic model is named <workspace>.<model>${SUFFIX}: ${name} has no workspace`);
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
-  const bim = await lakeColumns(bimOf(path, text, mods, { lakehouse }), schema);
+  const bim = await bimWithColumns(path, text, mods, { lakehouse, workspace: schema });
   const lake = await namedLakeTables(bim, schema);
   // A Direct Lake table is read by its SQL name, the engine making its view as a query
   // names it. Any other has no OneLake table behind it: a shorter name would resolve to
@@ -333,8 +248,9 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   // defines every kept view for each statement), the model keeps it: it holds while its tables' snapshots do.
   const sig = JSON.stringify([path, text, [...lake.values()].map(l => l.ident)]);
   const was = stats.get(lc([schema, viewName(name)].map(sqlPart).join(".")));
-  const s = was && was.sig === sig ? was.s : { orphans: new Map(), padded: new Set(), at: null };
-  const known = { orphans: r => s.orphans.get(r.key), trailingSpaces: c => s.padded.has(c.key) || undefined };
+  const s = was && was.sig === sig ? was.s : { facts: { orphans: {}, trailingSpaces: {} }, at: null };
+  // dax-sql's facts option, read live: freshStats fills these objects in place as the data answers.
+  const known = { facts: s.facts };
   const at = { path, mode, db: MODEL_DB, schema, tableSource, tablesFrom: where.join(", ") || null, ...known };
   const done = views.define(viewName(name), tmslToModel(bim), at);
   const v = views.get(modelKey(schema, name));
@@ -353,7 +269,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
 // say. A model file's Save asks it first, so a file is never written into one that doesn't open.
 export async function checkModel(fileName, text, modules = null) {
   const mods = await ready(modules);
-  mods.tmslToModel(keyColumns(bimOf(fileName, text, mods)));
+  mods.tmslToModel(bimOf(fileName, text, mods));
 }
 
 // A model opened from a file, in its workspace: under the semantic model's own name when it is
@@ -368,99 +284,38 @@ export const FABRIC_VIEW_PATH = /^([^/]+)\/Context\/Semantic Views\/([^/]+)\//;
 // The TMDL Fabric's Publish writes of a view (<lakehouse>/SystemContext/Semantic Views/<view>/<view>.tmdl): the
 // model Fabric made, whole. [, item, view] of a path to one.
 export const SYSTEM_VIEW_TMDL = /^([^/]+)\/SystemContext\/Semantic Views\/([^/]+)\/[^/]+\.tmdl$/i;
-// What Fabric's Publish reads (0.2.0.dev0, Microsoft's format), and the versions a view opens in: Ossie 0.3 too, its
-// YAML showing in red what Publish refuses of it (explore/pretty.js publishRefusals).
-export const FABRIC_VIEW_VERSION = "0.2.0.dev0";
-export const FABRIC_VIEW_OPENS = [FABRIC_VIEW_VERSION, "0.3.0.dev0"];
 
 /**
- * A Fabric semantic view as TMSL, the model Fabric's Publish makes of it: its files (`files`, [{ path, text }]) merged
- * as Fabric merges them, each dataset a Direct Lake table of the view's lakehouse (`lakehouse`, its name) with the
- * columns its table has (`columnsOf(schema, table)`, [{ name, type }]: Fabric's YAML names none), each relationship
- * active, and the DAX metrics in a table of their own, Metrics, as Fabric's model has them. A metric with no DAX is
- * left out, as Fabric leaves it out. What Fabric's Publish refuses but a model can do without opens without it, its
- * YAML showing it in red (explore/pretty.js publishRefusals): a dataset whose source isn't schema.table, a name given
- * a second time, a relationship of more than one column a side or to a dataset left out, a metric named as a dataset.
- * What leaves nothing to open (no file, not YAML, another version, a table the lake doesn't have) is said, by file.
+ * A Fabric semantic view as TMSL, the model Fabric's Publish makes of it, read by dax-sql (readModel, as: 'fabric'):
+ * its files (`files`, [{ path, text }]) merged as Fabric merges them, each dataset a Direct Lake table of the view's
+ * lakehouse (`lakehouse`, its name) with the columns its table has (`columnsOf(schema, table)`, [{ name, type }]: read
+ * here first, for the datasets dax-sql lists), and the DAX metrics in Fabric's Metrics table. What Publish refuses but
+ * a model can do without is left out by dax-sql, and is `skipped` on the TMSL.
  */
 export async function fabricViewBim(view, files, { lakehouse, columnsOf }, modules = null) {
-  const mods = await ready(modules);
+  const m = await ready(modules);
   if (!files.length) throw new Error(`${view} has no .yaml file in its folder`);
-  const docs = files.map(f => {
-    let doc;
-    try { doc = mods.parseYaml(stripBom(f.text)); } catch (e) { throw new Error(`${basename(f.path)} is not YAML: ${e.message}`); }
-    if (!doc || typeof doc !== "object") throw new Error(`${basename(f.path)} is empty: a view's file says its version and name at least`);
-    if (!FABRIC_VIEW_OPENS.includes(String(doc.version))) {
-      throw new Error(`${basename(f.path)} is version ${doc.version ?? "(none)"}: a Fabric semantic view is ${FABRIC_VIEW_OPENS.join(" or ")}`);
-    }
-    return { file: basename(f.path), doc };
-  });
-  const all = key => docs.flatMap(({ file, doc }) => (Array.isArray(doc[key]) ? doc[key] : []).map(x => ({ file, x })));
-  // Each name once, whatever its case: the first kept, as the YAML's red says of the others.
-  const once = list => {
-    const seen = new Set();
-    return list.map(({ x }) => x).filter(x => {
-      const k = lc(x?.name);
-      if (!x?.name || seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  };
-  const sourceOf = d => {
-    const parts = String(d?.source ?? "").split(".");
-    return parts.length === 2 && parts.every(p => p) ? parts : null;
-  };
-  const datasets = once(all("datasets")).filter(sourceOf);
-  const kept = new Set(datasets.map(d => lc(d.name)));
-  const metrics = once(all("metrics")).filter(m => !kept.has(lc(m.name)));
-  const oneColumn = cols => Array.isArray(cols) && cols.length === 1;
-  const relationships = once(all("relationships")).filter(r =>
-    oneColumn(r.from_columns) && oneColumn(r.to_columns) && kept.has(lc(r.from)) && kept.has(lc(r.to)));
-  const description = docs.map(({ doc }) => doc.description).find(d => d != null);
-
-  const tables = await Promise.all(datasets.map(async d => {
-    const [schema, table] = sourceOf(d);
-    const columns = (await columnsOf(schema, table))
-      .map(c => ({ name: c.name, dataType: tmslType(c.type), sourceColumn: c.name }))
-      .filter(c => c.dataType);
-    if (!columns.length) throw new Error(`the dataset ${d.name}: ${lakehouse} has no table ${schema}.${table}, or it has no columns`);
-    const quote = s => `"${String(s).replace(/"/g, '""')}"`;
-    return {
-      name: d.name, ...(d.description != null ? { description: String(d.description) } : {}), columns,
-      partitions: [{ name: d.name, mode: "directLake",
-                     source: { type: "entity", entityName: table, schemaName: `${quote(lakehouse)}.${quote(schema)}` } }],
-    };
-  }));
-  const measures = metrics.flatMap(m => {
-    const dax = (m?.expression?.dialects ?? []).find(x => lc(x?.dialect) === "dax" && String(x?.expression ?? "").trim());
-    return dax ? [{ name: m.name, expression: String(dax.expression), ...(m.description != null ? { description: String(m.description) } : {}) }] : [];
-  });
-  if (measures.length) tables.push({ name: "Metrics", columns: [], measures });
-  return {
-    name: view,
-    model: {
-      ...(description != null ? { description: String(description) } : {}),
-      tables,
-      relationships: relationships.map(r => ({ name: r.name, fromTable: r.from, fromColumn: String(r.from_columns[0]),
-                                               toTable: r.to, toColumn: String(r.to_columns[0]) })),
-    },
-  };
+  const folder = Object.fromEntries(files.map(f => [String(f.path), String(f.text)]));
+  const read = { parseYaml: m.parseYaml, as: "fabric", catalog: lakehouse };
+  // The columns of every dataset the view keeps, read before dax-sql asks: its readers are not asynchronous.
+  const cols = new Map();
+  let sources = null;
+  try { sources = m.ossieSources(Object.fromEntries(files.map(f => [String(f.path), m.parseYaml(stripBom(f.text))])), { as: "fabric" }); }
+  catch (_) { /* not YAML, or not a view: readModel says which, by file */ }
+  if (sources) {
+    await Promise.all(sources.map(async ({ source }) => {
+      const [schema, table] = nameParts(String(source)).map(unquote);
+      cols.set(String(source), await columnsOf(schema, table).catch(() => []));
+    }));
+  }
+  const { bim, skipped } = m.readModel(`Semantic Views/${view}`, folder, { ...read, columnsOf: ({ source }) => cols.get(String(source)) ?? [] });
+  Object.defineProperty(bim, "skipped", { value: skipped, enumerable: false, configurable: true });
+  return bim;
 }
 
-// A column's type in TMSL's words, from the Iceberg schema (long, decimal(18,2), timestamp)
-// or DuckDB's DESCRIBE (BIGINT, DECIMAL(18,2), TIMESTAMP WITH TIME ZONE), whichever the
-// table's info holds. null: a type the pivot has no use for (nested, binary), left out.
-function tmslType(type) {
-  if (typeof type !== "string") return null;   // an Iceberg struct, list or map
-  const s = type.trim().toLowerCase();
-  if (/^(struct|list|map|array|union)\b|\[\]$/.test(s) || /^(binary|blob|bytea|fixed)\b/.test(s)) return null;
-  if (/^bool/.test(s)) return "boolean";
-  if (/^(u?(tiny|small|big|huge)?int(eger)?\d*|long)$/.test(s)) return "int64";
-  if (/^(float|double|real)/.test(s)) return "double";
-  if (/^(decimal|numeric)/.test(s)) return "decimal";
-  if (/^(date|timestamp)/.test(s)) return "dateTime";
-  return "string";
-}
+// A column's type in TMSL's words, from the Iceberg schema (long, decimal(18,2), timestamp) or DuckDB's DESCRIBE
+// (BIGINT, DECIMAL(18,2), TIMESTAMP WITH TIME ZONE): dax-sql's tmslType. null: a type a model can't hold, left out.
+const tmslType = type => (typeof type === "string" ? need().tmslType(type) : null);   // not a string: Iceberg's struct, list or map
 
 // A table's dates and times as text: the date alone at midnight, else the time too. A model's
 // date column shows as a date (EXPLORE_CASTS), but a table's event timestamps are kept apart,
@@ -531,15 +386,9 @@ export async function tableModel(table, sqlName, columns, modules = null) {
   return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
 
-// The semantic models a statement names (ws.model_semanticmodel, or onelake.ws.model_semanticmodel)
-// that are not views here yet, as [{ workspace, model }] as written: the host opens each before
-// the statement runs. Comments and string literals are skipped.
-// A part: bare, or quoted in double quotes or backticks.
+// A part of a model's SQL name: bare, or quoted in double quotes or backticks (modelNameParts).
 const PART_RE = '(?:"(?:[^"]|"")*"|`(?:[^`]|``)*`|[A-Za-z_\\u00C0-\\uFFFF][A-Za-z0-9_$\\u00C0-\\uFFFF]*)';
 const DOT_RE = "\\s*\\.\\s*";
-// A whole dotted name, as group 1, or a comment or a string, which is skipped.
-const DOTTED = new RegExp(`--[^\\n]*|/\\*[\\s\\S]*?\\*/|'(?:[^']|'')*'|` +
-  `(?<![.\\w$"\\u00C0-\\uFFFF])(${PART_RE}(?:${DOT_RE}${PART_RE})*)(?!${DOT_RE}${PART_RE})`, "g");
 const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x[0] === '`' ? x.slice(1, -1).replace(/``/g, '`') : x);
 const partsOf = name => [...name.matchAll(new RegExp(PART_RE, "g"))].map(m => unq(m[0]));
 // A dotted name's model, { workspace, model, qualified }, or null when it names none.
@@ -548,29 +397,28 @@ function modelRef(parts) {
   const model = p.length === 2 && modelOf(p[1]);
   return model ? { workspace: p[0], model, qualified: p !== parts } : null;
 }
-export function unopenedModels(sql) {
+// The models a statement reads (ws.model_semanticmodel, or onelake.ws.model_semanticmodel), as dax-sql's
+// tokenizer finds them (views.names: comments, strings and quoted names as SQL has them), each
+// { parts, view, ref }: `ref`, the model's { workspace, model }.
+function modelsNamed(sql) {
+  return views.names(String(sql), { match: parts => !!modelRef(parts) })
+    .map(n => ({ ...n, ref: modelRef(n.parts) }));
+}
+
+// The semantic models a statement names that are not views here yet, as [{ workspace, model }] as written:
+// the host opens each before the statement runs.
+export async function unopenedModels(sql, modules = null) {
   const s = String(sql);
   if (!lc(s).includes(SUFFIX) || VIEW_DDL.test(s)) return [];   // CREATE / DROP: refused, not opened
+  await ready(modules);
   const out = [];
-  for (const m of s.matchAll(DOTTED)) {
-    const ref = m[1] && modelRef(partsOf(m[1]));
-    if (!ref || hasView(modelKey(ref.workspace, ref.model))) continue;
+  for (const { ref } of modelsNamed(s)) {
+    if (hasView(modelKey(ref.workspace, ref.model))) continue;
     if (!out.some(r => lc(r.workspace) === lc(ref.workspace) && lc(r.model) === lc(ref.model))) {
       out.push({ workspace: ref.workspace, model: ref.model });
     }
   }
   return out;
-}
-
-// The statement with each model it names in the catalog dax-sql keeps it in: ws.nem_semanticmodel
-// is onelake.ws.nem_semanticmodel to dax-sql, which reaches a view by its whole db.schema.name.
-function withCatalog(sql) {
-  const s = String(sql);
-  if (!lc(s).includes(SUFFIX)) return s;
-  return s.replace(DOTTED, (all, name) => {
-    const ref = name && modelRef(partsOf(name));
-    return ref && !ref.qualified ? `${MODEL_DB}.${name}` : all;
-  });
 }
 
 // What the data says of the models a statement names: which relationships' many side holds a key
@@ -584,10 +432,12 @@ function withCatalog(sql) {
 export async function takeStats(sql, run, snapshots) {
   const s = String(sql);
   if (!views || !lc(s).includes(SUFFIX)) return;
-  for (const m of s.matchAll(DOTTED)) {
-    const ref = m[1] && modelRef(partsOf(m[1]));
-    const v = ref && views.get(modelKey(ref.workspace, ref.model));
-    if (v) await takeStatsOf(fullName(v), run, snapshots);
+  const done = new Set();
+  for (const { ref } of modelsNamed(s)) {
+    const v = views.get(modelKey(ref.workspace, ref.model));
+    if (!v || done.has(fullName(v))) continue;
+    done.add(fullName(v));
+    await takeStatsOf(fullName(v), run, snapshots);
   }
 }
 
@@ -610,30 +460,24 @@ async function freshStats({ s, compiler, tables }, run, snapshots) {
   };
   const now = await at();
   if (s.at && names.every(t => s.at.get(t) === now.get(t))) return;
-  s.orphans.clear();
-  s.padded.clear();
+  // The compilers read these very objects (dax-sql's facts option): emptied and filled in place, never replaced.
+  const { orphans, trailingSpaces } = s.facts;
+  for (const k of Object.keys(orphans)) delete orphans[k];
+  for (const k of Object.keys(trailingSpaces)) delete trailingSpaces[k];
   s.at = null;
-  const row = async check => {
-    const res = await run(check.sql);
-    const r = res.rows[0] || [];
-    return Array.isArray(r) ? r : Object.values(r);   // one boolean a column, in the check's order
-  };
-  const o = compiler.orphanCheck(), t = compiler.trailingSpacesCheck();
-  const orphans = o.rels.length ? await row(o) : [];
-  const padded = t.columns.length ? await row(t) : [];
-  // A table the answers hold for: in the lake, at the snapshot it was at before the checks (or the first,
-  // when the checks are what brought it here), so its rows didn't move under them.
+  // dax-sql writes the one statement of both checks and reads its row back; the engine runs it.
+  const check = compiler.factsCheck();
+  const asked = Object.keys(check.tables.orphans).length + Object.keys(check.tables.trailingSpaces).length;
+  const got = asked ? check.read((await run(check.sql)).rows[0] || {}) : { orphans: {}, trailingSpaces: {} };
+  // A table the answers hold for: in the lake, at the snapshot it was at before the check (or the first,
+  // when the check is what brought it here), so its rows didn't move under it.
   const after = await at();
   const pinned = table => {
     const a = after.get(lc(table)), b = now.get(lc(table));
     return a != null && (b == null || a === b);
   };
-  // Only a boolean is an answer: anything else leaves that key tested in the SQL.
-  orphans.forEach((b, i) => {
-    const r = o.rels[i];
-    if (typeof b === "boolean" && pinned(r.many.table) && pinned(r.one.table)) s.orphans.set(r.key, b);
-  });
-  padded.forEach((b, i) => { if (b === true && pinned(t.columns[i].table)) s.padded.add(t.columns[i].key); });
+  for (const [k, v] of Object.entries(got.orphans)) if (check.tables.orphans[k].every(pinned)) orphans[k] = v;
+  for (const k of Object.keys(got.trailingSpaces)) if (check.tables.trailingSpaces[k].every(pinned)) trailingSpaces[k] = true;
   s.at = after;
 }
 
@@ -703,7 +547,7 @@ export async function statement(sql, modules = null) {
     if (!/\bsemantic\b/i.test(String(sql))) return null;
     await ready(modules);
   }
-  const out = views.rewrite(withCatalog(sql));
+  const out = views.rewrite(String(sql));
   if (!out) return null;
   if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
   const [s] = out;

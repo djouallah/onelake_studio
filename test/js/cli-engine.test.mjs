@@ -237,9 +237,9 @@ test("a model's stats are read once for its tables' snapshots, again when one mo
       return queries.length - before;
     };
     const first = await asked(), again = await asked();
-    // The orphans check and the trailing spaces check, the first time only.
-    assert.equal(first - again, 2);
-    // A table at another snapshot: both checks again, once.
+    // dax-sql's facts check (the orphans and the trailing spaces in one statement), the first time only.
+    assert.equal(first - again, 1);
+    // A table at another snapshot: the check again, once.
     snapshot = 2;
     assert.equal(await asked(), first);
     assert.equal(await asked(), again);

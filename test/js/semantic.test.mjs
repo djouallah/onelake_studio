@@ -2,20 +2,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { isOssie, isOssiePath } = await import("../../page/semantic.js");
+// The real dax-sql (vendored), which semantic.js reads models with.
+import "./daxsql.mjs";
+const { formatOf } = await import("../../page/semantic.js");
 
-test("an Ossie model is told from any other YAML by its text", () => {
+test("an Ossie model is told from any other YAML by its text (dax-sql's formatOf)", async () => {
   const ossie = "# models/aac/model.bim as Apache Ossie\nversion: 0.3.0.dev0\nname: aac\ndatasets:\n  - name: dim_calendar\n";
-  assert.equal(isOssie(ossie), true);
-  assert.equal(isOssie("version: 2\nmodels:\n  - name: stg_orders\n"), false, "a dbt schema.yml is a document");
-  assert.equal(isOssie("steps:\n  datasets:\n    - x\nversion: 1\n"), false, "datasets must be at the top level");
-  assert.equal(isOssie(""), false);
-});
-
-test("a .yaml or .yml is read as Ossie, anything else as TMSL", () => {
-  assert.equal(isOssiePath("Files/m/aac.yaml"), true);
-  assert.equal(isOssiePath("abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Files/A.YML"), true);
-  assert.equal(isOssiePath("C:/models/ws/Sales.bim"), false);
+  assert.equal(await formatOf("aac.yaml", ossie), "ossie");
+  assert.equal(await formatOf("A.YML", ossie), "ossie");
+  assert.equal(await formatOf("schema.yml", "version: 2\nmodels:\n  - name: stg_orders\n"), null, "a dbt schema.yml is a document");
+  assert.equal(await formatOf("x.yaml", "steps:\n  datasets:\n    - x\nversion: 1\n"), null, "datasets must be at the top level");
+  assert.equal(await formatOf("x.yaml", ""), null);
+  assert.equal(await formatOf("C:/models/ws/Sales.bim", "{}"), "tmsl");
 });
 
 test("only a statement about a semantic model waits for the views", async () => {
@@ -59,14 +57,14 @@ test("a visual asks for as many rows as the host's row limit, and Top N stays un
 test("a model is ws.model_semanticmodel, and a statement's unopened models are found", async () => {
   const { modelSqlName, unopenedModels, defineView } = await import("../../page/semantic.js");
   assert.equal(modelSqlName("a ws", "Sales"), '"a ws".Sales_semanticmodel');
-  assert.deepEqual(unopenedModels('SELECT AGG(x) FROM "a ws"."Sales Model_semanticmodel" JOIN b.c_semanticmodel ON 1=1'),
+  assert.deepEqual(await unopenedModels('SELECT AGG(x) FROM "a ws"."Sales Model_semanticmodel" JOIN b.c_semanticmodel ON 1=1'),
     [{ workspace: "a ws", model: "Sales Model" }, { workspace: "b", model: "c" }]);
   // Each once; not in a string or a comment; a table's name is not a model's.
-  assert.deepEqual(unopenedModels("SELECT * FROM w.m_semanticmodel, w . M_semanticmodel"), [{ workspace: "w", model: "m" }]);
-  assert.deepEqual(unopenedModels("SELECT 'w.m_semanticmodel' -- w.m_semanticmodel\n/* w.m_semanticmodel */"), []);
-  assert.deepEqual(unopenedModels("SELECT * FROM w.lh.dbo.t, w.lh.dbo.x_semanticmodel, x_semanticmodel"), []);
+  assert.deepEqual(await unopenedModels("SELECT * FROM w.m_semanticmodel, w . M_semanticmodel"), [{ workspace: "w", model: "m" }]);
+  assert.deepEqual(await unopenedModels("SELECT 'w.m_semanticmodel' -- w.m_semanticmodel\n/* w.m_semanticmodel */"), []);
+  assert.deepEqual(await unopenedModels("SELECT * FROM w.lh.dbo.t, w.lh.dbo.x_semanticmodel, x_semanticmodel"), []);
   // In the engine's catalog, where it is listed, it is the same model.
-  assert.deepEqual(unopenedModels("SELECT * FROM onelake.w.m_semanticmodel"), [{ workspace: "w", model: "m" }]);
+  assert.deepEqual(await unopenedModels("SELECT * FROM onelake.w.m_semanticmodel"), [{ workspace: "w", model: "m" }]);
   await assert.rejects(defineView("Sales", "Sales.bim", "{}"), /<workspace>\.<model>_semanticmodel: Sales has no workspace/);
 });
 
@@ -270,18 +268,16 @@ test("a profile's time is the clock's, not every thread's added up", async () =>
 
 test("an Ossie metric with no DAX here is left out, not the file refused, and named", async () => {
   const { bimOf } = await import("../../page/semantic.js");
-  // dax-sql's ossieToTmsl, as far as it goes here: the metric in another engine's dialect alone is skipped.
-  const mods = {
-    parseYaml: () => ({ datasets: [{ name: "sales" }], metrics: [{ name: "ly_month" }, { name: "qty" }] }),
-    ossieToTmsl: (doc, { onSkip } = {}) => {
-      onSkip?.({ kind: "metric", name: "ly_month", dataset: null, why: "metric 'ly_month' has no DAX expression and no SQL" });
-      return { name: "m", model: { tables: [{ name: "sales", measures: [{ name: "qty", expression: "1" }] }] } };
-    },
-  };
-  const bim = bimOf("m.ossie.yaml", "version: 0.3.0.dev0\ndatasets: []\n", mods);
+  // A metric in another engine's dialect alone, beside a DAX one: dax-sql leaves it out and says so.
+  const yaml = [
+    "version: 0.3.0.dev0", "name: m", "datasets:", "  - name: sales", "    source: lake.dbo.sales", "    fields:",
+    "      - name: qty", "        expression:", "          dialects:", "            - dialect: ANSI_SQL", "              expression: qty",
+    "metrics:", "  - name: ly_month", "    expression:", "      dialects:", "        - dialect: SNOWFLAKE", "          expression: SUM(a)",
+    "  - name: total", "    expression:", "      dialects:", "        - dialect: DAX", "          expression: SUM('sales'[qty])", "",
+  ].join("\n");
+  const bim = bimOf("m.ossie.yaml", yaml);
   assert.deepEqual(bim.skipped.map(s => s.name), ["ly_month"]);
+  assert.ok(bim.model.tables.some(t => (t.measures ?? []).some(x => x.name === "total")), "the DAX metric is read");
   // Not a TMSL property: never written into a model Fabric is sent.
   assert.equal("skipped" in JSON.parse(JSON.stringify(bim)), false);
-  // Read again, the same object: a second note, not an error.
-  assert.doesNotThrow(() => bimOf("m.ossie.yaml", "x", { ...mods, ossieToTmsl: () => bim }));
 });

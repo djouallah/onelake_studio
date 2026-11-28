@@ -86,8 +86,9 @@ and joins at step 3.
    The host opens it from its local copy, reading it from Fabric the first time.
 2. **Compile.** `semantic.statement` has dax-sql rewrite a model query as plain SQL over the tables'
    names. A statement that names no model passes through unchanged. Before that, `semantic.takeStats` runs
-   dax-sql's two checks, `orphanCheck` and `trailingSpacesCheck`, once for each model the statement names. Their
-   answers become the compiler's `orphans` and `trailingSpaces` options. They hold for the DuckLake snapshot each
+   dax-sql's facts check (`factsCheck`: whether each relationship's keys all match, and which text columns end in
+   spaces, in one statement), once for each model the statement names. dax-sql writes the statement and reads its row
+   back; the engine runs it. The answers become the compiler's `facts` option. They hold for the DuckLake snapshot each
    table was at (`lake.snapshots`, which reads the lake's metadata and nothing of OneLake), and are read again when
    one of the model's tables is at another. A table the lake doesn't hold gets no answer: its keys are tested in the SQL.
 3. **Check.** `assertReads` in the host refuses more than one statement, and anything that isn't a read. A
@@ -540,10 +541,9 @@ once and counts, though the answer still comes through the host.
     both after Files, closed, and drawing them asks nothing. `Context/` holds a semantic view's YAML, and
     `SystemContext/` the TMDL Fabric makes of it, marked read-only. Their files open as Files/'s do, a `.bim` or
     `.sql` as a document. The `.tmdl` in `SystemContext/Semantic Views/<view>/` opens as the model Fabric made, read
-    only, its text tab the TMDL ([`page/tmdl.js`](../page/tmdl.js) reads TMDL as TMSL: the script Fabric wraps it in,
-    tables, columns, measures, partitions, hierarchies, relationships and expressions; annotations and lineage left
-    out). A `.yaml` in `Context/Semantic Views/<view>/` opens the view as a model, as Fabric's
-    Publish makes it (`fabricViewBim` in [`page/semantic.js`](../page/semantic.js)). Every `.yaml` in the folder
+    only, its text tab the TMDL (read as TMSL by dax-sql's `tmdlToTmsl`). A `.yaml` in `Context/Semantic Views/<view>/`
+    opens the view as a model, as Fabric's Publish makes it (dax-sql's `readModel` with `as: 'fabric'`, from
+    `fabricViewBim` in [`page/semantic.js`](../page/semantic.js)). Every `.yaml` in the folder
     is merged, and each dataset is a Direct Lake table with the columns its lake table has, from the table's
     metadata. The DAX metrics go in a table named `Metrics`. Microsoft's version (0.2.0.dev0) opens, and Ossie
     0.3.0.dev0 too. The published model is read-only, so the view's YAML is what a change goes into: a view of one

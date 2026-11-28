@@ -115,11 +115,13 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     if (mods) return mods;
     const load = p => import(pathToFileURL(p).href);
     const dir = typeof appDir === 'function' ? await appDir() : appDir;
-    const [paths, semantic, c, t, o, y] = await Promise.all([
+    const [paths, semantic, c, t, o, m, d, y] = await Promise.all([
       load(join(dir, 'paths.js')), load(join(dir, 'semantic.js')),
       load(join(vendorDir, 'npm', daxSqlPin, 'src', 'index.js')),
       load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'tmsl.js')),
       load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'ossie.js')),
+      load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'model.js')),
+      load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'tmdl.js')),
       load(join(vendorDir, 'npm', yamlPin, '+esm.js')),
     ]);
     // A model's Direct Lake tables are named by the extension, which asks Fabric for the
@@ -129,10 +131,10 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     // An Ossie dataset with no fields has its lakehouse table's columns, as Fabric gives it them.
     semantic.setColumnReader(async x => (await onelake.table({ workspace: x.workspace, item: `${x.lakehouse}.Lakehouse` },
       { schema: x.schema, table: x.table })).schemaFields || []);
-    mods = { paths, semantic,
-             compiler: { createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
-                         ossieToTmsl: o.ossieToTmsl, tmslToOssie: o.tmslToOssie,
-                         parseYaml: y.parse, stringifyYaml: y.stringify } };
+    // What semantic.js uses of dax-sql, in one shape for the panel and here; its readers need it before any view.
+    const compiler = semantic.compilerBundle(c, t, o, m, d, y);
+    semantic.useModules(compiler);
+    mods = { paths, semantic, compiler };
     return mods;
   }
 
@@ -672,7 +674,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       // A semantic model it names that is not a view yet: opened (its local copy, read from
       // Fabric the first time) and kept, as the panel does.
       const compiled = async text => {
-        for (const ref of semantic.unopenedModels(text)) {
+        for (const ref of await semantic.unopenedModels(text, compiler)) {
           if (!openModel) throw new Error('semantic models cannot be opened here');
           const v = await openModel(ref);
           const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema, v.lakehouse || null);
