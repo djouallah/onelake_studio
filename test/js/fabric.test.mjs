@@ -1,5 +1,5 @@
-// Tests for core/models/fabric.js — a workspace's semantic models and apps, and a model's .bim,
-// read from the Fabric API. Read only: there is no write path to test, and the module
+// Tests for core/models/fabric.js — a workspace's semantic models, apps and notebooks, and their
+// definitions, read from the Fabric API. Its one write is a notebook's Publish, and the module
 // takes no storage token at all.
 //
 // No network: `fetch` is replaced per test with a table of canned answers.
@@ -303,11 +303,33 @@ test("a model's local copy is under its account: two tenants can each have sales
   assert.ok(climbed.startsWith(join("root", "a", "_x")) && !climbed.split(/[\\/]/).includes(".."), `nothing climbs out: ${climbed}`);
 });
 
-test("the module can only read: no write, no existence check, no storage token", () => {
+test("Publish replaces the notebook's definition with the .ipynb, and waits for Fabric to finish", async () => {
+  const OP = "https://api.fabric.microsoft.com/v1/operations/up1";
+  let polls = 0;
+  const nb = { nbformat: 4, metadata: {}, cells: [{ cell_type: "code", source: ["x = 1"] }] };
+  const { fabric, calls, restore } = fabricWith([
+    [`/workspaces/${WS_ID}/notebooks/n1/updateDefinition`, () => res(202, {}, { location: OP })],
+    [/operations\/up1$/, () => res(200, { status: ++polls < 2 ? "Running" : "Succeeded" })],
+  ]);
+  try {
+    await fabric.updateNotebook(WS_ID, "n1", nb);
+    const post = calls.find(c => c.method === "POST");
+    const part = JSON.parse(post.body).definition.parts[0];
+    assert.equal(JSON.parse(post.body).definition.format, "ipynb");
+    assert.equal(part.path, "notebook-content.ipynb");
+    assert.deepEqual(JSON.parse(Buffer.from(part.payload, "base64").toString("utf8")), nb);
+    assert.equal(polls, 2, "polled until Succeeded");
+  } finally { restore(); }
+  const failed = fabricWith([[/updateDefinition/, () => res(403, { message: "not a contributor" })]]);
+  try { await assert.rejects(failed.fabric.updateNotebook(WS_ID, "n1", nb), /Publishing the notebook failed \(HTTP 403\) — not a contributor/); }
+  finally { failed.restore(); }
+});
+
+test("the module reads, and writes only a notebook's Publish: no existence check, no storage token", () => {
   assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName", "notebookCopyPath", "notebookKind"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
   assert.deepEqual(Object.keys(f).sort(), ["getBim", "getNotebook", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems",
-    "listNotebooks", "listSemanticModels", "reset", "workspaceId"]);
+    "listNotebooks", "listSemanticModels", "reset", "updateNotebook", "workspaceId"]);
 });
 
 test("a 401 is retried once with a fresh token", async () => {

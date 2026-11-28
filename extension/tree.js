@@ -58,6 +58,7 @@ class LakehouseTree {
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's local copy is, if it has one
    * @param {(n: object) => string|null} [deps.cachedNotebook]  where a notebook's local copy is, if it has one
+   * @param {(n: object) => boolean|null} [deps.notebookEdited]  whether that copy has changes Fabric does not
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
    * @param {() => string|null} [deps.filter]  the one type to show (TREE_FILTERS' `only`), if any
@@ -67,7 +68,7 @@ class LakehouseTree {
    * @param {() => Promise<string[]>} [deps.internalTables]  system_internal's tables, the lake's metadata, from the engine
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
-                favorites = { get: () => [] }, cachedModel = () => null, cachedNotebook = () => null, unsupportedModel = () => null,
+                favorites = { get: () => [] }, cachedModel = () => null, cachedNotebook = () => null, notebookEdited = () => false, unsupportedModel = () => null,
                 queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {},
                 keepLimitBytes = () => 0, internalTables = null, tableLocal = null }) {
     this.keepLimitBytes = keepLimitBytes;
@@ -81,6 +82,7 @@ class LakehouseTree {
     this.filter = filter;
     this.cachedModel = cachedModel;
     this.cachedNotebook = cachedNotebook;
+    this.notebookEdited = notebookEdited;
     this.unsupportedModel = unsupportedModel;
     this.favorites = favorites;
     this.fabric = fabric;
@@ -228,6 +230,11 @@ class LakehouseTree {
   notebookChanged(n) {
     const on = this._nodes.get(`notebook|${n.workspace}|${n.notebookId}`);
     if (on) this._emitter.fire(on);
+  }
+
+  // A notebook was saved here: every notebook drawn says again whether it has changes to publish.
+  notebooksChanged() {
+    for (const n of this._nodes.values()) if (n.kind === 'notebook') this._emitter.fire(n);
   }
 
   // The saved queries changed (saved, renamed, deleted, or edited on disk): redraw their node.
@@ -409,18 +416,23 @@ class LakehouseTree {
       case 'notebooks':
         item.iconPath = new vscode.ThemeIcon('notebook');
         break;
-      // A click opens its local copy, read from Fabric first, read-only; nothing runs until the person runs it.
+      // A click opens its local copy, read from Fabric first unless it has changes of its own; nothing runs until the
+      // person runs it. Its button publishes the copy to Fabric. A pencil while the copy has changes Fabric does not.
       case 'notebook': {
         const there = this.cachedNotebook(n);
-        item.iconPath = there
-          ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
+        const edited = there ? this.notebookEdited(n) : false;
+        item.iconPath = edited ? new vscode.ThemeIcon('edit', new vscode.ThemeColor('list.warningForeground'))
+          : there ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
           : new vscode.ThemeIcon('notebook');
+        item.description = edited ? 'not published' : '';
         item.command = { command: 'onelakeStudio.openNotebook', title: 'Open notebook', arguments: [n] };
         item.tooltip = [n.description,
-          'A Fabric Python notebook, opened read-only. Its cells can run on this machine, in a local Python kernel: ' +
-          'what it reads by abfss:// paths it reads from OneLake as it would in Fabric.',
-          there ? `Kept at ${there}. A click reads it from Fabric again, unless it is open here already; nothing is written back.`
-            : 'Click to read it from Fabric and open it here. Nothing is written back to Fabric.'].filter(Boolean).join('\n\n');
+          'A Fabric Python notebook. Its cells run on this machine, in a local Python kernel: what it reads by abfss:// ' +
+          'paths it reads from OneLake as it would in Fabric.',
+          edited ? `Changed here and not yet published (${there}). A click opens your version; Publish sends it to Fabric.`
+            : there ? `Kept at ${there}, as Fabric has it. A click reads it from Fabric again.`
+            : 'Click to read it from Fabric and open it here.',
+          'Only Publish writes to Fabric.'].filter(Boolean).join('\n\n');
         break;
       }
       case 'fabricSignIn':

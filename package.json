@@ -184,6 +184,12 @@
         "title": "Open Notebook",
         "category": "OneLake Studio"
       },
+      {
+        "command": "onelakeStudio.publishNotebook",
+        "title": "Publish to Fabric",
+        "category": "OneLake Studio",
+        "icon": "$(cloud-upload)"
+      },
 
       {
         "command": "onelakeStudio.selectTop",
@@ -412,6 +418,16 @@
           "when": "view == onelakeStudio.explorer && viewItem == fabricAppUrl",
           "group": "inline"
         },
+        {
+          "command": "onelakeStudio.publishNotebook",
+          "when": "view == onelakeStudio.explorer && viewItem == notebook",
+          "group": "inline@1"
+        },
+        {
+          "command": "onelakeStudio.publishNotebook",
+          "when": "view == onelakeStudio.explorer && viewItem == notebook",
+          "group": "0_query@1"
+        },
 
         {
           "command": "onelakeStudio.copySqlName",
@@ -625,6 +641,10 @@
         },
         {
           "command": "onelakeStudio.openNotebook",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.publishNotebook",
           "when": "false"
         },
 

@@ -421,7 +421,8 @@ async function activateInner(context) {
   ({ engines, onelake, semviews, rebindStore, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
-  const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames, cachedNotebook, fetchNotebook } = core.models;
+  const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames, cachedNotebook, notebookEdited, fetchNotebook } = core.models;
+  const publishNotebookCopy = core.models.publishNotebook;
 
   // The explorer's filter: one type only, until the picker says otherwise. Not remembered: left
   // on from last time it would look like missing workspaces, and read them all at startup.
@@ -459,6 +460,7 @@ async function activateInner(context) {
     isSignedIn: () => core.signedIn(),
     cachedModel: n => cachedModel(n),
     cachedNotebook: n => cachedNotebook(n),
+    notebookEdited: n => notebookEdited(n),
     queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
     tableLocal: (lh, t) => core.tableLocal(lh, t),
@@ -665,30 +667,73 @@ async function activateInner(context) {
     }
   }
 
-  // A Fabric Python notebook from the tree, opened read-only in VS Code's notebook editor: the person reads it, then
-  // runs it there on a local Python kernel if they choose. Nothing runs on the click. A notebook that reaches OneLake
-  // by abfss:// paths reads the same tables here as in Fabric. Its local copy is read from Fabric again first, unless
-  // it is open here already. Nothing is written back to Fabric.
+  // A Fabric Python notebook from the tree, opened in VS Code's notebook editor to read, edit and run on a local
+  // Python kernel. Nothing runs on the click. A notebook that reaches OneLake by abfss:// paths reads the same tables
+  // here as in Fabric. Its local copy is read from Fabric again first, unless it is open here already or has changes
+  // not yet published (models.js fetchNotebook). Only Publish writes to Fabric.
+  const notebookDoc = n => {
+    const kept = cachedNotebook(n);
+    const same = d => d.uri.scheme === 'file' && pathKey(d.uri.fsPath) === pathKey(kept);
+    return kept ? vscode.workspace.notebookDocuments.find(same) || null : null;
+  };
   async function openNotebook(n) {
     if (!n || n.kind !== 'notebook') return;
     try {
-      const kept = cachedNotebook(n);
-      const same = p => d => d.uri.scheme === 'file' && pathKey(d.uri.fsPath) === pathKey(p);
-      let doc = kept ? vscode.workspace.notebookDocuments.find(same(kept)) : null;
+      let doc = notebookDoc(n);
       if (!doc) {
-        const { path, fresh } = await vscode.window.withProgress(
+        const { path, fresh, edited } = await vscode.window.withProgress(
           { location: vscode.ProgressLocation.Notification, title: `Opening ${n.notebook}` },
           () => fetchNotebook(n, { offline: connectivity.offline() }));
-        if (!fresh) vscode.window.setStatusBarMessage(`Offline: ${n.notebook} as it was last read from Fabric`, 5000);
+        if (edited) vscode.window.setStatusBarMessage(`${n.notebook}: your changes, not yet published`, 5000);
+        else if (!fresh) vscode.window.setStatusBarMessage(`Offline: ${n.notebook} as it was last read from Fabric`, 5000);
         tree.notebookChanged(n);
         doc = await vscode.workspace.openNotebookDocument(vscode.Uri.file(path));
       }
       await vscode.window.showNotebookDocument(doc);
-      // Read-only: a copy of what Fabric has, not a place to edit it. Its cells still run, and nothing is saved.
-      await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
     } catch (e) {
       if (out) out.appendLine(`opening the notebook ${n.workspace}/${n.notebook} failed — ${(e && e.stack) || e}`);
       showError(`Could not open ${n.notebook}: ${(e && e.message) || e}`);
+    }
+  }
+
+  // Publish: the notebook's local copy, saved first if its editor has changes, written over Fabric's. When Fabric's
+  // changed since the copy was read or last published, the person picks: theirs overwritten, or theirs taken over the
+  // copy's changes. Nothing is merged.
+  async function publishNotebook(n) {
+    if (!n || n.kind !== 'notebook') return;
+    if (connectivity.offline()) return showError(`Publishing ${n.notebook} needs a connection.`);
+    if (!cachedNotebook(n)) return showError(`${n.notebook} has no copy here to publish: open it first.`);
+    try {
+      const doc = notebookDoc(n);
+      if (doc && doc.isDirty && !await doc.save()) return;
+      const publish = o => vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Publishing ${n.notebook} to Fabric` }, () => publishNotebookCopy(n, o));
+      let done = await publish();
+      if (done.conflict) {
+        const pick = await vscode.window.showWarningMessage(
+          `Someone changed ${n.notebook} in Fabric since you opened it.`,
+          { modal: true, detail: 'Overwrite: your version goes to Fabric, and their change is gone.\nTake theirs: your changes here are dropped, and Fabric\'s version opens.' },
+          'Overwrite', 'Take theirs');
+        if (pick === 'Overwrite') done = await publish({ overwrite: true });
+        else if (pick === 'Take theirs') {
+          await fetchNotebook(n, { discard: true });
+          tree.notebookChanged(n);
+          const open = notebookDoc(n);
+          if (open) {
+            await vscode.window.showNotebookDocument(open);
+            await vscode.commands.executeCommand('workbench.action.files.revert');
+          } else await openNotebook(n);
+          vscode.window.setStatusBarMessage(`${n.notebook}: Fabric's version`, 5000);
+          return;
+        } else return;
+      }
+      if (done.published) {
+        tree.notebookChanged(n);
+        vscode.window.setStatusBarMessage(`Published ${n.notebook} to Fabric`, 5000);
+      }
+    } catch (e) {
+      if (out) out.appendLine(`publishing the notebook ${n.workspace}/${n.notebook} failed — ${(e && e.stack) || e}`);
+      showError(`Could not publish ${n.notebook}: ${(e && e.message) || e}`);
     }
   }
 
@@ -1316,8 +1361,11 @@ async function activateInner(context) {
     })),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
-    // A Python notebook in the tree: a click opens it, read-only, to be run here if the person chooses.
+    // A Python notebook in the tree: a click opens it here to read, edit and run; its button publishes it to Fabric.
     vscode.commands.registerCommand('onelakeStudio.openNotebook', onClick(n => openNotebook(n))),
+    vscode.commands.registerCommand('onelakeStudio.publishNotebook', n => publishNotebook(n)),
+    // A notebook saved here may now have changes Fabric does not: its node says so.
+    vscode.workspace.onDidSaveNotebookDocument(() => tree.notebooksChanged()),
     vscode.commands.registerCommand('onelakeStudio.openPath', arg => openPath(arg)),
     vscode.commands.registerCommand('onelakeStudio.pickLakehouse', arg => pickLakehouse(arg)),
     // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.

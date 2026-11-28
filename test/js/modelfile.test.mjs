@@ -251,9 +251,83 @@ test("a Python notebook's local copy is read from Fabric each time, kept for off
     await models.fetchNotebook(n);
     assert.equal(asked, 2, "each open reads Fabric again");
     assert.deepEqual(JSON.parse(await readFile(first.path, "utf8")).cells[0].source, ["2"]);
-    assert.deepEqual(await models.fetchNotebook(n, { offline: true }), { path: first.path, fresh: false });
+    assert.deepEqual(await models.fetchNotebook(n, { offline: true }), { path: first.path, fresh: false, edited: false });
     assert.equal(asked, 2, "offline asks nothing");
     kind = "synapse_pyspark";
     await assert.rejects(models.fetchNotebook(n), /Spark notebook/);
+  } finally { await done(); }
+});
+
+// A Fabric that holds one notebook: what getNotebook reads, and what updateNotebook wrote.
+function fabricNotebook(first) {
+  const f = { held: first, reads: 0, writes: [] };
+  f.getNotebook = async () => { f.reads++; return structuredClone(f.held); };
+  f.updateNotebook = async (_ws, _id, nb) => { f.writes.push(nb); f.held = structuredClone(nb); };
+  return f;
+}
+const PY = cells => ({ nbformat: 4, metadata: { microsoft: { language_group: "jupyter_python" } }, cells: cells.map(s => ({ cell_type: "code", source: [s] })) });
+
+test("a notebook changed here keeps its changes on a click, and Publish sends them to Fabric", async () => {
+  const { readFile, writeFile } = await import("node:fs/promises");
+  const fabric = fabricNotebook(PY(["a"]));
+  const { models, done } = await setup({ fabric });
+  const n = { kind: "notebook", workspace: "sales", notebook: "load", notebookId: "n1" };
+  try {
+    const { path } = await models.fetchNotebook(n);
+    assert.equal(models.notebookEdited(n), false);
+    // Saved by VS Code in its own layout: whitespace is no change.
+    await writeFile(path, JSON.stringify(JSON.parse(await readFile(path, "utf8")), null, 4));
+    assert.equal(models.notebookEdited(n), false, "layout alone is not an edit");
+    await writeFile(path, JSON.stringify(PY(["a", "mine"])));
+    assert.equal(models.notebookEdited(n), true);
+    const reads = fabric.reads;
+    assert.deepEqual(await models.fetchNotebook(n), { path, fresh: false, edited: true }, "a click keeps the changes");
+    assert.equal(fabric.reads, reads, "and asks Fabric nothing");
+    assert.deepEqual(await models.publishNotebook(n), { published: true });
+    assert.deepEqual(fabric.held.cells.map(c => c.source[0]), ["a", "mine"]);
+    assert.equal(models.notebookEdited(n), false, "published: nothing left to publish");
+    // Fabric moves on; the copy has no changes, so a click reads it again.
+    fabric.held = PY(["theirs"]);
+    assert.equal((await models.fetchNotebook(n)).fresh, true);
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")).cells[0].source, ["theirs"]);
+  } finally { await done(); }
+});
+
+test("Publish over a change made in Fabric meanwhile writes nothing, until overwrite; take theirs drops the copy's changes", async () => {
+  const { readFile, writeFile } = await import("node:fs/promises");
+  const fabric = fabricNotebook(PY(["a"]));
+  const { models, done } = await setup({ fabric });
+  const n = { kind: "notebook", workspace: "sales", notebook: "load", notebookId: "n1" };
+  try {
+    const { path } = await models.fetchNotebook(n);
+    await writeFile(path, JSON.stringify(PY(["mine"])));
+    fabric.held = PY(["theirs"]);
+    assert.deepEqual(await models.publishNotebook(n), { conflict: true });
+    assert.equal(fabric.writes.length, 0, "nothing is written over their change");
+    assert.deepEqual(await models.publishNotebook(n, { overwrite: true }), { published: true });
+    assert.deepEqual(fabric.held.cells[0].source, ["mine"]);
+
+    await writeFile(path, JSON.stringify(PY(["mine again"])));
+    fabric.held = PY(["theirs again"]);
+    assert.deepEqual(await models.publishNotebook(n), { conflict: true });
+    const taken = await models.fetchNotebook(n, { discard: true });
+    assert.equal(taken.fresh, true);
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")).cells[0].source, ["theirs again"]);
+    assert.equal(models.notebookEdited(n), false);
+    assert.equal(fabric.writes.length, 1);
+  } finally { await done(); }
+});
+
+test("Publish with no copy, or a copy that is not JSON, says so and writes nothing", async () => {
+  const { writeFile } = await import("node:fs/promises");
+  const fabric = fabricNotebook(PY(["a"]));
+  const { models, done } = await setup({ fabric });
+  const n = { kind: "notebook", workspace: "sales", notebook: "load", notebookId: "n1" };
+  try {
+    await assert.rejects(models.publishNotebook(n), /no copy here to publish/);
+    const { path } = await models.fetchNotebook(n);
+    await writeFile(path, "{ not json");
+    await assert.rejects(models.publishNotebook(n), /not a valid \.ipynb/);
+    assert.equal(fabric.writes.length, 0);
   } finally { await done(); }
 });

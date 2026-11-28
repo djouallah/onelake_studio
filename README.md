@@ -31,9 +31,9 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 ## Experimental
 
 - **See your Fabric apps.** Each workspace lists its apps, their address and who can open them.
-- **Open Python notebooks here.** Each workspace lists its Fabric Python notebooks. A click opens one read-only in
-  VS Code, to run on a local Python kernel if you choose. A notebook that reads OneLake by `abfss://` paths works the
-  same as it does in Fabric.
+- **Work on Python notebooks here.** Each workspace lists its Fabric Python notebooks. A click opens one in VS Code,
+  to edit and run on a local Python kernel, and Publish sends it back to Fabric. A notebook that reads OneLake by
+  `abfss://` paths works the same as it does in Fabric.
 
 ## Get started
 

@@ -31,16 +31,16 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`, or `/Context/` or `/SystemContext/` in place of `/Files/`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`page/semantic.js`](../page/semantic.js) |
-| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Upload Files… asks first; Save and Publish of a semantic view are the clicks themselves. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
+| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). Past a tab's own session (its variables and temp tables), SQL writes nothing else, and DuckDB's own plan of each write is checked first. Upload Files… asks first; Save and Publish of a semantic view, and a notebook's Publish, are the clicks themselves. | `assertReads`, `checkedRead`, `writeOf`, `checkPhysical` and `sessionStatementOf` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
-| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Upload Files…, and a semantic view's Save and Publish. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
+| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Upload Files…, a semantic view's Save and Publish, and a notebook's Publish. A notebook's cells read OneLake themselves, so running one needs a connection too. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`core/host.js`](../core/host.js), [`extension/panel.js`](../extension/panel.js), [`core/engine/engine-client.js`](../core/engine/engine-client.js) |
 | **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`page/app.js`](../page/app.js) |
 
 ## Out of scope
 
 - DAX queries (`EVALUATE`).
-- Writing a Delta table, a warehouse or anything outside a lakehouse; `DROP`; editing data in the grid.
+- Writing a Delta table, a warehouse or anything outside a lakehouse (but a notebook's Publish); `DROP`; editing data in the grid.
 - `CREATE` and `DROP SEMANTIC VIEW`: a model exists because Fabric has it, not because SQL made it.
 - ER diagrams for lakehouse tables: they declare no keys.
 - vscode.dev: the engine is a native library, so this needs desktop VS Code.
@@ -475,16 +475,19 @@ notebook that reaches OneLake only by `abfss://` paths reads the same tables any
   so each notebook's definition is read (`getDefinition?format=ipynb`, four at a time) and its kind is taken from the
   `.ipynb` metadata (`notebookKind` in [`core/models/fabric.js`](../core/models/fabric.js)). The listing is cached
   like *Apps*. Spark notebooks (`synapse_*` kernels) run only on Fabric's Spark, so they aren't listed.
-- **A click** reads the notebook from Fabric again and keeps it as `<name>.ipynb`, beside the workspace's model
-  copies (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)). It then opens **read-only** in
-  VS Code's notebook editor (read-only for the session). If it is open here already, that tab comes forward.
-  Offline, the copy kept is opened.
-- **Nothing runs on a click.** The person reads the notebook first, then runs its cells there if they choose, on a
-  local kernel (the Jupyter extension's). The kernel's Python needs whatever the notebook imports, such as `duckdb`.
-  It also needs its own way to sign in to OneLake: outside Fabric there is no `notebookutils`, so a DuckDB notebook
-  makes a `credential_chain` secret (az login).
-- **Nothing is written back to Fabric.** The local copy is for reading and running here, and the next click
-  replaces it with what Fabric has.
+- **A click** opens the notebook in VS Code's notebook editor, to read, edit and run. It is kept as `<name>.ipynb`,
+  beside the workspace's model copies, with `<name>.ipynb.sync.json` beside it: hashes of the copy and of Fabric's
+  definition when the two last agreed (`fetchNotebook` in [`core/models/models.js`](../core/models/models.js)).
+  The click reads Fabric again unless the copy changed since (edits, or a run's outputs): then the copy opens as it
+  is, and the tree marks it *not published*. If it is open here already, that tab comes forward. Offline, the copy
+  kept is opened.
+- **Nothing runs on a click.** Cells run when the person runs them, on a local kernel (the Jupyter extension's). The
+  kernel's Python needs whatever the notebook imports, such as `duckdb`, and its own way to sign in to OneLake:
+  outside Fabric there is no `notebookutils`, so a DuckDB notebook makes a `credential_chain` secret (az login).
+- **Publish** (the notebook's ⬆ button) is the one way back to Fabric (`publishNotebook`, `updateDefinition`). It
+  saves the open editor first, then reads Fabric's definition: if that changed since the two last agreed, nothing
+  is written and the person picks **Overwrite** (theirs is replaced) or **Take theirs** (the copy's changes are
+  dropped and Fabric's version opens). Nothing is merged. Outputs are published with the code, as Fabric keeps them.
 
 ## The SQL box and results
 

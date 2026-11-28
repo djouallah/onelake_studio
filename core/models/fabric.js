@@ -4,9 +4,9 @@
 // =============================================================================
 // A semantic model is not in OneLake: its list and its definition come from the Fabric
 // REST API, which wants a token in a different audience — asked for only when someone
-// expands "Semantic models", never at sign-in. Read only: this module writes nothing to
-// Fabric or OneLake. A model's definition comes as TMSL; it is kept on this machine as an Apache Ossie
-// .yaml (extension.js) and opened from there.
+// expands "Semantic models", never at sign-in. It reads, with one write: a notebook's Publish
+// (updateNotebook), made only on that click. A model's definition comes as TMSL; it is kept on this machine
+// as an Apache Ossie .yaml (extension.js) and opened from there.
 //
 // Host-side only. The panel never sees a Fabric token.
 // =============================================================================
@@ -186,27 +186,31 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   // is said: "model definition", "notebook definition".
   async function definitionParts(url, thing) {
     let r = await fabricJson(url, `Exporting the ${thing}`, { method: 'POST' });
-    if (r.status === 202) {
-      const location = r.headers.get('location');
-      if (!location) throw new Error(`Exporting the ${thing}: Fabric accepted it but gave no operation to follow`);
-      const deadline = Date.now() + lroTimeoutMs;
-      let wait = retryAfterMs(r, 2000);
-      for (;;) {
-        if (Date.now() > deadline) throw new Error(`Exporting the ${thing} did not finish within ${Math.round(lroTimeoutMs / 1000)} s`);
-        await sleep(wait);
-        const p = await fabricJson(location, `Waiting for the ${thing}`);
-        const op = await p.json().catch(() => ({}));
-        if (op.status === 'Succeeded') break;
-        if (op.status === 'Failed' || op.status === 'Undefined') {
-          const said = (op.error && (op.error.message || op.error.errorCode)) || op.status;
-          throw new Error(`Exporting the ${thing} failed — ${said}`);
-        }
-        wait = retryAfterMs(p, 2000);
-      }
-      r = await fabricJson(`${location.replace(/\/+$/, '')}/result`, `Reading the ${thing}`);
-    }
+    const location = await finished(r, `Exporting the ${thing}`, thing);
+    if (location) r = await fabricJson(`${location.replace(/\/+$/, '')}/result`, `Reading the ${thing}`);
     const j = await r.json().catch(() => ({}));
     return (j.definition && j.definition.parts) || [];
+  }
+  // A long-running operation: an answer of 202 is polled at its Location until it has Succeeded, and that
+  // Location is answered (null for an answer that was done at once). `what` is what is said of it.
+  async function finished(r, what, thing) {
+    if (r.status !== 202) return null;
+    const location = r.headers.get('location');
+    if (!location) throw new Error(`${what}: Fabric accepted it but gave no operation to follow`);
+    const deadline = Date.now() + lroTimeoutMs;
+    let wait = retryAfterMs(r, 2000);
+    for (;;) {
+      if (Date.now() > deadline) throw new Error(`${what} did not finish within ${Math.round(lroTimeoutMs / 1000)} s`);
+      await sleep(wait);
+      const p = await fabricJson(location, `Waiting for the ${thing}`);
+      const op = await p.json().catch(() => ({}));
+      if (op.status === 'Succeeded') return location;
+      if (op.status === 'Failed' || op.status === 'Undefined') {
+        const said = (op.error && (op.error.message || op.error.errorCode)) || op.status;
+        throw new Error(`${what} failed — ${said}`);
+      }
+      wait = retryAfterMs(p, 2000);
+    }
   }
   const partNamed = (parts, re, thing, file) => {
     const part = parts.find(p => re.test(p.path || ''));
@@ -224,7 +228,19 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     return partNamed(await definitionParts(url, 'model definition'), /(^|\/)model\.bim$/i, 'model definition', 'model.bim');
   }
 
-  // A notebook as Jupyter's .ipynb, parsed. Read only, as a model's definition is: nothing is written back.
+  // A notebook's whole definition replaced by this .ipynb (an object): Publish, the one write this module makes, and
+  // only on that click. Fabric keeps the notebook's other parts (.platform) as they are.
+  async function updateNotebook(workspace, notebookId, ipynb) {
+    const id = await workspaceId(workspace);
+    const url = `${apiBase}/workspaces/${id}/notebooks/${encodeURIComponent(notebookId)}/updateDefinition`;
+    const body = JSON.stringify({ definition: { format: 'ipynb', parts: [{
+      path: 'notebook-content.ipynb', payload: Buffer.from(JSON.stringify(ipynb), 'utf8').toString('base64'), payloadType: 'InlineBase64',
+    }] } });
+    const r = await fabricJson(url, 'Publishing the notebook', { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+    await finished(r, 'Publishing the notebook', 'notebook to be published');
+  }
+
+  // A notebook as Jupyter's .ipynb, parsed.
   async function getNotebook(workspace, notebookId) {
     const id = await workspaceId(workspace);
     const url = `${apiBase}/workspaces/${id}/notebooks/${encodeURIComponent(notebookId)}/getDefinition?format=ipynb`;
@@ -251,7 +267,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, listNotebooks, getBim, getNotebook, reset };
+  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, listNotebooks, getBim, getNotebook, updateNotebook, reset };
 }
 
 module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath, notebookCopyPath, notebookKind };

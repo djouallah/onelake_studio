@@ -4,7 +4,8 @@
 // =============================================================================
 
 const { dirname, basename, resolve } = require('node:path');
-const { existsSync, renameSync } = require('node:fs');
+const { existsSync, renameSync, readFileSync } = require('node:fs');
+const { createHash } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { walkCached } = require('../onelake/onelake');
 const { modelAccountDir, modelCopyPath, notebookCopyPath, notebookKind } = require('./fabric');
@@ -364,30 +365,78 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return value;
   }
 
-  // A Fabric Python notebook's local copy, the one VS Code opens and runs: notebookCopyPath, beside its
-  // workspace's models. Read from Fabric (getDefinition, as .ipynb) each time it is fetched, so it runs what
-  // Fabric has now; offline, the copy kept is what there is. Nothing is ever written back to Fabric.
+  // A Fabric Python notebook's local copy, the one VS Code opens, edits and runs: notebookCopyPath, beside its
+  // workspace's models. Beside it, <copy>.sync.json says what the copy and Fabric held when they last agreed (a
+  // read, or a Publish), as hashes: `local`, the copy's text then, and `fabric`, Fabric's definition then.
+  // - A click reads Fabric again, unless the copy changed since (edits, or outputs from a run): those stay until
+  //   they are published or given up. Offline, the copy is what there is.
+  // - Publish writes the copy to Fabric, unless Fabric's definition changed since they last agreed: then the person
+  //   picks, overwrite theirs or take theirs. With no record of agreeing, Fabric's differing from the copy is a change.
   const notebookPath = n => notebookCopyPath(modelsFolder(), account(), n.workspace, n.notebook);
   const cachedNotebook = n => (existsSync(notebookPath(n)) ? notebookPath(n) : null);
-  async function fetchNotebook(n, { offline = false } = {}) {
+  const syncPath = path => `${path}.sync.json`;
+  // An .ipynb's hash, as its JSON says it: its whitespace is no change. Text that is not JSON hashes as it is.
+  const hashOf = text => {
+    let s = String(text);
+    try { s = JSON.stringify(JSON.parse(stripBom(s))); } catch (_) { /* as it is */ }
+    return createHash('sha256').update(s).digest('hex');
+  };
+  const readSync = path => { try { return JSON.parse(readFileSync(syncPath(path), 'utf8')); } catch (_) { return null; } };
+  const writeSync = (path, local, fabricHash) => writeWhole(syncPath(path), JSON.stringify({ local: hashOf(local), fabric: fabricHash }));
+  // Whether the copy has changes Fabric does not: true, false, or null with no copy.
+  function notebookEdited(n) {
     const path = notebookPath(n);
+    let text;
+    try { text = readFileSync(path, 'utf8'); } catch (_) { return null; }
+    const sync = readSync(path);
+    return !!sync && hashOf(text) !== sync.local;
+  }
+  // { path, fresh, edited }: `fresh` when just read from Fabric, `edited` when the copy's own changes were kept.
+  // `discard`: Fabric's version over the copy, changes and all (Take theirs).
+  async function fetchNotebook(n, { offline = false, discard = false } = {}) {
+    const path = notebookPath(n);
+    if (!discard && notebookEdited(n)) return { path, fresh: false, edited: true };
     if (offline) {
-      if (existsSync(path)) return { path, fresh: false };
+      if (existsSync(path)) return { path, fresh: false, edited: false };
       throw new Error(`${n.notebook} was never opened here, and reading it from Fabric needs a connection`);
     }
     const nb = await fabric.getNotebook(n.workspace, n.notebookId);
     if (notebookKind(nb) === 'spark') {
       throw new Error(`${n.notebook} is a Spark notebook: it runs on Fabric's Spark only, not on this machine`);
     }
+    const text = JSON.stringify(nb, null, 1);
     await fsp.mkdir(dirname(path), { recursive: true });
-    await writeWhole(path, JSON.stringify(nb, null, 1));
-    return { path, fresh: true };
+    await writeWhole(path, text);
+    await writeSync(path, text, hashOf(JSON.stringify(nb)));
+    return { path, fresh: true, edited: false };
+  }
+  // The copy, to Fabric. { conflict: true } when Fabric changed since they last agreed and `overwrite` is not set:
+  // nothing is written. Else { published: true }.
+  async function publishNotebook(n, { overwrite = false } = {}) {
+    const path = notebookPath(n);
+    const text = await fsp.readFile(path, 'utf8').catch(() => null);
+    if (text == null) throw new Error(`${n.notebook} has no copy here to publish: open it first`);
+    let nb;
+    try { nb = JSON.parse(stripBom(text)); } catch (e) { throw new Error(`${n.notebook} is not a valid .ipynb: ${e.message}`); }
+    if (!overwrite) {
+      const sync = readSync(path);
+      const theirs = hashOf(JSON.stringify(await fabric.getNotebook(n.workspace, n.notebookId)));
+      if (theirs !== (sync ? sync.fabric : hashOf(text))) return { conflict: true };
+    }
+    await fabric.updateNotebook(n.workspace, n.notebookId, nb);
+    // What Fabric holds now, as it says it: the next Publish compares with this.
+    const now = await fabric.getNotebook(n.workspace, n.notebookId).catch(e => {
+      log(`${n.workspace}/${n.notebook}: published, and could not be read back — ${e.message}`);
+      return nb;
+    });
+    await writeSync(path, text, hashOf(JSON.stringify(now)));
+    return { published: true };
   }
 
   return {
     adoptModels, adopted: () => modelsAdopted,
     modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
-    notebookPath, cachedNotebook, fetchNotebook,
+    notebookPath, cachedNotebook, notebookEdited, fetchNotebook, publishNotebook,
     fetchModel, walkTables, openSqlModel, completionNames, modelFile,
     forgetNames: () => { namesKept = null; },
   };
